@@ -108,6 +108,54 @@ declare module '@rocket.chat/ui-contexts' {
 			pathname: '/admin/feature-preview';
 			pattern: '/admin/feature-preview';
 		};
+		'synq-branding': {
+			pathname: '/admin/synq-branding';
+			pattern: '/admin/synq-branding';
+		};
+		'synq-keycloak': {
+			pathname: '/admin/synq-keycloak';
+			pattern: '/admin/synq-keycloak';
+		};
+		'synq-sidebar': {
+			pathname: '/admin/synq-sidebar';
+			pattern: '/admin/synq-sidebar';
+		};
+		'synq-permissions': {
+			pathname: '/admin/synq-permissions';
+			pattern: '/admin/synq-permissions';
+		};
+		'synq-workspace-templates': {
+			pathname: '/admin/synq-workspace-templates';
+			pattern: '/admin/synq-workspace-templates';
+		};
+		'synq-jitsi': {
+			pathname: '/admin/synq-jitsi';
+			pattern: '/admin/synq-jitsi';
+		};
+		'synq-ux': {
+			pathname: '/admin/synq-ux';
+			pattern: '/admin/synq-ux';
+		};
+		'synq-docs': {
+			pathname: '/admin/synq-docs';
+			pattern: '/admin/synq-docs';
+		};
+		'synq-readonly-channels': {
+			pathname: '/admin/synq-readonly-channels';
+			pattern: '/admin/synq-readonly-channels';
+		};
+		'synq-analytics': {
+			pathname: '/admin/synq-analytics';
+			pattern: '/admin/synq-analytics';
+		};
+		'synq-workflows': {
+			pathname: '/admin/synq-workflows';
+			pattern: '/admin/synq-workflows';
+		};
+		'synq-bridge': {
+			pathname: '/admin/synq-bridge';
+			pattern: '/admin/synq-bridge';
+		};
 	}
 }
 
@@ -245,4 +293,64 @@ registerAdminRoute('/subscription', {
 registerAdminRoute('/feature-preview', {
 	name: 'admin-feature-preview',
 	component: lazy(() => import('./featurePreview/AdminFeaturePreviewRoute')),
+});
+
+registerAdminRoute('/synq-branding', {
+	name: 'synq-branding',
+	component: lazy(() => import('./synq-branding/SynqBrandingRoute')),
+});
+
+registerAdminRoute('/synq-keycloak', {
+	name: 'synq-keycloak',
+	component: lazy(() => import('./synq-keycloak/SynqKeycloakRoute')),
+});
+
+registerAdminRoute('/synq-sidebar', {
+	name: 'synq-sidebar',
+	component: lazy(() => import('./synq-sidebar/SynqSidebarRoute')),
+});
+
+registerAdminRoute('/synq-permissions', {
+	name: 'synq-permissions',
+	component: lazy(() => import('./synq-permissions/SynqPermissionsRoute')),
+});
+
+registerAdminRoute('/synq-workspace-templates', {
+	name: 'synq-workspace-templates',
+	component: lazy(() => import('./synq-workspace-templates/SynqWorkspaceTemplatesRoute')),
+});
+
+registerAdminRoute('/synq-jitsi', {
+	name: 'synq-jitsi',
+	component: lazy(() => import('./synq-jitsi/SynqJitsiRoute')),
+});
+
+registerAdminRoute('/synq-ux', {
+	name: 'synq-ux',
+	component: lazy(() => import('./synq-ux/SynqUXRoute')),
+});
+
+registerAdminRoute('/synq-docs', {
+	name: 'synq-docs',
+	component: lazy(() => import('./synq-docs/SynqDocsRoute')),
+});
+
+registerAdminRoute('/synq-readonly-channels', {
+	name: 'synq-readonly-channels',
+	component: lazy(() => import('./synq-readonly-channels/SynqReadOnlyChannelsRoute')),
+});
+
+registerAdminRoute('/synq-analytics', {
+	name: 'synq-analytics',
+	component: lazy(() => import('./synq-analytics/SynqAnalyticsRoute')),
+});
+
+registerAdminRoute('/synq-workflows', {
+	name: 'synq-workflows',
+	component: lazy(() => import('./synq-workflows/SynqWorkflowsRoute')),
+});
+
+registerAdminRoute('/synq-bridge', {
+	name: 'synq-bridge',
+	component: lazy(() => import('./synq-bridge/SynqBridgeRoute')),
 });

@@ -36,6 +36,18 @@ import { createUserDataSettings } from './userDataDownload';
 import { createVConfSettings } from './video-conference';
 import { createWebDavSettings } from './webdav';
 import { createWebRTCSettings } from './webrtc';
+import { createSynqBrandingSettings } from './synq-branding';
+import { createSynqKeycloakSettings } from './synq-keycloak';
+import { createSynqSidebarSettings } from './synq-sidebar';
+import { createSynqPermissionsSettings } from './synq-permissions';
+import { createSynqWorkspaceTemplatesSettings } from './synq-workspace-templates';
+import { createSynqJitsiSettings } from './synq-jitsi';
+import { createSynqUXSettings } from './synq-ux';
+import { createSynqDocsSettings } from './synq-docs';
+import { createSynqReadOnlyChannelsSettings } from './synq-readonly-channels';
+import { createSynqAnalyticsSettings } from './synq-analytics';
+import { createSynqWorkflowsSettings } from './synq-workflows';
+import { createSynqBridgeSettings } from './synq-bridge';
 
 await Promise.all([
 	createAccountSettings(),
@@ -76,4 +88,16 @@ await Promise.all([
 	createUserDataSettings(),
 	createWebDavSettings(),
 	createWebRTCSettings(),
+	createSynqBrandingSettings(),
+	createSynqKeycloakSettings(),
+	createSynqSidebarSettings(),
+	createSynqPermissionsSettings(),
+	createSynqWorkspaceTemplatesSettings(),
+	createSynqJitsiSettings(),
+	createSynqUXSettings(),
+	createSynqDocsSettings(),
+	createSynqReadOnlyChannelsSettings(),
+	createSynqAnalyticsSettings(),
+	createSynqWorkflowsSettings(),
+	createSynqBridgeSettings(),
 ]);

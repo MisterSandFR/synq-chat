@@ -1,0 +1,47 @@
+version: "3.9"
+
+networks:
+  traefik:
+    external: true
+  synq_${SLUG}:
+
+volumes:
+  mongo_${SLUG}:
+  uploads_${SLUG}:
+
+services:
+  mongo_${SLUG}:
+    image: mongo:6
+    command: ["bash","-lc","mongod --replSet rs0 --oplogSize 128 --bind_ip_all"]
+    networks: [synq_${SLUG}]
+    volumes:
+      - mongo_${SLUG}:/data/db
+    restart: unless-stopped
+
+  mongo-init_${SLUG}:
+    image: mongo:6
+    depends_on: [mongo_${SLUG}]
+    command: ["bash","-lc","sleep 3 && mongo --host mongo_${SLUG}:27017 --eval 'rs.initiate({_id:\"rs0\",members:[{_id:0,host:\"mongo_${SLUG}:27017\"}]})' || true"]
+    networks: [synq_${SLUG}]
+    restart: "no"
+
+  rc_${SLUG}:
+    image: registry.rocket.chat/rocketchat/rocket.chat:latest
+    depends_on: [mongo_${SLUG}, mongo-init_${SLUG}]
+    environment:
+      PORT: 3000
+      ROOT_URL: https://${FQDN}
+      MONGO_URL: mongodb://mongo_${SLUG}:27017/rocketchat?replicaSet=rs0
+      MONGO_OPLOG_URL: mongodb://mongo_${SLUG}:27017/local?replicaSet=rs0
+      Jitsi_Enabled: "true"
+      Jitsi_Domain: ${JITSI_DOMAIN}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${SLUG}.rule=Host(`${FQDN}`)
+      - traefik.http.routers.${SLUG}.entrypoints=websecure
+      - traefik.http.services.${SLUG}.loadbalancer.server.port=3000
+      - traefik.http.routers.${SLUG}.tls.certresolver=le
+    networks: [traefik, synq_${SLUG}]
+    volumes:
+      - uploads_${SLUG}:/app/uploads
+    restart: unless-stopped

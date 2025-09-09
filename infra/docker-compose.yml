@@ -1,0 +1,47 @@
+version: "3.9"
+
+networks:
+  traefik:
+    external: false
+
+volumes:
+  traefik_letsencrypt:
+
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [traefik]
+    volumes:
+      - traefik_letsencrypt:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  orchestrator:
+    build: ../orchestrator
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    networks: [traefik]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./workspaces:/opt/synq/infra/workspaces
+      - ./templates:/opt/synq/infra/templates
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.orch.rule=Host(`${ORCH_FQDN}`)
+      - traefik.http.routers.orch.entrypoints=websecure
+      - traefik.http.routers.orch.tls.certresolver=le
+    restart: unless-stopped

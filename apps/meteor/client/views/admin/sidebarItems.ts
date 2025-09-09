@@ -144,4 +144,58 @@ export const {
 		permissionGranted: (): boolean =>
 			hasAtLeastOnePermission(['view-privileged-setting', 'edit-privileged-setting', 'manage-selected-settings']),
 	},
+	{
+		href: '/admin/synq-permissions',
+		i18nLabel: 'Synq_Permissions',
+		icon: 'shield-alt',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-workspace-templates',
+		i18nLabel: 'Synq_Workspace_Templates',
+		icon: 'rocket',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-jitsi',
+		i18nLabel: 'Synq_Jitsi',
+		icon: 'phone',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-ux',
+		i18nLabel: 'Synq_UX',
+		icon: 'user',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-docs',
+		i18nLabel: 'Synq_Docs',
+		icon: 'document',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-readonly-channels',
+		i18nLabel: 'Synq_ReadOnly_Channels',
+		icon: 'lock',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-analytics',
+		i18nLabel: 'Synq_Analytics',
+		icon: 'chart-line',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-workflows',
+		i18nLabel: 'Synq_Workflows',
+		icon: 'workflow',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
+	{
+		href: '/admin/synq-bridge',
+		i18nLabel: 'Synq_Bridge',
+		icon: 'bridge',
+		permissionGranted: (): boolean => hasPermission('manage-settings'),
+	},
 ]);
