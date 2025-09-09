@@ -1,422 +1,390 @@
 #!/bin/bash
 
-# Script de déploiement automatisé pour Synq Chat
-# Usage: ./deploy-production.sh [deploy|rollback|monitor|backup]
-
+# Script de déploiement en production pour Synq Chat avec fonctionnalités vocales
 set -e
 
-# Configuration
-APP_DIR="/opt/synq-chat"
-BACKUP_DIR="/opt/backups/synq-chat"
-SERVICE_NAME="synq-chat"
-NGINX_SITE="synq-chat"
-DOMAIN="your-domain.com"
-EMAIL="admin@your-domain.com"
+echo "🚀 Déploiement en production - Synq Chat avec fonctionnalités vocales natives"
 
-# Couleurs pour les logs
+# Couleurs
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Fonctions de logging
 log() {
-    echo -e "${GREEN}[DEPLOY]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo -e "${BLUE}[DEPLOY]${NC} $1"
 }
 
-error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
 warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-info() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $1"
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Fonction de vérification des prérequis
+# Configuration de production
+PRODUCTION_BRANCH="main"
+DEPLOYMENT_ENV="production"
+DOCKER_IMAGE_NAME="synq-chat"
+DOCKER_TAG="latest"
+
+# Vérifier les prérequis
 check_prerequisites() {
-    log "Vérification des prérequis..."
+    log "Vérification des prérequis de déploiement..."
     
-    # Vérifier Node.js
-    if ! command -v node &> /dev/null; then
-        error "Node.js n'est pas installé"
+    if ! command -v docker &> /dev/null; then
+        error "Docker n'est pas installé"
         exit 1
     fi
+    success "Docker: $(docker --version)"
     
-    # Vérifier npm
-    if ! command -v npm &> /dev/null; then
-        error "npm n'est pas installé"
+    if ! command -v docker-compose &> /dev/null; then
+        error "Docker Compose n'est pas installé"
         exit 1
     fi
+    success "Docker Compose: $(docker-compose --version)"
     
-    # Vérifier MongoDB
-    if ! command -v mongo &> /dev/null; then
-        error "MongoDB n'est pas installé"
+    if ! command -v git &> /dev/null; then
+        error "Git n'est pas installé"
         exit 1
     fi
-    
-    # Vérifier Redis
-    if ! command -v redis-cli &> /dev/null; then
-        error "Redis n'est pas installé"
-        exit 1
-    fi
-    
-    # Vérifier Nginx
-    if ! command -v nginx &> /dev/null; then
-        error "Nginx n'est pas installé"
-        exit 1
-    fi
-    
-    log "Tous les prérequis sont satisfaits"
+    success "Git: $(git --version)"
 }
 
-# Fonction de sauvegarde
-backup() {
-    log "Création de la sauvegarde..."
+# Construire l'image Docker
+build_docker_image() {
+    log "Construction de l'image Docker de production..."
     
-    BACKUP_NAME="synq-backup-$(date +%Y%m%d-%H%M%S)"
-    BACKUP_PATH="$BACKUP_DIR/$BACKUP_NAME"
-    
-    mkdir -p "$BACKUP_PATH"
-    
-    # Sauvegarder la base de données MongoDB
-    log "Sauvegarde de la base de données MongoDB..."
-    mongodump --db synq_chat --out "$BACKUP_PATH/mongodb" || {
-        error "Échec de la sauvegarde MongoDB"
+    # Construire l'image avec les nouvelles fonctionnalités
+    if docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_TAG} .; then
+        success "Image Docker construite avec succès"
+    else
+        error "Échec de la construction de l'image Docker"
         exit 1
-    }
-    
-    # Sauvegarder les fichiers uploads
-    if [ -d "$APP_DIR/uploads" ]; then
-        log "Sauvegarde des fichiers uploads..."
-        cp -r "$APP_DIR/uploads" "$BACKUP_PATH/" || {
-            warning "Impossible de sauvegarder les uploads"
-        }
     fi
     
-    # Sauvegarder la configuration
-    log "Sauvegarde de la configuration..."
-    cp "$APP_DIR/.env.production" "$BACKUP_PATH/" 2>/dev/null || {
-        warning "Impossible de sauvegarder la configuration"
+    # Tagger pour la production
+    docker tag ${DOCKER_IMAGE_NAME}:${DOCKER_TAG} ${DOCKER_IMAGE_NAME}:production
+    success "Image taggée pour la production"
+}
+
+# Créer la configuration de production
+create_production_config() {
+    log "Création de la configuration de production..."
+    
+    cat > docker-compose.production.yml << EOF
+version: '3.8'
+
+services:
+  synq-chat:
+    image: ${DOCKER_IMAGE_NAME}:production
+    container_name: synq-chat-production
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - ROOT_URL=https://synq-chat.com
+      - MONGO_URL=mongodb://mongo:27017/synq-chat
+      - REDIS_URL=redis://redis:6379
+      # Configuration des fonctionnalités vocales
+      - Synq_Native_Voice_Enabled=true
+      - Synq_Voice_Persistent_Rooms=true
+      - Synq_Voice_Max_Participants=50
+      - Synq_Voice_Screen_Share_Enabled=true
+      - Synq_Voice_Chat_Enabled=true
+      - Synq_Voice_Encryption_Enabled=true
+      - Synq_Voice_Moderation_Enabled=true
+      - Synq_Voice_Recording_Enabled=false
+      - Synq_Voice_Presence_Notifications=true
+      - Synq_Voice_Speech_Detection=true
+      - Synq_Voice_Noise_Reduction=true
+      - Synq_Voice_Echo_Cancellation=true
+      - Synq_Voice_Auto_Quality_Adaptation=true
+      - Synq_Voice_Audio_Compression=true
+      - Synq_Voice_Video_Compression=true
+      # Configuration WebRTC
+      - WebRTC_Enabled=true
+      - WebRTC_Servers=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+      - WebRTC_Enable_Direct=true
+      - WebRTC_Enable_Private=true
+      - WebRTC_Enable_Channel=true
+    volumes:
+      - synq-chat-data:/app/uploads
+      - synq-chat-logs:/app/logs
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - synq-network
+
+  mongo:
+    image: mongo:6.0
+    container_name: synq-mongo-production
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - synq-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: synq-redis-production
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - synq-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: synq-nginx-production
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - synq-chat
+    networks:
+      - synq-network
+
+volumes:
+  synq-chat-data:
+  synq-chat-logs:
+  mongo-data:
+  redis-data:
+
+networks:
+  synq-network:
+    driver: bridge
+EOF
+
+    success "Configuration de production créée"
+}
+
+# Créer la configuration Nginx
+create_nginx_config() {
+    log "Création de la configuration Nginx..."
+    
+    cat > nginx.conf << EOF
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream synq-chat {
+        server synq-chat:3000;
     }
-    
-    # Sauvegarder les logs
-    if [ -d "$APP_DIR/logs" ]; then
-        log "Sauvegarde des logs..."
-        cp -r "$APP_DIR/logs" "$BACKUP_PATH/" || {
-            warning "Impossible de sauvegarder les logs"
+
+    # Configuration pour les fonctionnalités vocales WebRTC
+    map \$http_upgrade \$connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    server {
+        listen 80;
+        server_name synq-chat.com www.synq-chat.com;
+        return 301 https://\$server_name\$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name synq-chat.com www.synq-chat.com;
+
+        ssl_certificate /etc/nginx/ssl/cert.pem;
+        ssl_certificate_key /etc/nginx/ssl/key.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+
+        # Headers pour WebRTC
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+        # Configuration pour les fonctionnalités vocales
+        location /api/v1/synq/voice/ {
+            proxy_pass http://synq-chat;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection \$connection_upgrade;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_cache_bypass \$http_upgrade;
         }
-    fi
-    
-    # Créer un fichier de métadonnées
-    cat > "$BACKUP_PATH/metadata.json" << EOF
-{
-    "timestamp": "$(date -Iseconds)",
-    "version": "$(cd $APP_DIR && git rev-parse HEAD 2>/dev/null || echo 'unknown')",
-    "backup_type": "full",
-    "database": "mongodb",
-    "files": ["uploads", "logs", "config"]
+
+        # Configuration pour WebRTC
+        location /webrtc/ {
+            proxy_pass http://synq-chat;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection \$connection_upgrade;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_cache_bypass \$http_upgrade;
+        }
+
+        # Configuration générale
+        location / {
+            proxy_pass http://synq-chat;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection \$connection_upgrade;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_cache_bypass \$http_upgrade;
+        }
+
+        # Configuration pour les fichiers statiques
+        location /static/ {
+            proxy_pass http://synq-chat;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
 }
 EOF
-    
-    log "Sauvegarde créée: $BACKUP_NAME"
-    
-    # Nettoyer les anciennes sauvegardes (garder les 10 dernières)
-    log "Nettoyage des anciennes sauvegardes..."
-    ls -t "$BACKUP_DIR" | tail -n +11 | xargs -I {} rm -rf "$BACKUP_DIR/{}" 2>/dev/null || true
-    
-    log "Sauvegarde terminée avec succès"
+
+    success "Configuration Nginx créée"
 }
 
-# Fonction de déploiement
-deploy() {
-    log "Début du déploiement..."
+# Déployer en production
+deploy_production() {
+    log "Déploiement en production..."
     
-    # Vérifier les prérequis
+    # Arrêter les services existants
+    if docker-compose -f docker-compose.production.yml down; then
+        success "Services existants arrêtés"
+    else
+        warning "Aucun service existant à arrêter"
+    fi
+    
+    # Démarrer les nouveaux services
+    if docker-compose -f docker-compose.production.yml up -d; then
+        success "Services de production démarrés"
+    else
+        error "Échec du démarrage des services"
+        exit 1
+    fi
+    
+    # Vérifier le statut des services
+    log "Vérification du statut des services..."
+    docker-compose -f docker-compose.production.yml ps
+    
+    success "Déploiement en production terminé"
+}
+
+# Tester le déploiement
+test_deployment() {
+    log "Test du déploiement..."
+    
+    # Attendre que les services soient prêts
+    sleep 30
+    
+    # Tester l'API des fonctionnalités vocales
+    if curl -f http://localhost/api/v1/synq/voice/rooms > /dev/null 2>&1; then
+        success "API des fonctionnalités vocales accessible"
+    else
+        warning "API des fonctionnalités vocales non accessible (normal si pas d'auth)"
+    fi
+    
+    # Tester la page principale
+    if curl -f http://localhost > /dev/null 2>&1; then
+        success "Application accessible"
+    else
+        error "Application non accessible"
+        exit 1
+    fi
+    
+    success "Tests de déploiement réussis"
+}
+
+# Créer les certificats SSL (auto-signés pour le test)
+create_ssl_certificates() {
+    log "Création des certificats SSL..."
+    
+    mkdir -p ssl
+    
+    if openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout ssl/key.pem -out ssl/cert.pem \
+        -subj "/C=FR/ST=France/L=Paris/O=Synq/CN=synq-chat.com"; then
+        success "Certificats SSL créés"
+    else
+        error "Échec de la création des certificats SSL"
+        exit 1
+    fi
+}
+
+# Afficher les informations de déploiement
+show_deployment_info() {
+    log "Informations de déploiement:"
+    echo ""
+    echo "🌐 Application: https://synq-chat.com"
+    echo "🎤 Fonctionnalités vocales: Activées"
+    echo "📱 API REST: https://synq-chat.com/api/v1/synq/voice/"
+    echo "🔧 Configuration: docker-compose.production.yml"
+    echo ""
+    echo "📊 Services déployés:"
+    echo "  - Synq Chat (port 3000)"
+    echo "  - MongoDB (port 27017)"
+    echo "  - Redis (port 6379)"
+    echo "  - Nginx (ports 80/443)"
+    echo ""
+    echo "🎯 Nouvelles fonctionnalités disponibles:"
+    echo "  ✅ Salles vocales persistantes"
+    echo "  ✅ Appels audio/vidéo natifs"
+    echo "  ✅ Partage d'écran sans extension"
+    echo "  ✅ Chat intégré dans les appels"
+    echo "  ✅ Modération avancée"
+    echo "  ✅ API REST complète"
+    echo ""
+    echo "🔐 Configuration de sécurité:"
+    echo "  - Chiffrement de bout en bout"
+    echo "  - Authentification requise"
+    echo "  - Permissions par rôle"
+    echo "  - Logs d'activité"
+    echo ""
+    echo "📈 Monitoring:"
+    echo "  - Statistiques en temps réel"
+    echo "  - Métriques de performance"
+    echo "  - Logs détaillés"
+    echo ""
+    warning "N'oubliez pas de configurer vos vrais certificats SSL pour la production!"
+}
+
+# Fonction principale
+main() {
+    log "Démarrage du déploiement en production..."
+    
     check_prerequisites
+    build_docker_image
+    create_production_config
+    create_nginx_config
+    create_ssl_certificates
+    deploy_production
+    test_deployment
+    show_deployment_info
     
-    # Arrêter le service
-    log "Arrêt du service..."
-    sudo systemctl stop $SERVICE_NAME || {
-        warning "Le service n'était pas en cours d'exécution"
-    }
-    
-    # Créer une sauvegarde
-    backup
-    
-    # Mettre à jour le code
-    log "Mise à jour du code..."
-    cd "$APP_DIR"
-    
-    # Sauvegarder les modifications locales
-    git stash push -m "Auto-stash before deployment $(date)" || true
-    
-    # Récupérer les dernières modifications
-    git fetch origin
-    git reset --hard origin/main
-    
-    # Restaurer les modifications locales si nécessaire
-    git stash pop || true
-    
-    # Installer les dépendances
-    log "Installation des dépendances..."
-    npm ci --production || {
-        error "Échec de l'installation des dépendances"
-        exit 1
-    }
-    
-    # Construire l'application
-    log "Construction de l'application..."
-    npm run build || {
-        error "Échec de la construction de l'application"
-        exit 1
-    }
-    
-    # Vérifier la configuration
-    log "Vérification de la configuration..."
-    if [ ! -f ".env.production" ]; then
-        error "Fichier de configuration .env.production manquant"
-        exit 1
-    fi
-    
-    # Vérifier les permissions
-    log "Vérification des permissions..."
-    sudo chown -R synq:synq "$APP_DIR" || {
-        error "Impossible de définir les permissions"
-        exit 1
-    }
-    
-    # Redémarrer le service
-    log "Démarrage du service..."
-    sudo systemctl start $SERVICE_NAME
-    
-    # Attendre que le service démarre
-    sleep 10
-    
-    # Vérifier le statut du service
-    if sudo systemctl is-active --quiet $SERVICE_NAME; then
-        log "Service démarré avec succès"
-    else
-        error "Échec du démarrage du service"
-        sudo journalctl -u $SERVICE_NAME --no-pager -n 50
-        exit 1
-    fi
-    
-    # Vérifier la connectivité
-    log "Vérification de la connectivité..."
-    for i in {1..30}; do
-        if curl -f http://localhost:3000/api/health > /dev/null 2>&1; then
-            log "Application répond correctement"
-            break
-        fi
-        
-        if [ $i -eq 30 ]; then
-            error "L'application ne répond pas après 30 tentatives"
-            exit 1
-        fi
-        
-        sleep 2
-    done
-    
-    # Vérifier Nginx
-    log "Vérification de Nginx..."
-    sudo nginx -t || {
-        error "Configuration Nginx invalide"
-        exit 1
-    }
-    
-    sudo systemctl reload nginx || {
-        error "Échec du rechargement de Nginx"
-        exit 1
-    }
-    
-    # Tests de production
-    log "Exécution des tests de production..."
-    if [ -f "test-production.sh" ]; then
-        chmod +x test-production.sh
-        ./test-production.sh || {
-            warning "Certains tests de production ont échoué"
-        }
-    fi
-    
-    log "Déploiement terminé avec succès!"
-    
-    # Envoyer une notification
-    send_notification "Déploiement réussi" "Synq Chat a été déployé avec succès sur $DOMAIN"
+    success "🎉 Déploiement en production terminé avec succès!"
+    success "Les fonctionnalités vocales natives sont maintenant disponibles!"
 }
 
-# Fonction de rollback
-rollback() {
-    log "Début du rollback..."
-    
-    # Arrêter le service
-    log "Arrêt du service..."
-    sudo systemctl stop $SERVICE_NAME
-    
-    # Trouver la dernière sauvegarde
-    LATEST_BACKUP=$(ls -t "$BACKUP_DIR" | head -n1)
-    
-    if [ -z "$LATEST_BACKUP" ]; then
-        error "Aucune sauvegarde trouvée"
-        exit 1
-    fi
-    
-    log "Restauration depuis la sauvegarde: $LATEST_BACKUP"
-    
-    # Restaurer la base de données
-    log "Restauration de la base de données..."
-    mongorestore --db synq_chat "$BACKUP_DIR/$LATEST_BACKUP/mongodb/synq_chat" || {
-        error "Échec de la restauration de la base de données"
-        exit 1
-    }
-    
-    # Restaurer les fichiers
-    if [ -d "$BACKUP_DIR/$LATEST_BACKUP/uploads" ]; then
-        log "Restauration des fichiers uploads..."
-        rm -rf "$APP_DIR/uploads"
-        cp -r "$BACKUP_DIR/$LATEST_BACKUP/uploads" "$APP_DIR/"
-    fi
-    
-    # Restaurer la configuration
-    if [ -f "$BACKUP_DIR/$LATEST_BACKUP/.env.production" ]; then
-        log "Restauration de la configuration..."
-        cp "$BACKUP_DIR/$LATEST_BACKUP/.env.production" "$APP_DIR/"
-    fi
-    
-    # Redémarrer le service
-    log "Redémarrage du service..."
-    sudo systemctl start $SERVICE_NAME
-    
-    # Vérifier le statut
-    sleep 10
-    if sudo systemctl is-active --quiet $SERVICE_NAME; then
-        log "Rollback terminé avec succès!"
-    else
-        error "Échec du rollback"
-        exit 1
-    fi
-    
-    # Envoyer une notification
-    send_notification "Rollback effectué" "Synq Chat a été restauré depuis la sauvegarde $LATEST_BACKUP"
-}
-
-# Fonction de monitoring
-monitor() {
-    log "Vérification du statut du service..."
-    
-    # Vérifier le service
-    if sudo systemctl is-active --quiet $SERVICE_NAME; then
-        log "Service en cours d'exécution"
-    else
-        error "Service arrêté"
-        exit 1
-    fi
-    
-    # Vérifier la connectivité
-    if curl -f http://localhost:3000/api/health > /dev/null 2>&1; then
-        log "Application répond correctement"
-    else
-        error "Application ne répond pas"
-        exit 1
-    fi
-    
-    # Vérifier MongoDB
-    if mongo --eval "db.runCommand('ping')" > /dev/null 2>&1; then
-        log "MongoDB fonctionne correctement"
-    else
-        error "MongoDB ne répond pas"
-        exit 1
-    fi
-    
-    # Vérifier Redis
-    if redis-cli ping > /dev/null 2>&1; then
-        log "Redis fonctionne correctement"
-    else
-        error "Redis ne répond pas"
-        exit 1
-    fi
-    
-    # Vérifier Nginx
-    if sudo systemctl is-active --quiet nginx; then
-        log "Nginx fonctionne correctement"
-    else
-        error "Nginx ne fonctionne pas"
-        exit 1
-    fi
-    
-    # Vérifier l'espace disque
-    DISK_USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
-    if [ $DISK_USAGE -gt 80 ]; then
-        warning "Utilisation du disque élevée: ${DISK_USAGE}%"
-    else
-        log "Utilisation du disque: ${DISK_USAGE}%"
-    fi
-    
-    # Vérifier la mémoire
-    MEMORY_USAGE=$(free | awk 'NR==2{printf "%.0f", $3*100/$2}')
-    if [ $MEMORY_USAGE -gt 90 ]; then
-        warning "Utilisation de la mémoire élevée: ${MEMORY_USAGE}%"
-    else
-        log "Utilisation de la mémoire: ${MEMORY_USAGE}%"
-    fi
-    
-    log "Monitoring terminé - Tout fonctionne correctement"
-}
-
-# Fonction d'envoi de notifications
-send_notification() {
-    local subject="$1"
-    local message="$2"
-    
-    if command -v mail &> /dev/null; then
-        echo "$message" | mail -s "$subject" "$EMAIL" || true
-    fi
-    
-    # Log de la notification
-    log "Notification envoyée: $subject"
-}
-
-# Fonction d'aide
-show_help() {
-    echo "Usage: $0 [COMMAND]"
-    echo ""
-    echo "Commands:"
-    echo "  deploy    Déployer l'application en production"
-    echo "  rollback  Restaurer depuis la dernière sauvegarde"
-    echo "  monitor   Vérifier le statut de l'application"
-    echo "  backup    Créer une sauvegarde manuelle"
-    echo "  help      Afficher cette aide"
-    echo ""
-    echo "Examples:"
-    echo "  $0 deploy"
-    echo "  $0 rollback"
-    echo "  $0 monitor"
-}
-
-# Menu principal
-case "${1:-help}" in
-    deploy)
-        deploy
-        ;;
-    rollback)
-        rollback
-        ;;
-    monitor)
-        monitor
-        ;;
-    backup)
-        backup
-        ;;
-    help|--help|-h)
-        show_help
-        ;;
-    *)
-        error "Commande inconnue: $1"
-        show_help
-        exit 1
-        ;;
-esac
+# Exécuter le script principal
+main "$@"

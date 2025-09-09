@@ -1,0 +1,26 @@
+{
+  "admin": {
+    "create-voice-rooms": true,
+    "join-voice-rooms": true,
+    "moderate-voice-rooms": true,
+    "delete-voice-rooms": true,
+    "record-calls": true,
+    "manage-participants": true
+  },
+  "moderator": {
+    "create-voice-rooms": true,
+    "join-voice-rooms": true,
+    "moderate-voice-rooms": true,
+    "delete-voice-rooms": false,
+    "record-calls": false,
+    "manage-participants": true
+  },
+  "user": {
+    "create-voice-rooms": false,
+    "join-voice-rooms": true,
+    "moderate-voice-rooms": false,
+    "delete-voice-rooms": false,
+    "record-calls": false,
+    "manage-participants": false
+  }
+}

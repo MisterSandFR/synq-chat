@@ -1,0 +1,26 @@
+[
+  {
+    "channelId": "GENERAL",
+    "name": "Général - Voice",
+    "roomType": "voice",
+    "description": "Salle vocale générale pour discussions informelles"
+  },
+  {
+    "channelId": "GENERAL", 
+    "name": "Général - Conference",
+    "roomType": "conference",
+    "description": "Salle de conférence pour réunions importantes"
+  },
+  {
+    "channelId": "DEVELOPMENT",
+    "name": "Dev - Voice",
+    "roomType": "voice", 
+    "description": "Salle vocale pour l'équipe de développement"
+  },
+  {
+    "channelId": "SUPPORT",
+    "name": "Support - Voice",
+    "roomType": "voice",
+    "description": "Salle vocale pour l'équipe de support"
+  }
+]
