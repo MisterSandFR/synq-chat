@@ -1,0 +1,6 @@
+#!/usr/bin/expect -f
+set password "VW0cERF1rKZ4NtAy"
+spawn ssh debian@51.68.228.180 "cd /tmp/synq-chat-build && docker build -t synq-chat:latest ."
+expect "password:"
+send "$password\r"
+expect eof
