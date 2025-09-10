@@ -442,3 +442,5 @@ const EditTemplateForm = ({ template, permissions, onUpdate, onCancel }: EditTem
 };
 
 export default SynqRoleTemplates;
+
+

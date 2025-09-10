@@ -157,3 +157,5 @@ const SynqLoginForm = (): ReactElement => {
 };
 
 export default SynqLoginForm;
+
+

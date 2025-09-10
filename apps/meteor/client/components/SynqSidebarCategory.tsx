@@ -151,3 +151,5 @@ const SynqSidebarCategory = ({
 };
 
 export default SynqSidebarCategory;
+
+

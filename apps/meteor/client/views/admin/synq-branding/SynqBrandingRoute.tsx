@@ -16,3 +16,5 @@ const SynqBrandingRoute = (): ReactElement => {
 };
 
 export default memo(SynqBrandingRoute);
+
+

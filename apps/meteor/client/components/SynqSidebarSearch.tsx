@@ -56,3 +56,5 @@ const SynqSidebarSearch = ({
 };
 
 export default SynqSidebarSearch;
+
+

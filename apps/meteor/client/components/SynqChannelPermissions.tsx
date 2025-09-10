@@ -286,3 +286,5 @@ const CreateRoleForm = ({ onCreate, onCancel }: CreateRoleFormProps): ReactEleme
 };
 
 export default SynqChannelPermissions;
+
+

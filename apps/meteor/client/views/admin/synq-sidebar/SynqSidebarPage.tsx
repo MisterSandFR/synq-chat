@@ -218,3 +218,5 @@ const SynqSidebarPage = (): ReactElement => {
 };
 
 export default SynqSidebarPage;
+
+

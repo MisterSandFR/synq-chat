@@ -50,3 +50,5 @@ const SynqKeycloakLoginButton = (): ReactElement => {
 };
 
 export default SynqKeycloakLoginButton;
+
+

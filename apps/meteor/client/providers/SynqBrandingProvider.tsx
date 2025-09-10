@@ -14,3 +14,4 @@ const SynqBrandingProvider = ({ children }: SynqBrandingProviderProps): ReactEle
 };
 
 export default SynqBrandingProvider;
+

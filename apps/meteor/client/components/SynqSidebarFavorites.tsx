@@ -111,3 +111,5 @@ const SynqSidebarFavorites = ({
 };
 
 export default SynqSidebarFavorites;
+
+

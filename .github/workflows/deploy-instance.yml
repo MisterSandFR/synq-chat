@@ -1,0 +1,259 @@
+name: Deploy Synq Chat Instance
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: 'Deployment ID from database'
+        required: true
+        type: string
+      user_id:
+        description: 'User ID'
+        required: true
+        type: string
+      user_email:
+        description: 'User email'
+        required: true
+        type: string
+      instance_name:
+        description: 'Instance name'
+        required: true
+        type: string
+      deployment_type:
+        description: 'Deployment type'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DEPLOYMENT_SERVER: ${{ secrets.DEPLOYMENT_SERVER }}
+  SSH_KEY: ${{ secrets.DEPLOYMENT_SSH_KEY }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=${{ inputs.instance_name }}-latest
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            INSTANCE_NAME=${{ inputs.instance_name }}
+            USER_EMAIL=${{ inputs.user_email }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Generate instance configuration
+        id: config
+        run: |
+          # Générer un port unique basé sur l'ID utilisateur
+          PORT=$((3000 + $(echo ${{ inputs.user_id }} | sed 's/[^0-9]//g' | cut -c1-3)))
+          echo "port=$PORT" >> $GITHUB_OUTPUT
+          
+          # Générer le sous-domaine
+          SUBDOMAIN="${{ inputs.instance_name }}"
+          echo "subdomain=$SUBDOMAIN" >> $GITHUB_OUTPUT
+          
+          # URL complète
+          INSTANCE_URL="https://$SUBDOMAIN.synq.team"
+          echo "instance_url=$INSTANCE_URL" >> $GITHUB_OUTPUT
+      
+      - name: Deploy to server
+        env:
+          INSTANCE_PORT: ${{ steps.config.outputs.port }}
+          INSTANCE_SUBDOMAIN: ${{ steps.config.outputs.subdomain }}
+          INSTANCE_URL: ${{ steps.config.outputs.instance_url }}
+        run: |
+          # Créer le script de déploiement
+          cat > deploy.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          INSTANCE_NAME="${{ inputs.instance_name }}"
+          USER_ID="${{ inputs.user_id }}"
+          USER_EMAIL="${{ inputs.user_email }}"
+          PORT="${INSTANCE_PORT}"
+          SUBDOMAIN="${INSTANCE_SUBDOMAIN}"
+          IMAGE_TAG="${{ needs.build-and-push.outputs.image-tag }}"
+          
+          # Créer le répertoire pour l'instance
+          mkdir -p /opt/synq-chat-instances/$INSTANCE_NAME
+          cd /opt/synq-chat-instances/$INSTANCE_NAME
+          
+          # Créer le docker-compose.yml
+          cat > docker-compose.yml << COMPOSE
+          version: '3.8'
+          services:
+            synq-chat:
+              image: $IMAGE_TAG
+              container_name: $INSTANCE_NAME
+              restart: unless-stopped
+              ports:
+                - "$PORT:3000"
+              environment:
+                ROOT_URL: https://$SUBDOMAIN.synq.team
+                PORT: 3000
+                MONGO_URL: mongodb://mongo:27017/$INSTANCE_NAME
+                MONGO_OPLOG_URL: mongodb://mongo:27017/local
+                INSTANCE_ID: $USER_ID
+                USER_EMAIL: $USER_EMAIL
+                NODE_ENV: production
+              volumes:
+                - ./uploads:/app/uploads
+                - ./logs:/app/logs
+              networks:
+                - synq-network
+            
+            mongo:
+              image: mongo:6
+              container_name: ${INSTANCE_NAME}-mongo
+              restart: unless-stopped
+              volumes:
+                - ./data/db:/data/db
+                - ./data/dump:/dump
+              command: mongod --replSet rs0 --oplogSize 128
+              networks:
+                - synq-network
+          
+          networks:
+            synq-network:
+              driver: bridge
+          COMPOSE
+          
+          # Démarrer l'instance
+          docker-compose pull
+          docker-compose up -d
+          
+          # Initialiser MongoDB replica set
+          sleep 10
+          docker exec ${INSTANCE_NAME}-mongo mongosh --eval "rs.initiate()"
+          
+          # Configurer Nginx pour le sous-domaine
+          cat > /etc/nginx/sites-available/$INSTANCE_NAME << NGINX
+          server {
+              listen 80;
+              server_name $SUBDOMAIN.synq.team;
+              
+              location / {
+                  return 301 https://\$server_name\$request_uri;
+              }
+          }
+          
+          server {
+              listen 443 ssl http2;
+              server_name $SUBDOMAIN.synq.team;
+              
+              ssl_certificate /etc/letsencrypt/live/synq.team/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/synq.team/privkey.pem;
+              
+              location / {
+                  proxy_pass http://localhost:$PORT;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_set_header X-Forwarded-Host \$host;
+                  proxy_set_header X-Forwarded-Port \$server_port;
+              }
+          }
+          NGINX
+          
+          # Activer le site
+          ln -sf /etc/nginx/sites-available/$INSTANCE_NAME /etc/nginx/sites-enabled/
+          nginx -t && systemctl reload nginx
+          
+          # Attendre que l'instance soit prête
+          echo "Waiting for instance to be ready..."
+          for i in {1..60}; do
+              if curl -s http://localhost:$PORT/api/info > /dev/null; then
+                  echo "Instance is ready!"
+                  break
+              fi
+              sleep 5
+          done
+          EOF
+          
+          # Déployer sur le serveur
+          echo "${{ secrets.DEPLOYMENT_SSH_KEY }}" > deploy_key
+          chmod 600 deploy_key
+          
+          scp -i deploy_key -o StrictHostKeyChecking=no deploy.sh root@${{ secrets.DEPLOYMENT_SERVER }}:/tmp/
+          ssh -i deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DEPLOYMENT_SERVER }} "bash /tmp/deploy.sh"
+          
+          rm deploy_key deploy.sh
+      
+      - name: Notify deployment status
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          INSTANCE_URL="${{ steps.config.outputs.instance_url }}"
+          
+          if [ "$STATUS" = "success" ]; then
+            # Notifier Synq.Team du succès
+            curl -X POST https://synq.team/api/webhooks/deployment-callback \
+              -H "Content-Type: application/json" \
+              -H "X-Webhook-Secret: ${{ secrets.WEBHOOK_SECRET }}" \
+              -d '{
+                "deploymentId": "${{ inputs.deployment_id }}",
+                "instanceUrl": "'$INSTANCE_URL'",
+                "status": "success"
+              }'
+          else
+            # Notifier Synq.Team de l'échec
+            curl -X POST https://synq.team/api/webhooks/deployment-callback \
+              -H "Content-Type: application/json" \
+              -H "X-Webhook-Secret: ${{ secrets.WEBHOOK_SECRET }}" \
+              -d '{
+                "deploymentId": "${{ inputs.deployment_id }}",
+                "status": "failed",
+                "error": "Deployment failed"
+              }'
+          fi

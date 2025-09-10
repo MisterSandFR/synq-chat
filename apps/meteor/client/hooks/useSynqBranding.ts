@@ -151,3 +151,5 @@ export const useSynqBranding = () => {
 		defaultDarkTheme: settings.Synq_Default_Dark_Theme,
 	};
 };
+
+

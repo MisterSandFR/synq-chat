@@ -261,3 +261,5 @@ const SynqBrandingPage = (): ReactElement => {
 };
 
 export default SynqBrandingPage;
+
+

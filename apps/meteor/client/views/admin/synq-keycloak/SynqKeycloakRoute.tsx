@@ -16,3 +16,5 @@ const SynqKeycloakRoute = (): ReactElement => {
 };
 
 export default memo(SynqKeycloakRoute);
+
+

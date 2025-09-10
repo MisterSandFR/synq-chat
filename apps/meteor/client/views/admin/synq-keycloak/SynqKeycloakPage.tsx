@@ -230,3 +230,5 @@ const SynqKeycloakPage = (): ReactElement => {
 };
 
 export default SynqKeycloakPage;
+
+

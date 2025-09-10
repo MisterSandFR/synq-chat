@@ -16,3 +16,5 @@ const SynqSidebarRoute = (): ReactElement => {
 };
 
 export default memo(SynqSidebarRoute);
+
+

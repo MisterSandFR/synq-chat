@@ -36,3 +36,5 @@ Meteor.methods({
 		return synqKeycloakService.isEnabled();
 	},
 });
+
+
