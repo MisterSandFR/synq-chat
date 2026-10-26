@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { api, errorText } from './api';
 import { navigate } from './router';
-import { Avatar, Logo } from './ui';
+import { Logo } from './ui';
 
 export function InviteScreen({ code, onJoined }: { code: string; onJoined: () => Promise<unknown> }) {
 	const [invite, setInvite] = useState<{ workspaceId: string; workspaceName: string } | null>(null);
@@ -28,27 +28,31 @@ export function InviteScreen({ code, onJoined }: { code: string; onJoined: () =>
 	};
 
 	return (
-		<main className='invite'>
+		<main className='center-screen'>
 			<Logo />
-			{error ? (
-				<div className='stack invite-card'>
-					<p className='notice notice-error'>{error}</p>
-					<button type='button' className='button' onClick={() => navigate('/')}>
-						Retour à l’accueil
-					</button>
-				</div>
-			) : invite ? (
-				<div className='stack invite-card'>
-					<Avatar id={invite.workspaceId} name={invite.workspaceName} size={64} />
-					<p className='muted'>Tu es invité à rejoindre</p>
-					<h1 className='invite-name'>{invite.workspaceName}</h1>
-					<button type='button' className='button button-primary' onClick={join} disabled={busy}>
-						Rejoindre l’espace
-					</button>
-				</div>
-			) : (
-				<div className='splash' aria-busy />
-			)}
+			<div className='center-card'>
+				{error ? (
+					<>
+						<p className='notice notice-error'>{error}</p>
+						<button type='button' className='btn' onClick={() => navigate('/espaces')}>
+							Voir mes espaces
+						</button>
+					</>
+				) : invite ? (
+					<>
+						<span className='avatar avatar-square' style={{ width: 64, height: 64, fontSize: 26, background: 'var(--text)', color: 'var(--bg)' }}>
+							{invite.workspaceName.charAt(0).toUpperCase()}
+						</span>
+						<p className='muted'>Tu es invité à rejoindre</p>
+						<h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>{invite.workspaceName}</h1>
+						<button type='button' className='btn btn-primary btn-lg btn-block' onClick={join} disabled={busy}>
+							Rejoindre l’espace
+						</button>
+					</>
+				) : (
+					<div className='spinner' aria-busy />
+				)}
+			</div>
 		</main>
 	);
 }

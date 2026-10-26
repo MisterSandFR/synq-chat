@@ -45,7 +45,7 @@ export function App() {
 	}, [refresh]);
 
 	if (me === undefined) {
-		return <div className='splash' aria-busy />;
+		return <div className='spinner' style={{ height: '100vh' }} aria-busy />;
 	}
 	if (me === null) {
 		return <AuthScreen notice={notice} onSignedIn={refresh} />;

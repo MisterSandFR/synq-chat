@@ -18,6 +18,7 @@ export interface WorkspaceSummary {
 	id: string;
 	name: string;
 	role: Role;
+	accent: string;
 }
 
 export interface Member {
@@ -31,24 +32,31 @@ export interface WorkspaceDetail {
 	id: string;
 	name: string;
 	role: Role;
+	accent: string;
 	members: Member[];
 }
+
+export type ChannelKind = 'text' | 'voice';
 
 export interface Channel {
 	id: string;
 	name: string;
+	kind: ChannelKind;
 	topic: string;
 	category: string;
 	readOnly: boolean;
+	userLimit: number;
 	position: number;
 	createdAt: number;
 }
 
 export interface ChannelInput {
 	name?: string;
+	kind?: ChannelKind;
 	topic?: string;
 	category?: string;
 	readOnly?: boolean;
+	userLimit?: number;
 	position?: number;
 }
 
@@ -59,12 +67,19 @@ export interface Attachment {
 	type: string;
 }
 
+export interface MessageRef {
+	id: number;
+	userId: string | null;
+	body: string | null;
+}
+
 export interface Message {
 	id: number;
 	channelId: string;
 	userId: string;
 	body: string;
 	attachment: Attachment | null;
+	replyTo: MessageRef | null;
 	createdAt: number;
 	editedAt: number | null;
 }
@@ -72,10 +87,69 @@ export interface Message {
 export interface MessagePage {
 	messages: Message[];
 	hasMore: boolean;
+	hasNewer: boolean;
+}
+
+export interface SearchHit {
+	message: Message;
+	snippet: string;
+}
+
+export interface VoiceParticipant {
+	userId: string;
+	sessionId: string;
+	tracks: string[];
+	muted: boolean;
+	deafened: boolean;
+	video: boolean;
+	screen: boolean;
+}
+
+export interface VoiceFlags {
+	muted?: boolean;
+	deafened?: boolean;
+	video?: boolean;
+	screen?: boolean;
+}
+
+export interface DriveFolder {
+	id: string;
+	channelId: string;
+	parentId: string | null;
+	name: string;
+	createdBy: string;
+	createdAt: number;
+}
+
+export interface DriveFile {
+	id: string;
+	channelId: string;
+	folderId: string | null;
+	key: string;
+	name: string;
+	size: number;
+	type: string;
+	uploadedBy: string;
+	messageId: number | null;
+	createdAt: number;
+}
+
+export interface DriveListing {
+	folders: DriveFolder[];
+	files: DriveFile[];
+	path: DriveFolder[];
 }
 
 export type ServerEvent =
-	| { t: 'hello'; channels: Channel[]; online: string[]; unread: Record<string, number> }
+	| {
+			t: 'hello';
+			connId: string;
+			channels: Channel[];
+			online: string[];
+			unread: Record<string, number>;
+			mentions: Record<string, number>;
+			voice: Record<string, VoiceParticipant[]>;
+	  }
 	| { t: 'message'; message: Message }
 	| { t: 'message_updated'; message: Message }
 	| { t: 'message_deleted'; channelId: string; id: number }
@@ -83,16 +157,31 @@ export type ServerEvent =
 	| { t: 'channel_deleted'; id: string }
 	| { t: 'presence'; userId: string; online: boolean }
 	| { t: 'typing'; channelId: string; userId: string }
+	| { t: 'voice'; channelId: string; participants: VoiceParticipant[] }
+	| { t: 'voice_ended'; reason: string }
+	| { t: 'drive'; channelId: string }
 	| { t: 'members_changed' }
 	| { t: 'workspace_deleted' };
 
-export type ClientEvent = { t: 'typing'; channelId: string } | { t: 'read'; channelId: string };
+export type ClientEvent =
+	| { t: 'typing'; channelId: string }
+	| { t: 'read'; channelId: string }
+	| ({ t: 'voice_update' } & VoiceFlags);
+
+export const VOICE_TRACKS = ['mic', 'cam', 'screen', 'screen-audio'] as const;
+
+export const ACCENTS = ['#6A4BFF', '#2563EB', '#0F8A6A', '#C84B1F', '#C0266D', '#1C1D21'] as const;
 
 export const LIMITS = {
 	messageLength: 4000,
-	fileSize: 10 * 1024 * 1024,
+	fileSize: 50 * 1024 * 1024,
 	nameLength: 64,
 	channelNameLength: 40,
 	topicLength: 200,
 	categoryLength: 32,
+	userLimit: 99,
 } as const;
+
+const MENTION_RE = /<@([0-9a-f-]{36})>/g;
+
+export const mentionedUsers = (body: string) => [...new Set([...body.matchAll(MENTION_RE)].map((m) => m[1]!))];

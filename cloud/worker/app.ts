@@ -1,10 +1,23 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
-import { LIMITS, type Attachment, type ChannelInput, type Me, type Member, type Role, type User, type WorkspaceDetail, type WorkspaceSummary } from '../shared/types';
+import {
+	ACCENTS,
+	LIMITS,
+	VOICE_TRACKS,
+	type Attachment,
+	type ChannelInput,
+	type Me,
+	type Member,
+	type Role,
+	type User,
+	type WorkspaceDetail,
+	type WorkspaceSummary,
+} from '../shared/types';
 import { DUMMY_HASH, hashPassword, randomToken, sha256, verifyPassword } from './crypto';
 import { authorizeUrl, completeLogin } from './recube';
 import type { Result } from './result';
+import { iceServers, sfu, voiceEnabled } from './sfu';
 import type { Actor } from './workspace';
 
 type AppEnv = {
@@ -19,7 +32,21 @@ const OAUTH_COOKIE = 'synq_oauth';
 const OAUTH_TTL = 10 * 60 * 1000;
 const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const INVITE_TTL = 7 * 24 * 3600 * 1000;
-const INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']);
+// Médias non exécutables uniquement : ni HTML ni SVG servis en ligne sur l'origine.
+const INLINE_TYPES = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/gif',
+	'image/webp',
+	'image/avif',
+	'video/mp4',
+	'video/webm',
+	'audio/mpeg',
+	'audio/ogg',
+	'audio/wav',
+	'audio/webm',
+]);
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const fail = (c: Ctx, status: 400 | 401 | 403 | 404 | 409 | 413 | 429, error: string) => c.json({ error }, status);
@@ -270,7 +297,7 @@ app.use('*', async (c, next) => {
 app.get('/me', async (c) => {
 	const user = c.get('user');
 	const { results } = await c.env.DB.prepare(
-		'SELECT w.id, w.name, m.role FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY w.name COLLATE NOCASE',
+		'SELECT w.id, w.name, w.accent, m.role FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY w.name COLLATE NOCASE',
 	)
 		.bind(user.id)
 		.all<WorkspaceSummary>();
@@ -310,18 +337,20 @@ app.patch('/me', async (c) => {
 
 app.post('/workspaces', async (c) => {
 	const user = c.get('user');
-	const name = cleanName((await readJson<{ name: string }>(c)).name);
+	const body = await readJson<{ name: string; accent: string }>(c);
+	const name = cleanName(body.name);
+	const accent = typeof body.accent === 'string' && HEX_RE.test(body.accent) ? body.accent.toUpperCase() : ACCENTS[0];
 	if (!name) {
 		return fail(c, 400, 'Nom d’espace requis');
 	}
 	const id = crypto.randomUUID();
 	const now = Date.now();
 	await c.env.DB.batch([
-		c.env.DB.prepare('INSERT INTO workspaces (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)').bind(id, name, user.id, now),
+		c.env.DB.prepare('INSERT INTO workspaces (id, name, owner_id, accent, created_at) VALUES (?, ?, ?, ?, ?)').bind(id, name, user.id, accent, now),
 		c.env.DB.prepare("INSERT INTO members (workspace_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)").bind(id, user.id, now),
 	]);
 	const channels = await workspaceStub(c.env, id).setup();
-	return c.json({ id, name, role: 'owner', channels }, 201);
+	return c.json({ id, name, accent, role: 'owner', channels }, 201);
 });
 
 app.get('/invites/:code', async (c) => {
@@ -374,15 +403,15 @@ const requireStaff = (c: Ctx) => (c.get('actor').role === 'member' ? fail(c, 403
 app.get('/w/:wid/info', async (c) => {
 	const workspaceId = c.get('workspaceId');
 	const [workspace, members] = await c.env.DB.batch([
-		c.env.DB.prepare('SELECT id, name FROM workspaces WHERE id = ?').bind(workspaceId),
+		c.env.DB.prepare('SELECT id, name, accent FROM workspaces WHERE id = ?').bind(workspaceId),
 		c.env.DB.prepare(
 			'SELECT u.id, u.name, u.avatar_url AS avatarUrl, m.role FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE',
 		).bind(
 			workspaceId,
 		),
 	]);
-	const { id, name } = workspace!.results[0] as { id: string; name: string };
-	return c.json({ id, name, role: c.get('actor').role, members: members!.results as unknown as Member[] } satisfies WorkspaceDetail);
+	const { id, name, accent } = workspace!.results[0] as { id: string; name: string; accent: string };
+	return c.json({ id, name, accent, role: c.get('actor').role, members: members!.results as unknown as Member[] } satisfies WorkspaceDetail);
 });
 
 app.patch('/w/:wid/info', async (c) => {
@@ -390,11 +419,18 @@ app.patch('/w/:wid/info', async (c) => {
 	if (denied) {
 		return denied;
 	}
-	const name = cleanName((await readJson<{ name: string }>(c)).name);
-	if (!name) {
+	const body = await readJson<{ name: string; accent: string }>(c);
+	const name = body.name === undefined ? null : cleanName(body.name);
+	if (name === '') {
 		return fail(c, 400, 'Nom d’espace requis');
 	}
-	await c.env.DB.prepare('UPDATE workspaces SET name = ? WHERE id = ?').bind(name, c.get('workspaceId')).run();
+	const accent = typeof body.accent === 'string' && HEX_RE.test(body.accent) ? body.accent.toUpperCase() : null;
+	if (body.accent !== undefined && !accent) {
+		return fail(c, 400, 'Couleur invalide');
+	}
+	await c.env.DB.prepare('UPDATE workspaces SET name = COALESCE(?, name), accent = COALESCE(?, accent) WHERE id = ?')
+		.bind(name, accent, c.get('workspaceId'))
+		.run();
 	await stub(c).membersChanged();
 	return c.json({ ok: true });
 });
@@ -471,13 +507,29 @@ app.patch('/w/:wid/channels/:cid', async (c) =>
 
 app.delete('/w/:wid/channels/:cid', async (c) => unwrap(c, await stub(c).deleteChannel(c.get('actor'), c.req.param('cid'))));
 
-app.get('/w/:wid/channels/:cid/messages', async (c) => {
-	const before = Number(c.req.query('before'));
-	return unwrap(c, await stub(c).listMessages(c.req.param('cid'), Number.isInteger(before) && before > 0 ? before : undefined));
+const cursor = (value: string | undefined) => {
+	const n = Number(value);
+	return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
+app.get('/w/:wid/channels/:cid/messages', async (c) =>
+	unwrap(
+		c,
+		await stub(c).listMessages(c.req.param('cid'), {
+			before: cursor(c.req.query('before')),
+			after: cursor(c.req.query('after')),
+			around: cursor(c.req.query('around')),
+		}),
+	),
+);
+
+app.get('/w/:wid/search', async (c) => {
+	const q = (c.req.query('q') ?? '').slice(0, 200);
+	return c.json(await stub(c).search(q));
 });
 
 app.post('/w/:wid/channels/:cid/messages', async (c) => {
-	const body = await readJson<{ body: string; attachmentKey: string }>(c);
+	const body = await readJson<{ body: string; attachmentKey: string; replyTo: number }>(c);
 	let attachment: Attachment | null = null;
 	if (typeof body.attachmentKey === 'string') {
 		// Métadonnées relues depuis R2, jamais depuis le client.
@@ -494,7 +546,8 @@ app.post('/w/:wid/channels/:cid/messages', async (c) => {
 		};
 	}
 	const text = typeof body.body === 'string' ? body.body : '';
-	return unwrap(c, await stub(c).postMessage(c.get('actor'), c.req.param('cid'), text, attachment));
+	const replyTo = Number.isInteger(body.replyTo) ? (body.replyTo as number) : null;
+	return unwrap(c, await stub(c).postMessage(c.get('actor'), c.req.param('cid'), text, attachment, replyTo));
 });
 
 app.patch('/w/:wid/messages/:mid', async (c) => {
@@ -509,44 +562,211 @@ app.post('/w/:wid/channels/:cid/read', async (c) => {
 	return c.json({ ok: true });
 });
 
-app.post('/w/:wid/files', async (c) => {
-	const declared = Number(c.req.header('Content-Length') ?? 0);
-	if (declared > LIMITS.fileSize) {
-		return fail(c, 413, 'Fichier trop lourd (10 Mo max)');
+// Flux direct vers R2 : la taille annoncée sert de plafond, rien n'est bufferisé.
+async function storeUpload(c: Ctx): Promise<Attachment | Response> {
+	const size = Number(c.req.header('Content-Length'));
+	if (!Number.isInteger(size) || size <= 0) {
+		return fail(c, 400, 'Fichier vide ou taille inconnue');
 	}
-	const data = await c.req.arrayBuffer();
-	if (data.byteLength === 0) {
-		return fail(c, 400, 'Fichier vide');
+	if (size > LIMITS.fileSize) {
+		return fail(c, 413, 'Fichier trop lourd (50 Mo max)');
 	}
-	if (data.byteLength > LIMITS.fileSize) {
-		return fail(c, 413, 'Fichier trop lourd (10 Mo max)');
+	let name = 'fichier';
+	try {
+		name = decodeURIComponent(c.req.header('X-File-Name') ?? '') || name;
+	} catch {
+		// Nom mal encodé : nom générique.
 	}
-	const name = (decodeURIComponent(c.req.header('X-File-Name') ?? '') || 'fichier').replace(/[/\\\0]/g, '_').slice(0, 120);
+	name = name.replace(/[/\\\0]/g, '_').slice(0, 120);
 	const type = c.req.header('Content-Type')?.split(';')[0]?.trim() || 'application/octet-stream';
 	const key = `w/${c.get('workspaceId')}/${crypto.randomUUID()}`;
-	await c.env.FILES.put(key, data, { httpMetadata: { contentType: type }, customMetadata: { name, uploadedBy: c.get('actor').id } });
-	return c.json({ key, name, size: data.byteLength, type } satisfies Attachment, 201);
+	const stream = new FixedLengthStream(size);
+	const [object] = await Promise.all([
+		c.env.FILES.put(key, stream.readable, { httpMetadata: { contentType: type }, customMetadata: { name, uploadedBy: c.get('actor').id } }),
+		c.req.raw.body!.pipeTo(stream.writable),
+	]);
+	return { key, name, size: object?.size ?? size, type };
+}
+
+app.post('/w/:wid/files', async (c) => {
+	const stored = await storeUpload(c);
+	return stored instanceof Response ? stored : c.json(stored, 201);
 });
 
 app.get('/w/:wid/files/:fid', async (c) => {
-	const object = await c.env.FILES.get(`w/${c.get('workspaceId')}/${c.req.param('fid')}`);
+	const key = `w/${c.get('workspaceId')}/${c.req.param('fid')}`;
+	const ranged = c.req.header('Range') !== undefined;
+	const object = await c.env.FILES.get(key, ranged ? { range: c.req.raw.headers } : {});
 	if (!object) {
 		return fail(c, 404, 'Fichier introuvable');
 	}
 	const type = object.httpMetadata?.contentType ?? 'application/octet-stream';
-	const name = object.customMetadata?.name ?? 'fichier';
-	// Seules les images matricielles s'affichent en ligne : pas de HTML ni SVG exécuté sur l'origine.
-	const disposition = INLINE_TYPES.has(type) ? 'inline' : 'attachment';
-	return new Response(object.body, {
-		headers: {
-			'Content-Type': INLINE_TYPES.has(type) ? type : 'application/octet-stream',
-			'Content-Disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(name)}`,
-			'Content-Security-Policy': "default-src 'none'; sandbox",
-			'X-Content-Type-Options': 'nosniff',
-			'Cache-Control': 'private, max-age=3600',
-			ETag: object.httpEtag,
-		},
+	const inline = INLINE_TYPES.has(type);
+	const headers = new Headers({
+		'Content-Type': inline ? type : 'application/octet-stream',
+		'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(object.customMetadata?.name ?? 'fichier')}`,
+		'Content-Security-Policy': "default-src 'none'; sandbox",
+		'X-Content-Type-Options': 'nosniff',
+		'Cache-Control': 'private, max-age=3600',
+		'Accept-Ranges': 'bytes',
+		ETag: object.httpEtag,
 	});
+	const range = object.range as { offset?: number; length?: number } | undefined;
+	if (ranged && range && range.offset !== undefined && range.length !== undefined) {
+		headers.set('Content-Range', `bytes ${range.offset}-${range.offset + range.length - 1}/${object.size}`);
+		headers.set('Content-Length', String(range.length));
+		return new Response(object.body, { status: 206, headers });
+	}
+	headers.set('Content-Length', String(object.size));
+	return new Response(object.body, { headers });
+});
+
+app.get('/w/:wid/channels/:cid/drive', async (c) => unwrap(c, await stub(c).driveList(c.req.param('cid'), c.req.query('folder') || null)));
+
+app.post('/w/:wid/channels/:cid/drive/folders', async (c) => {
+	const { name, parentId } = await readJson<{ name: string; parentId: string }>(c);
+	return unwrap(c, await stub(c).driveCreateFolder(c.get('actor'), c.req.param('cid'), typeof parentId === 'string' ? parentId : null, String(name ?? '')));
+});
+
+app.patch('/w/:wid/drive/folders/:id', async (c) => {
+	const { name } = await readJson<{ name: string }>(c);
+	return unwrap(c, await stub(c).driveRenameFolder(c.get('actor'), c.req.param('id'), String(name ?? '')));
+});
+
+app.delete('/w/:wid/drive/folders/:id', async (c) => unwrap(c, await stub(c).driveDeleteFolder(c.get('actor'), c.req.param('id'))));
+
+app.post('/w/:wid/channels/:cid/drive/files', async (c) => {
+	const stored = await storeUpload(c);
+	if (stored instanceof Response) {
+		return stored;
+	}
+	const result = await stub(c).driveAddFile(c.get('actor'), c.req.param('cid'), c.req.query('folder') || null, stored);
+	if (!result.ok) {
+		await c.env.FILES.delete(stored.key);
+	}
+	return result.ok ? c.json(result.value, 201) : fail(c, result.status, result.error);
+});
+
+app.patch('/w/:wid/drive/files/:id', async (c) => {
+	const body = await readJson<{ name: string; folderId: string | null }>(c);
+	return unwrap(
+		c,
+		await stub(c).driveUpdateFile(c.get('actor'), c.req.param('id'), {
+			name: typeof body.name === 'string' ? body.name : undefined,
+			folderId: body.folderId === null || typeof body.folderId === 'string' ? body.folderId : undefined,
+		}),
+	);
+});
+
+app.delete('/w/:wid/drive/files/:id', async (c) => unwrap(c, await stub(c).driveDeleteFile(c.get('actor'), c.req.param('id'))));
+
+type SessionDescription = { type: 'offer' | 'answer'; sdp: string };
+type TrackRequest = { location: 'local' | 'remote'; mid?: string; trackName: string; sessionId?: string };
+
+const isDescription = (value: unknown): value is SessionDescription =>
+	typeof value === 'object' && value !== null && ['offer', 'answer'].includes((value as SessionDescription).type) && typeof (value as SessionDescription).sdp === 'string';
+
+const sfuReply = (c: Ctx, reply: { status: number; data: Record<string, unknown> }) => c.json(reply.data, reply.status as 200);
+
+app.use('/w/:wid/voice/*', async (c, next) => {
+	if (!voiceEnabled(c.env)) {
+		return c.json({ error: 'Vocal non configuré' }, 503);
+	}
+	await next();
+});
+
+app.post('/w/:wid/voice/join', async (c) => {
+	const { channelId, connId } = await readJson<{ channelId: string; connId: string }>(c);
+	if (typeof channelId !== 'string' || typeof connId !== 'string') {
+		return fail(c, 400, 'Requête invalide');
+	}
+	const session = await sfu(c.env, 'POST', '/sessions/new');
+	const sessionId = session.data.sessionId;
+	if (session.status >= 300 || typeof sessionId !== 'string') {
+		return c.json({ error: 'Serveur vocal indisponible' }, 502);
+	}
+	const joined = await stub(c).voiceJoin(c.get('actor'), connId, channelId, sessionId);
+	if (!joined.ok) {
+		return fail(c, joined.status, joined.error);
+	}
+	return c.json({ sessionId, iceServers: await iceServers(c.env, c.get('actor').id), participants: joined.value });
+});
+
+app.post('/w/:wid/voice/leave', async (c) => {
+	const { connId } = await readJson<{ connId: string }>(c);
+	if (typeof connId === 'string') {
+		await stub(c).voiceLeave(c.get('actor'), connId);
+	}
+	return c.json({ ok: true });
+});
+
+app.post('/w/:wid/voice/tracks', async (c) => {
+	const body = await readJson<{ connId: string; sessionId: string; sessionDescription: SessionDescription; tracks: TrackRequest[] }>(c);
+	const { connId, sessionId, tracks } = body;
+	if (typeof connId !== 'string' || typeof sessionId !== 'string' || !Array.isArray(tracks) || tracks.length === 0 || tracks.length > 32) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	const actor = c.get('actor');
+	const local = tracks.every((t) => t.location === 'local');
+	const remote = tracks.every((t) => t.location === 'remote');
+	if (local) {
+		const valid = isDescription(body.sessionDescription) && tracks.every((t) => typeof t.mid === 'string' && (VOICE_TRACKS as readonly string[]).includes(t.trackName));
+		if (!valid || !(await stub(c).voiceOwns(actor, connId, sessionId))) {
+			return fail(c, 403, 'Publication refusée');
+		}
+		const reply = await sfu(c.env, 'POST', `/sessions/${sessionId}/tracks/new`, {
+			sessionDescription: body.sessionDescription,
+			tracks: tracks.map(({ location, mid, trackName }) => ({ location, mid, trackName })),
+		});
+		const results = (reply.data.tracks as Array<{ trackName: string; errorCode?: string }> | undefined) ?? [];
+		const published = results.filter((t) => !t.errorCode).map((t) => t.trackName);
+		if (reply.status < 300 && published.length) {
+			await stub(c).voicePublished(actor, connId, sessionId, published);
+		}
+		return sfuReply(c, reply);
+	}
+	if (remote) {
+		const remoteIds = tracks.map((t) => t.sessionId);
+		const valid = remoteIds.every((id) => typeof id === 'string') && tracks.every((t) => (VOICE_TRACKS as readonly string[]).includes(t.trackName));
+		if (!valid || !(await stub(c).voiceCanPull(actor, connId, sessionId, remoteIds as string[]))) {
+			return fail(c, 403, 'Abonnement refusé');
+		}
+		const reply = await sfu(c.env, 'POST', `/sessions/${sessionId}/tracks/new`, {
+			tracks: tracks.map(({ location, sessionId: remoteSession, trackName }) => ({ location, sessionId: remoteSession, trackName })),
+		});
+		return sfuReply(c, reply);
+	}
+	return fail(c, 400, 'Pistes locales et distantes mélangées');
+});
+
+app.put('/w/:wid/voice/renegotiate', async (c) => {
+	const { connId, sessionId, sessionDescription } = await readJson<{ connId: string; sessionId: string; sessionDescription: SessionDescription }>(c);
+	if (typeof connId !== 'string' || typeof sessionId !== 'string' || !isDescription(sessionDescription)) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	if (!(await stub(c).voiceOwns(c.get('actor'), connId, sessionId))) {
+		return fail(c, 403, 'Session inconnue');
+	}
+	return sfuReply(c, await sfu(c.env, 'PUT', `/sessions/${sessionId}/renegotiate`, { sessionDescription }));
+});
+
+app.put('/w/:wid/voice/tracks/close', async (c) => {
+	const body = await readJson<{ connId: string; sessionId: string; sessionDescription: SessionDescription; tracks: Array<{ mid: string }>; force: boolean }>(c);
+	const { connId, sessionId, tracks } = body;
+	if (typeof connId !== 'string' || typeof sessionId !== 'string' || !Array.isArray(tracks) || !tracks.every((t) => typeof t.mid === 'string')) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	if (!(await stub(c).voiceOwns(c.get('actor'), connId, sessionId))) {
+		return fail(c, 403, 'Session inconnue');
+	}
+	return sfuReply(
+		c,
+		await sfu(c.env, 'PUT', `/sessions/${sessionId}/tracks/close`, {
+			tracks: tracks.map(({ mid }) => ({ mid })),
+			...(isDescription(body.sessionDescription) ? { sessionDescription: body.sessionDescription } : {}),
+			force: body.force === true,
+		}),
+	);
 });
 
 app.get('/w/:wid/ws', async (c) => {

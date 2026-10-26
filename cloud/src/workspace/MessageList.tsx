@@ -1,16 +1,19 @@
-import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import type { Channel, Member, Message, Role } from '../../shared/types';
+import { mentionedUsers, type Channel, type Message, type Role } from '../../shared/types';
 import { fileUrl } from '../api';
-import { Avatar, Icon, formatSize } from '../ui';
+import { Avatar, Icon, fileIcon, formatSize } from '../ui';
+import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import type { ChannelMessages } from './useWorkspace';
 
 const GROUP_GAP = 5 * 60 * 1000;
-const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g;
-const INLINE_IMAGES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']);
+const IMAGES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']);
+const VIDEOS = new Set(['video/mp4', 'video/webm']);
+const AUDIOS = new Set(['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm']);
 
 const time = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
 const longDate = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+const fullDate = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'full', timeStyle: 'short' });
 
 function dayLabel(ts: number): string {
 	const day = new Date(ts).toDateString();
@@ -21,34 +24,27 @@ function dayLabel(ts: number): string {
 	if (day === new Date(today.getTime() - 86_400_000).toDateString()) {
 		return 'Hier';
 	}
-	return longDate.format(ts);
-}
-
-function linkify(text: string): ReactNode[] {
-	return text.split(URL_RE).map((part, i) =>
-		i % 2 ? (
-			<a key={i} href={part} target='_blank' rel='noopener noreferrer'>
-				{part}
-			</a>
-		) : (
-			part
-		),
-	);
+	const label = longDate.format(ts);
+	return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 type Props = {
 	workspaceId: string;
 	channel: Channel;
 	data: ChannelMessages | undefined;
-	members: Map<string, Member>;
-	myId: string;
+	lookup: Lookup;
 	role: Role;
+	highlightId: number | null;
 	onLoadOlder: () => void;
+	onLoadNewer: () => void;
+	onJumpLatest: () => void;
+	onJumpTo: (id: number) => void;
+	onReply: (message: Message) => void;
 	onEdit: (id: number, body: string) => Promise<void>;
 	onDelete: (id: number) => Promise<void>;
 };
 
-export function MessageList({ workspaceId, channel, data, members, myId, role, onLoadOlder, onEdit, onDelete }: Props) {
+export function MessageList({ workspaceId, channel, data, lookup, role, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const prevHeight = useRef(0);
@@ -57,13 +53,17 @@ export function MessageList({ workspaceId, channel, data, members, myId, role, o
 	const lastId = items.at(-1)?.id;
 	const prevFirst = useRef(firstId);
 	const [editing, setEditing] = useState<number | null>(null);
+	const staff = role !== 'member';
 
 	useLayoutEffect(() => {
 		const el = ref.current;
 		if (!el) {
 			return;
 		}
-		if (prevFirst.current !== undefined && firstId !== undefined && firstId < prevFirst.current) {
+		if (highlightId !== null && items.some((m) => m.id === highlightId)) {
+			el.querySelector(`[data-id="${highlightId}"]`)?.scrollIntoView({ block: 'center' });
+			stick.current = false;
+		} else if (prevFirst.current !== undefined && firstId !== undefined && firstId < prevFirst.current) {
 			// Historique ajouté en haut : garder la position de lecture.
 			el.scrollTop += el.scrollHeight - prevHeight.current;
 		} else if (stick.current) {
@@ -71,17 +71,24 @@ export function MessageList({ workspaceId, channel, data, members, myId, role, o
 		}
 		prevFirst.current = firstId;
 		prevHeight.current = el.scrollHeight;
-	}, [firstId, lastId, items.length]);
+	}, [firstId, lastId, items.length, highlightId, items]);
+
+	useEffect(() => {
+		stick.current = !data?.hasNewer;
+	}, [data?.hasNewer]);
 
 	const onScroll = () => {
 		const el = ref.current;
-		if (!el) {
+		if (!el || !data || data.loading) {
 			return;
 		}
-		stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-		if (el.scrollTop < 160 && data?.hasMore && !data.loading) {
+		const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+		stick.current = fromBottom < 80 && !data.hasNewer;
+		if (el.scrollTop < 200 && data.hasMore) {
 			prevHeight.current = el.scrollHeight;
 			onLoadOlder();
+		} else if (fromBottom < 200 && data.hasNewer) {
+			onLoadNewer();
 		}
 	};
 
@@ -91,26 +98,28 @@ export function MessageList({ workspaceId, channel, data, members, myId, role, o
 		}
 	};
 
-	const staff = role !== 'member';
-
 	return (
 		<div className='messages' ref={ref} onScroll={onScroll} role='log' aria-live='polite' aria-label={`Messages de #${channel.name}`}>
 			{data && !data.hasMore && (
 				<div className='channel-intro'>
-					<h2>
-						{channel.readOnly ? <Icon name='megaphone' size={26} /> : <Icon name='hash' size={26} />}
-						{channel.name}
-					</h2>
-					<p className='muted'>{channel.topic || 'Début du salon.'}</p>
+					<span className='channel-intro-icon'>
+						<Icon name={channel.readOnly ? 'megaphone' : 'hash'} size={22} />
+					</span>
+					<h2>Bienvenue dans #{channel.name}</h2>
+					<p className='muted'>{channel.topic || 'C’est le début du salon.'}</p>
 				</div>
 			)}
-			{data?.loading && items.length === 0 && <div className='splash splash-inline' aria-busy />}
+			{data?.loading && items.length === 0 && <div className='spinner' aria-busy />}
 			{items.map((message, i) => {
 				const prev = items[i - 1];
 				const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(message.createdAt).toDateString();
-				const grouped = !newDay && prev?.userId === message.userId && message.createdAt - prev.createdAt < GROUP_GAP;
-				const author = members.get(message.userId);
-				const mine = message.userId === myId;
+				const grouped = !newDay && !message.replyTo && prev?.userId === message.userId && message.createdAt - prev.createdAt < GROUP_GAP;
+				const author = lookup.members.get(message.userId);
+				const mine = message.userId === lookup.myId;
+				const mentionsMe = mentionedUsers(message.body).includes(lookup.myId);
+				const cls = ['msg', grouped && 'msg-grouped', message.replyTo && 'msg-reply', mentionsMe && 'msg-mention', highlightId === message.id && 'msg-highlight']
+					.filter(Boolean)
+					.join(' ');
 				return (
 					<Fragment key={message.id}>
 						{newDay && (
@@ -118,79 +127,120 @@ export function MessageList({ workspaceId, channel, data, members, myId, role, o
 								<span>{dayLabel(message.createdAt)}</span>
 							</div>
 						)}
-						<article className={`message${grouped ? ' message-grouped' : ''}`}>
-							<div className='message-gutter'>
+						<article className={cls} data-id={message.id}>
+							<div className='msg-gutter'>
 								{grouped ? (
-									<time className='message-time-hover'>{time.format(message.createdAt)}</time>
+									<time className='msg-time-hover' title={fullDate.format(message.createdAt)}>
+										{time.format(message.createdAt)}
+									</time>
 								) : (
-									<Avatar id={message.userId} name={author?.name ?? '?'} url={author?.avatarUrl} />
+									<Avatar name={author?.name ?? '?'} url={author?.avatarUrl} size={36} />
 								)}
 							</div>
-							<div className='message-main'>
+							<div style={{ minWidth: 0 }}>
+								{message.replyTo && (
+									<button type='button' className='reply-ref' onClick={() => message.replyTo && onJumpTo(message.replyTo.id)}>
+										<span className='reply-ref-line' aria-hidden />
+										{message.replyTo.userId ? (
+											<>
+												<strong style={{ fontWeight: 600 }}>{lookup.members.get(message.replyTo.userId)?.name ?? 'Ancien membre'}</strong>
+												<span className='ellipsis'>{excerpt(message.replyTo.body ?? '', lookup, 90) || 'Fichier joint'}</span>
+											</>
+										) : (
+											<span>Message supprimé</span>
+										)}
+									</button>
+								)}
 								{!grouped && (
-									<header className='message-head'>
-										<strong className={author ? '' : 'muted'}>{author?.name ?? 'Ancien membre'}</strong>
-										{author && author.role !== 'member' && <span className='role-tag'>{author.role === 'owner' ? 'Propriétaire' : 'Admin'}</span>}
-										<time dateTime={new Date(message.createdAt).toISOString()}>{time.format(message.createdAt)}</time>
+									<header className='msg-head'>
+										<span className={`msg-author${author ? '' : ' muted'}`}>{author?.name ?? 'Ancien membre'}</span>
+										{author && author.role !== 'member' && <span className='tag'>{author.role === 'owner' ? 'Propriétaire' : 'Admin'}</span>}
+										<time dateTime={new Date(message.createdAt).toISOString()} title={fullDate.format(message.createdAt)}>
+											{time.format(message.createdAt)}
+										</time>
 									</header>
 								)}
 								{editing === message.id ? (
 									<EditBox
-										initial={message.body}
+										initial={toDisplay(message.body, lookup)}
 										onCancel={() => setEditing(null)}
-										onSave={async (body) => {
-											await onEdit(message.id, body);
+										onSave={async (text) => {
+											await onEdit(message.id, toTokens(text, lookup));
 											setEditing(null);
 										}}
 									/>
 								) : (
 									message.body && (
-										<p className='message-body'>
-											{linkify(message.body)}
-											{message.editedAt && <span className='edited'> (modifié)</span>}
+										<p className='msg-body'>
+											<RichText text={message.body} lookup={lookup} />
+											{message.editedAt && <span className='msg-edited'> (modifié)</span>}
 										</p>
 									)
 								)}
-								{message.attachment &&
-									(INLINE_IMAGES.has(message.attachment.type) ? (
-										<a className='attachment-image' href={fileUrl(workspaceId, message.attachment.key)} target='_blank' rel='noopener noreferrer'>
-											<img src={fileUrl(workspaceId, message.attachment.key)} alt={message.attachment.name} loading='lazy' onLoad={keepBottom} />
-										</a>
-									) : (
-										<a className='attachment-file' href={fileUrl(workspaceId, message.attachment.key)} download={message.attachment.name}>
-											<Icon name='file' />
-											<span>{message.attachment.name}</span>
-											<span className='muted'>{formatSize(message.attachment.size)}</span>
-										</a>
-									))}
+								{message.attachment && <AttachmentView workspaceId={workspaceId} attachment={message.attachment} onLoad={keepBottom} />}
 							</div>
-							{(mine || staff) && editing !== message.id && (
-								<div className='message-actions'>
-									{mine && (
-										<button type='button' className='icon-button' aria-label='Modifier' title='Modifier' onClick={() => setEditing(message.id)}>
+							{editing !== message.id && (
+								<div className='msg-actions'>
+									<button type='button' className='icon-btn icon-btn-sm' aria-label='Répondre' title='Répondre' onClick={() => onReply(message)}>
+										<Icon name='reply' size={16} />
+									</button>
+									{mine && message.body && (
+										<button type='button' className='icon-btn icon-btn-sm' aria-label='Modifier' title='Modifier' onClick={() => setEditing(message.id)}>
 											<Icon name='pencil' size={16} />
 										</button>
 									)}
-									<button
-										type='button'
-										className='icon-button'
-										aria-label='Supprimer'
-										title='Supprimer'
-										onClick={() => {
-											if (window.confirm('Supprimer ce message ?')) {
-												void onDelete(message.id);
-											}
-										}}
-									>
-										<Icon name='trash' size={16} />
-									</button>
+									{(mine || staff) && (
+										<button
+											type='button'
+											className='icon-btn icon-btn-sm'
+											aria-label='Supprimer'
+											title='Supprimer'
+											onClick={() => window.confirm('Supprimer ce message ?') && void onDelete(message.id)}
+										>
+											<Icon name='trash' size={16} />
+										</button>
+									)}
 								</div>
 							)}
 						</article>
 					</Fragment>
 				);
 			})}
+			{data?.hasNewer && (
+				<button type='button' className='btn jump-latest' onClick={onJumpLatest}>
+					Revenir aux messages récents
+				</button>
+			)}
 		</div>
+	);
+}
+
+function AttachmentView({ workspaceId, attachment, onLoad }: { workspaceId: string; attachment: NonNullable<Message['attachment']>; onLoad: () => void }) {
+	const url = fileUrl(workspaceId, attachment.key);
+	if (IMAGES.has(attachment.type)) {
+		return (
+			<a href={url} target='_blank' rel='noopener noreferrer'>
+				<img className='attachment-media' src={url} alt={attachment.name} loading='lazy' onLoad={onLoad} />
+			</a>
+		);
+	}
+	if (VIDEOS.has(attachment.type)) {
+		return <video className='attachment-media' src={url} controls preload='metadata' onLoadedMetadata={onLoad} />;
+	}
+	if (AUDIOS.has(attachment.type)) {
+		return <audio src={url} controls preload='metadata' style={{ display: 'block', marginTop: 6, maxWidth: '100%' }} />;
+	}
+	return (
+		<a className='attachment-file' href={url} download={attachment.name}>
+			<span className='file-icon'>
+				<Icon name={fileIcon(attachment.type)} />
+			</span>
+			<span className='file-meta'>
+				<span>{attachment.name}</span>
+				<span>{formatSize(attachment.size)}</span>
+			</span>
+			<Icon name='download' size={16} />
+		</a>
 	);
 }
 
@@ -198,10 +248,14 @@ function EditBox({ initial, onSave, onCancel }: { initial: string; onSave: (body
 	const [value, setValue] = useState(initial);
 	return (
 		<div className='edit-box'>
+			<label className='sr-only' htmlFor='edit-message'>
+				Modifier le message
+			</label>
 			<textarea
+				id='edit-message'
 				autoFocus
 				value={value}
-				rows={Math.min(8, value.split('\n').length)}
+				rows={Math.min(8, value.split('\n').length + 1)}
 				onChange={(e) => setValue(e.target.value)}
 				onKeyDown={(e) => {
 					if (e.key === 'Escape') {
@@ -212,7 +266,9 @@ function EditBox({ initial, onSave, onCancel }: { initial: string; onSave: (body
 					}
 				}}
 			/>
-			<p className='muted edit-hint'>Entrée pour enregistrer, Échap pour annuler</p>
+			<p className='muted' style={{ fontSize: 12 }}>
+				Entrée pour enregistrer, Échap pour annuler
+			</p>
 		</div>
 	);
 }

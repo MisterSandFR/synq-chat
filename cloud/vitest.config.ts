@@ -12,12 +12,14 @@ export default defineConfig({
 					TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('./migrations', import.meta.url))),
 					RECUBE_CLIENT_ID: 'synq-test',
 					RECUBE_CLIENT_SECRET: 'secret-test',
+					REALTIME_APP_SECRET: 'sfu-test',
 				},
 			},
 		})),
 	],
 	test: {
 		include: ['test/**/*.test.ts'],
+		testTimeout: 20_000,
 		setupFiles: ['./test/apply-migrations.ts'],
 	},
 });

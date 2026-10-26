@@ -7,7 +7,9 @@
 	"observability": { "enabled": true },
 	"vars": {
 		"RECUBE_ISSUER": "https://recube.gg",
-		"RECUBE_CLIENT_ID": "f212ca84-4539-4842-9da7-f58b9b2d394b"
+		"RECUBE_CLIENT_ID": "f212ca84-4539-4842-9da7-f58b9b2d394b",
+		"REALTIME_APP_ID": "8da7b4df0958febdfb5af2d7f19b4238",
+		"TURN_KEY_ID": "1b4bddf025d9f7bffad55b8076c286d7"
 	},
 	"assets": {
 		"not_found_handling": "single-page-application",

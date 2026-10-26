@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 
-import type { Me } from '../shared/types';
+import { ACCENTS, type Me } from '../shared/types';
 import type { Notice } from './App';
 import { api, errorText } from './api';
 import { navigate, rememberReturn } from './router';
@@ -8,9 +8,12 @@ import { Avatar, Icon, Logo } from './ui';
 
 const ROLE_LABEL = { owner: 'Propriétaire', admin: 'Admin', member: 'Membre' } as const;
 
-export function HomeScreen({ me, notice, onNotice, onChanged }: { me: Me; notice: Notice; onNotice: (n: Notice) => void; onChanged: () => Promise<unknown> }) {
+type Props = { me: Me; notice: Notice; onNotice: (n: Notice) => void; onChanged: () => Promise<unknown> };
+
+export function HomeScreen({ me, notice, onNotice, onChanged }: Props) {
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [accent, setAccent] = useState<string>(ACCENTS[0]);
 
 	const create = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -18,7 +21,7 @@ export function HomeScreen({ me, notice, onNotice, onChanged }: { me: Me; notice
 		setBusy(true);
 		setError(null);
 		try {
-			const created = await api<{ id: string }>('POST', '/workspaces', { name });
+			const created = await api<{ id: string }>('POST', '/workspaces', { name, accent });
 			await onChanged();
 			navigate(`/w/${created.id}`);
 		} catch (err) {
@@ -28,39 +31,31 @@ export function HomeScreen({ me, notice, onNotice, onChanged }: { me: Me; notice
 		}
 	};
 
-	const rename = async (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
+	const act = async (task: () => Promise<unknown>, ok: string) => {
 		try {
-			await api('PATCH', '/me', { name: new FormData(event.currentTarget).get('name') });
+			await task();
 			await onChanged();
-			onNotice({ tone: 'ok', text: 'Nom mis à jour.' });
+			onNotice({ tone: 'ok', text: ok });
 		} catch (err) {
 			onNotice({ tone: 'error', text: errorText(err) });
 		}
-	};
-
-	const unlink = async () => {
-		try {
-			await api('DELETE', '/me/identities/recube');
-			await onChanged();
-			onNotice({ tone: 'ok', text: 'Compte Recube délié.' });
-		} catch (err) {
-			onNotice({ tone: 'error', text: errorText(err) });
-		}
-	};
-
-	const logout = async () => {
-		await api('POST', '/auth/logout');
-		window.location.href = '/';
 	};
 
 	const linkedRecube = me.identities.includes('recube');
+	const realEmail = !me.user.email.endsWith('@recube.invalid');
 
 	return (
-		<main className='home'>
-			<header className='home-head'>
+		<main className='page'>
+			<header className='page-head'>
 				<Logo />
-				<button type='button' className='button button-quiet' onClick={logout}>
+				<button
+					type='button'
+					className='btn btn-ghost'
+					onClick={async () => {
+						await api('POST', '/auth/logout');
+						window.location.href = '/';
+					}}
+				>
 					<Icon name='logout' /> Se déconnecter
 				</button>
 			</header>
@@ -68,71 +63,108 @@ export function HomeScreen({ me, notice, onNotice, onChanged }: { me: Me; notice
 			{notice && <p className={`notice notice-${notice.tone}`}>{notice.text}</p>}
 
 			<section className='home-grid'>
-				<div className='stack'>
-					<h1 className='home-title'>Tes espaces</h1>
+				<div className='stack' style={{ gap: 20 }}>
+					<h1 className='page-title'>Tes espaces</h1>
 					{me.workspaces.length === 0 ? (
-						<p className='muted'>Aucun espace pour l’instant. Crée le tien ou ouvre un lien d’invitation.</p>
+						<p className='muted'>Aucun espace pour l’instant. Crée le tien ou ouvre un lien d’invitation reçu d’un admin.</p>
 					) : (
-						<ul className='workspace-list'>
+						<ul className='space-list'>
 							{me.workspaces.map((w) => (
 								<li key={w.id}>
 									<a
+										className='space-card'
 										href={`/w/${w.id}`}
 										onClick={(e) => {
 											e.preventDefault();
 											navigate(`/w/${w.id}`);
 										}}
 									>
-										<Avatar id={w.id} name={w.name} size={40} />
-										<span className='workspace-name'>{w.name}</span>
-										<span className='muted'>{ROLE_LABEL[w.role]}</span>
+										<span className='avatar avatar-square' style={{ width: 42, height: 42, fontSize: 16, background: w.accent, color: '#fff' }}>
+											{w.name.charAt(0).toUpperCase()}
+										</span>
+										<span className='grow'>
+											<span className='ellipsis' style={{ display: 'block', fontWeight: 600 }}>
+												{w.name}
+											</span>
+											<span className='muted' style={{ fontSize: 13 }}>
+												{ROLE_LABEL[w.role]}
+											</span>
+										</span>
+										<Icon name='chevron-right' />
 									</a>
 								</li>
 							))}
 						</ul>
 					)}
-					<form className='inline-form' onSubmit={create}>
-						<input name='name' placeholder='Nom du nouvel espace' required maxLength={64} aria-label='Nom du nouvel espace' />
-						<button className='button button-primary' disabled={busy}>
+
+					<form className='panel stack' onSubmit={create}>
+						<h2>Créer un espace</h2>
+						<label className='field'>
+							Nom
+							<input name='name' placeholder='Équipe support' required maxLength={64} />
+						</label>
+						<div className='field'>
+							Couleur
+							<div className='swatches'>
+								{ACCENTS.map((color) => (
+									<button key={color} type='button' className='swatch' style={{ background: color }} aria-label={`Couleur ${color}`} aria-pressed={accent === color} onClick={() => setAccent(color)} />
+								))}
+							</div>
+						</div>
+						{error && <p className='notice notice-error'>{error}</p>}
+						<button className='btn btn-primary' style={{ alignSelf: 'flex-start', background: accent }} disabled={busy}>
 							Créer l’espace
 						</button>
 					</form>
-					{error && <p className='notice notice-error'>{error}</p>}
 				</div>
 
-				<aside className='profile-card stack'>
-					<div className='profile-id'>
-						<Avatar id={me.user.id} name={me.user.name} url={me.user.avatarUrl} size={48} />
-						<div>
-							<strong>{me.user.name}</strong>
-							{!me.user.email.endsWith('@recube.invalid') && <div className='muted'>{me.user.email}</div>}
+				<aside className='panel stack' style={{ gap: 18 }}>
+					<div className='row' style={{ gap: 12 }}>
+						<Avatar name={me.user.name} url={me.user.avatarUrl} size={48} />
+						<div style={{ minWidth: 0 }}>
+							<strong className='ellipsis' style={{ display: 'block' }}>
+								{me.user.name}
+							</strong>
+							{realEmail && <span className='muted ellipsis' style={{ display: 'block', fontSize: 14 }}>{me.user.email}</span>}
 						</div>
 					</div>
-					<form className='inline-form' onSubmit={rename}>
-						<input name='name' defaultValue={me.user.name} required maxLength={64} aria-label='Nom affiché' />
-						<button className='button'>Renommer</button>
+					<form
+						className='field'
+						onSubmit={(e) => {
+							e.preventDefault();
+							const name = new FormData(e.currentTarget).get('name');
+							void act(() => api('PATCH', '/me', { name }), 'Nom mis à jour.');
+						}}
+					>
+						Nom affiché
+						<div className='inline-form'>
+							<input name='name' defaultValue={me.user.name} required maxLength={64} />
+							<button className='btn'>Enregistrer</button>
+						</div>
 					</form>
-					<div className='profile-recube'>
+					<div className='field'>
+						Compte Recube
 						{linkedRecube ? (
-							<>
-								<span>Compte Recube lié</span>
+							<div className='row'>
+								<span className='grow row' style={{ fontWeight: 400 }}>
+									<Icon name='check' size={16} /> Lié
+								</span>
 								{me.hasPassword && (
-									<button type='button' className='link' onClick={unlink}>
+									<button type='button' className='link' onClick={() => void act(() => api('DELETE', '/me/identities/recube'), 'Compte Recube délié.')}>
 										Délier
 									</button>
 								)}
-							</>
+							</div>
 						) : (
 							<button
 								type='button'
-								className='button button-recube'
+								className='btn'
 								onClick={() => {
 									rememberReturn();
 									window.location.href = '/api/auth/recube/start?link=1';
 								}}
 							>
-								<img src='https://recube.gg/favicon.svg' alt='' width={18} height={18} />
-								Lier mon compte Recube
+								<Icon name='link' size={16} /> Lier mon compte Recube
 							</button>
 						)}
 					</div>

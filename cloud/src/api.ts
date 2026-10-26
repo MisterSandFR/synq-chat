@@ -25,18 +25,34 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
 	return data as T;
 }
 
-export async function uploadFile(workspaceId: string, file: File): Promise<Attachment> {
-	const res = await fetch(`/api/w/${workspaceId}/files`, {
-		method: 'POST',
-		headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
-		body: file,
+// XHR plutôt que fetch : seul moyen de suivre la progression d'un envoi.
+export function upload<T>(path: string, file: File, onProgress?: (ratio: number) => void): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', `/api${path}`);
+		xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+		xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+		xhr.upload.onprogress = (event) => event.lengthComputable && onProgress?.(event.loaded / event.total);
+		xhr.onload = () => {
+			let data: (T & { error?: string }) | null = null;
+			try {
+				data = JSON.parse(xhr.responseText) as T & { error?: string };
+			} catch {
+				// Réponse non JSON.
+			}
+			if (xhr.status >= 200 && xhr.status < 300 && data) {
+				resolve(data);
+			} else {
+				reject(new ApiError(xhr.status, data?.error ?? `Erreur ${xhr.status}`));
+			}
+		};
+		xhr.onerror = () => reject(new ApiError(0, 'Connexion interrompue pendant l’envoi'));
+		xhr.send(file);
 	});
-	const data = (await res.json()) as Attachment & { error?: string };
-	if (!res.ok) {
-		throw new ApiError(res.status, data.error ?? `Erreur ${res.status}`);
-	}
-	return data;
 }
+
+export const uploadAttachment = (workspaceId: string, file: File, onProgress?: (ratio: number) => void) =>
+	upload<Attachment>(`/w/${workspaceId}/files`, file, onProgress);
 
 export const fileUrl = (workspaceId: string, key: string) => `/api/w/${workspaceId}/files/${key.split('/').pop()}`;
 

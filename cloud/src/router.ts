@@ -84,3 +84,19 @@ export function rememberWorkspace(id: string): void {
 		// Stockage indisponible : pas de reprise auto.
 	}
 }
+
+export function readPref(key: string): string | null {
+	try {
+		return localStorage.getItem(`synq_${key}`);
+	} catch {
+		return null;
+	}
+}
+
+export function writePref(key: string, value: string): void {
+	try {
+		localStorage.setItem(`synq_${key}`, value);
+	} catch {
+		// Stockage indisponible : préférence non conservée.
+	}
+}

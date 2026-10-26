@@ -1,5 +1,4 @@
-import '@fontsource-variable/bricolage-grotesque';
-import '@fontsource-variable/instrument-sans';
+import '@fontsource-variable/onest';
 import './styles.css';
 
 import { StrictMode } from 'react';

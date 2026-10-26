@@ -2,7 +2,7 @@ import { exports } from 'cloudflare:workers';
 import { sign } from 'hono/jwt';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Attachment, Channel, Me, Message, MessagePage, ServerEvent, User, WorkspaceDetail } from '../shared/types';
+import type { Attachment, Channel, DriveFile, DriveFolder, DriveListing, Me, Message, MessagePage, SearchHit, ServerEvent, User, WorkspaceDetail } from '../shared/types';
 
 const BASE = 'https://synq.test';
 
@@ -33,6 +33,7 @@ class Client {
 		}
 		if (body instanceof ArrayBuffer || typeof body === 'string') {
 			init.body = body;
+			h['content-length'] = String(typeof body === 'string' ? new TextEncoder().encode(body).byteLength : body.byteLength);
 		} else if (body !== undefined) {
 			h['content-type'] = 'application/json';
 			init.body = JSON.stringify(body);
@@ -50,7 +51,7 @@ class Client {
 		return res;
 	}
 
-	async socket(workspaceId: string): Promise<{ ws: WebSocket; next: (t: ServerEvent['t']) => Promise<ServerEvent> }> {
+	async socket(workspaceId: string): Promise<{ ws: WebSocket; next: (t: ServerEvent['t']) => Promise<ServerEvent>; drain: () => void }> {
 		const res = await exports.default.fetch(new Request(`${BASE}/api/w/${workspaceId}/ws`, { headers: { Upgrade: 'websocket', cookie: this.cookie } }));
 		const ws = res.webSocket;
 		if (!ws) {
@@ -75,7 +76,7 @@ class Client {
 				});
 			}
 		};
-		return { ws, next };
+		return { ws, next, drain: () => void queue.splice(0) };
 	}
 }
 
@@ -389,5 +390,232 @@ describe('SSO Recube', () => {
 		vi.restoreAllMocks();
 		const seenAud = await provider({ sub: 'sub-y' }, { aud: 'autre-client' });
 		expect(await ssoLogin(new Client(), seenAud)).toBe('/?sso_error=provider');
+	});
+});
+
+describe('mentions, réponses et navigation', () => {
+	it('compte les mentions non lues et rattache les réponses', async () => {
+		const { owner, member, wid, general, announcements } = await workspaceWithMember();
+		const first = await member.req<Message>('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: 'question ?' });
+		const reply = await owner.req<Message>('POST', `/api/w/${wid}/channels/${general.id}/messages`, {
+			body: `<@${member.user.id}> réponse`,
+			replyTo: first.data.id,
+		});
+		expect(reply.data.replyTo).toEqual({ id: first.data.id, userId: member.user.id, body: 'question ?' });
+		const crossChannel = await owner.req('POST', `/api/w/${wid}/channels/${announcements.id}/messages`, { body: 'x', replyTo: first.data.id });
+		expect(crossChannel.status).toBe(400);
+
+		const bob = await member.socket(wid);
+		const hello = (await bob.next('hello')) as Extract<ServerEvent, { t: 'hello' }>;
+		expect(hello.unread[general.id]).toBe(1);
+		expect(hello.mentions[general.id]).toBe(1);
+		bob.ws.close(1000);
+	});
+
+	it('charge une fenêtre autour d’un message puis la suite', async () => {
+		const { owner, wid, general } = await workspaceWithMember();
+		const ids: number[] = [];
+		for (let i = 1; i <= 60; i++) {
+			ids.push((await owner.req<Message>('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: `n${i}` })).data.id);
+		}
+		const around = await owner.req<MessagePage>('GET', `/api/w/${wid}/channels/${general.id}/messages?around=${ids[29]}`);
+		expect(around.data.messages.map((m) => m.body)[0]).toBe('n5');
+		expect(around.data.messages).toHaveLength(50);
+		expect(around.data).toMatchObject({ hasMore: true, hasNewer: true });
+		const after = await owner.req<MessagePage>('GET', `/api/w/${wid}/channels/${general.id}/messages?after=${around.data.messages.at(-1)!.id}`);
+		expect(after.data.messages.map((m) => m.body)).toEqual(['n55', 'n56', 'n57', 'n58', 'n59', 'n60']);
+		expect(after.data.hasNewer).toBe(false);
+	});
+
+	it('cherche en plein texte, sans accents ni casse', async () => {
+		const { owner, member, wid, general } = await workspaceWithMember();
+		await owner.req('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: 'Mise en production du launcher ce soir' });
+		await owner.req('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: 'Réunion générale demain' });
+		const hits = await member.req<SearchHit[]>('GET', `/api/w/${wid}/search?q=${encodeURIComponent('produc')}`);
+		expect(hits.data).toHaveLength(1);
+		expect(hits.data[0]!.snippet).toContain('[[production]]');
+		const folded = await member.req<SearchHit[]>('GET', `/api/w/${wid}/search?q=${encodeURIComponent('GENERALE')}`);
+		expect(folded.data.map((h) => h.message.body)).toEqual(['Réunion générale demain']);
+		const syntax = await member.req<SearchHit[]>('GET', `/api/w/${wid}/search?q=${encodeURIComponent('"AND (')}`);
+		expect(syntax.status).toBe(200);
+	});
+
+	it('change la couleur d’accent de l’espace', async () => {
+		const { owner, member, wid } = await workspaceWithMember();
+		expect((await member.req('PATCH', `/api/w/${wid}/info`, { accent: '#2563eb' })).status).toBe(403);
+		expect((await owner.req('PATCH', `/api/w/${wid}/info`, { accent: 'rouge' })).status).toBe(400);
+		expect((await owner.req('PATCH', `/api/w/${wid}/info`, { accent: '#2563eb' })).status).toBe(200);
+		expect((await member.req<WorkspaceDetail>('GET', `/api/w/${wid}/info`)).data.accent).toBe('#2563EB');
+	});
+});
+
+describe('drive par salon', () => {
+	const upload = (client: Client, wid: string, cid: string, name: string, folder?: string) =>
+		client.req<DriveFile>('POST', `/api/w/${wid}/channels/${cid}/drive/files${folder ? `?folder=${folder}` : ''}`, `contenu de ${name}`, {
+			'content-type': 'text/plain',
+			'x-file-name': encodeURIComponent(name),
+		});
+
+	it('gère dossiers et fichiers avec les droits', async () => {
+		const { owner, member, wid, general, announcements } = await workspaceWithMember();
+		const folder = await member.req<DriveFolder>('POST', `/api/w/${wid}/channels/${general.id}/drive/folders`, { name: 'Notes de version' });
+		expect(folder.status).toBe(200);
+		const file = await upload(member, wid, general.id, 'v2.4.txt', folder.data.id);
+		expect(file.status).toBe(201);
+		const inFolder = await owner.req<DriveListing>('GET', `/api/w/${wid}/channels/${general.id}/drive?folder=${folder.data.id}`);
+		expect(inFolder.data.files.map((f) => f.name)).toEqual(['v2.4.txt']);
+		expect(inFolder.data.path.map((f) => f.name)).toEqual(['Notes de version']);
+
+		const ownerFile = await upload(owner, wid, general.id, 'admin.txt');
+		expect((await member.req('DELETE', `/api/w/${wid}/drive/files/${ownerFile.data.id}`)).status).toBe(403);
+		expect((await member.req<DriveFile>('PATCH', `/api/w/${wid}/drive/files/${file.data.id}`, { name: 'v2.4-final.txt', folderId: null })).data).toMatchObject({
+			name: 'v2.4-final.txt',
+			folderId: null,
+		});
+		expect((await upload(member, wid, announcements.id, 'x.txt')).status).toBe(403);
+
+		expect((await owner.req('DELETE', `/api/w/${wid}/drive/folders/${folder.data.id}`)).status).toBe(200);
+		const root = await owner.req<DriveListing>('GET', `/api/w/${wid}/channels/${general.id}/drive`);
+		expect(root.data.folders).toEqual([]);
+		expect(root.data.files.map((f) => f.name).sort()).toEqual(['admin.txt', 'v2.4-final.txt']);
+	});
+
+	it('range les pièces jointes et synchronise les suppressions', async () => {
+		const { owner, wid, general } = await workspaceWithMember();
+		const attachment = await owner.req<Attachment>('POST', `/api/w/${wid}/files`, 'pdf', { 'content-type': 'application/pdf', 'x-file-name': 'plan.pdf' });
+		const message = await owner.req<Message>('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: '', attachmentKey: attachment.data.key });
+		const root = await owner.req<DriveListing>('GET', `/api/w/${wid}/channels/${general.id}/drive`);
+		const listed = root.data.files.find((f) => f.key === attachment.data.key)!;
+		expect(listed.messageId).toBe(message.data.id);
+
+		const sock = await owner.socket(wid);
+		await sock.next('hello');
+		expect((await owner.req('DELETE', `/api/w/${wid}/drive/files/${listed.id}`)).status).toBe(200);
+		expect(await sock.next('message_deleted')).toEqual({ t: 'message_deleted', channelId: general.id, id: message.data.id });
+		sock.ws.close(1000);
+	});
+});
+
+describe('vocal', () => {
+	let sessions = 0;
+	const sfuCalls: Array<{ path: string; body: any }> = [];
+
+	function mockSfu() {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+			const url = new URL(input instanceof Request ? input.url : String(input));
+			const body = init?.body ? JSON.parse(String(init.body)) : null;
+			sfuCalls.push({ path: url.pathname, body });
+			if (url.pathname.endsWith('/sessions/new')) {
+				return Response.json({ sessionId: `S${++sessions}` });
+			}
+			if (url.pathname.endsWith('/tracks/new')) {
+				const local = body.tracks[0].location === 'local';
+				return Response.json({
+					sessionDescription: { type: local ? 'answer' : 'offer', sdp: 'v=0' },
+					requiresImmediateRenegotiation: !local,
+					tracks: body.tracks.map((t: { trackName: string; mid?: string }) => ({ trackName: t.trackName, mid: t.mid ?? '1' })),
+				});
+			}
+			return Response.json({});
+		});
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	async function voiceSetup() {
+		mockSfu();
+		const base = await workspaceWithMember();
+		const channels = await base.owner.req<Channel[]>('GET', `/api/w/${base.wid}/channels`);
+		const voice = channels.data.find((c) => c.kind === 'voice')!;
+		const alice = await base.owner.socket(base.wid);
+		const aliceHello = (await alice.next('hello')) as Extract<ServerEvent, { t: 'hello' }>;
+		const bob = await base.member.socket(base.wid);
+		const bobHello = (await bob.next('hello')) as Extract<ServerEvent, { t: 'hello' }>;
+		return { ...base, voice, alice, bob, aliceConn: aliceHello.connId, bobConn: bobHello.connId };
+	}
+
+	it('rejoint, publie, s’abonne et quitte', async () => {
+		const { owner, member, wid, voice, general, alice, bob, aliceConn, bobConn } = await voiceSetup();
+		expect((await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: general.id, connId: aliceConn })).status).toBe(404);
+		expect((await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn })).status).toBe(404);
+
+		const joined = await owner.req<{ sessionId: string; iceServers: unknown[] }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
+		expect(joined.status).toBe(200);
+		expect(joined.data.iceServers).toEqual([{ urls: ['stun:stun.cloudflare.com:3478'] }]);
+		const aliceSession = joined.data.sessionId;
+
+		const offer = { type: 'offer', sdp: 'v=0' };
+		const stolen = await member.req('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: bobConn,
+			sessionId: aliceSession,
+			sessionDescription: offer,
+			tracks: [{ location: 'local', mid: '0', trackName: 'mic' }],
+		});
+		expect(stolen.status).toBe(403);
+
+		const published = await owner.req('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: aliceConn,
+			sessionId: aliceSession,
+			sessionDescription: offer,
+			tracks: [{ location: 'local', mid: '0', trackName: 'mic' }],
+		});
+		expect(published.status).toBe(200);
+		bob.drain();
+		await owner.req('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: aliceConn,
+			sessionId: aliceSession,
+			sessionDescription: offer,
+			tracks: [{ location: 'local', mid: '1', trackName: 'cam' }],
+		});
+		const state = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
+		expect(state.participants).toMatchObject([{ userId: owner.user.id, tracks: ['mic', 'cam'], muted: false }]);
+
+		const outsider = await member.req('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: bobConn,
+			sessionId: 'S999',
+			tracks: [{ location: 'remote', sessionId: aliceSession, trackName: 'mic' }],
+		});
+		expect(outsider.status).toBe(403);
+
+		const bobJoined = await member.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn });
+		const pulled = await member.req<{ requiresImmediateRenegotiation: boolean }>('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: bobConn,
+			sessionId: bobJoined.data.sessionId,
+			tracks: [{ location: 'remote', sessionId: aliceSession, trackName: 'mic' }],
+		});
+		expect(pulled.data.requiresImmediateRenegotiation).toBe(true);
+		const answer = await member.req('PUT', `/api/w/${wid}/voice/renegotiate`, {
+			connId: bobConn,
+			sessionId: bobJoined.data.sessionId,
+			sessionDescription: { type: 'answer', sdp: 'v=0' },
+		});
+		expect(answer.status).toBe(200);
+		expect(sfuCalls.at(-1)!.path).toBe(`/v1/apps/8da7b4df0958febdfb5af2d7f19b4238/sessions/${bobJoined.data.sessionId}/renegotiate`);
+
+		alice.ws.send(JSON.stringify({ t: 'voice_update', muted: true, video: true }));
+		bob.drain();
+		const muted = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
+		expect(muted.participants.find((p) => p.userId === owner.user.id)).toMatchObject({ muted: true, video: true });
+
+		alice.ws.close(1000);
+		const afterClose = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
+		expect(afterClose.participants.map((p) => p.userId)).toEqual([member.user.id]);
+
+		expect((await member.req('POST', `/api/w/${wid}/voice/leave`, { connId: bobConn })).status).toBe(200);
+		const empty = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
+		expect(empty.participants).toEqual([]);
+		bob.ws.close(1000);
+	});
+
+	it('applique la limite de places aux membres', async () => {
+		const { owner, member, wid, voice, alice, bob, aliceConn, bobConn } = await voiceSetup();
+		await owner.req('PATCH', `/api/w/${wid}/channels/${voice.id}`, { userLimit: 1 });
+		expect((await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn })).status).toBe(200);
+		const full = await member.req<{ error: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn });
+		expect(full).toEqual({ status: 403, data: { error: 'Salon complet' } });
+		alice.ws.close(1000);
+		bob.ws.close(1000);
 	});
 });

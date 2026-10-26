@@ -1,13 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 
-import type { Channel, Me, Member, Message } from '../../shared/types';
+import type { ChannelKind, Me, Member, Message } from '../../shared/types';
 import { api } from '../api';
-import { navigate, rememberWorkspace } from '../router';
+import { navigate, readPref, rememberWorkspace, writePref } from '../router';
 import { Avatar, Icon, Logo } from '../ui';
 import { Composer } from './Composer';
+import { DrivePanel } from './DrivePanel';
+import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
-import { SettingsDialog } from './SettingsDialog';
+import type { Lookup } from './richText';
+import { SearchPalette } from './SearchPalette';
+import { CreateChannelDialog, SettingsDialog } from './SettingsDialog';
+import { Sidebar, useSidebarWidth } from './Sidebar';
 import { useWorkspace } from './useWorkspace';
+import { CallView, RemoteAudio } from './voice/CallView';
+import { useVoice } from './voice/useVoice';
 
 type Props = {
 	me: Me;
@@ -15,6 +22,8 @@ type Props = {
 	channelId: string | null;
 	onMeChanged: () => Promise<unknown>;
 };
+
+type Panel = 'members' | 'drive' | null;
 
 function useFocused(): boolean {
 	const [focused, setFocused] = useState(() => document.hasFocus());
@@ -33,69 +42,127 @@ function useFocused(): boolean {
 }
 
 export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props) {
-	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, me.user.id, channelId);
-	const [navOpen, setNavOpen] = useState(false);
-	const [membersOpen, setMembersOpen] = useState(false);
-	const [settingsOpen, setSettingsOpen] = useState(false);
+	const myId = me.user.id;
+	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
+	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, send });
+	const width = useSidebarWidth();
 	const focused = useFocused();
+	const [navOpen, setNavOpen] = useState(false);
+	const [panel, setPanelState] = useState<Panel>(() => (readPref('panel') as Panel) || null);
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [searchOpen, setSearchOpen] = useState(false);
+	const [createKind, setCreateKind] = useState<ChannelKind | null>(null);
+	const [replyTo, setReplyTo] = useState<Message | null>(null);
+	const [jump, setJump] = useState<{ channelId: string; id: number } | null>(null);
+	const [highlight, setHighlight] = useState<number | null>(null);
+
+	const setPanel = (next: Panel) => {
+		setPanelState(next);
+		writePref('panel', next ?? '');
+	};
 
 	const channels = state.channels;
-	const active: Channel | undefined = channels?.find((c) => c.id === channelId);
+	const active = channels?.find((c) => c.id === channelId);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
 	const role = state.info?.role ?? 'member';
 	const activeData = active ? state.messages[active.id] : undefined;
 	const lastActiveId = activeData?.items.at(-1)?.id;
 
+	const openChannel = useCallback(
+		(id: string) => {
+			setNavOpen(false);
+			navigate(`/w/${workspaceId}/${id}`);
+		},
+		[workspaceId],
+	);
+
+	const lookup: Lookup = useMemo(() => ({ members, channels: channels ?? [], myId, openChannel }), [members, channels, myId, openChannel]);
+
 	useEffect(() => rememberWorkspace(workspaceId), [workspaceId]);
 
 	useEffect(() => {
-		if (channels && !active && channels[0]) {
-			navigate(`/w/${workspaceId}/${channels[0].id}`, true);
+		const first = channels?.find((c) => c.kind === 'text') ?? channels?.[0];
+		if (channels && !active && first) {
+			navigate(`/w/${workspaceId}/${first.id}`, true);
 		}
 	}, [channels, active, workspaceId]);
 
-	useEffect(() => {
-		if (active && !state.messages[active.id] && state.status === 'live') {
-			void loadMessages(active.id);
-		}
-	}, [active, state.messages, state.status, loadMessages]);
+	useEffect(() => setReplyTo(null), [channelId]);
 
 	useEffect(() => {
-		if (active && focused && state.status === 'live') {
+		if (active?.kind === 'text' && !state.messages[active.id] && state.status === 'live' && jump?.channelId !== active.id) {
+			void loadMessages(active.id);
+		}
+	}, [active, state.messages, state.status, loadMessages, jump]);
+
+	useEffect(() => {
+		if (!jump || jump.channelId !== channelId || state.status !== 'live') {
+			return;
+		}
+		const loaded = state.messages[jump.channelId]?.items.some((m) => m.id === jump.id);
+		const show = () => {
+			setHighlight(jump.id);
+			setJump(null);
+		};
+		if (loaded) {
+			show();
+		} else {
+			void loadMessages(jump.channelId, 'around', jump.id).then(show);
+		}
+	}, [jump, channelId, state.messages, state.status, loadMessages]);
+
+	useEffect(() => {
+		if (highlight === null) {
+			return;
+		}
+		const timer = setTimeout(() => setHighlight(null), 2000);
+		return () => clearTimeout(timer);
+	}, [highlight]);
+
+	useEffect(() => {
+		if (active?.kind === 'text' && focused && state.status === 'live' && !activeData?.hasNewer) {
 			send({ t: 'read', channelId: active.id });
 			dispatch({ type: 'read', channelId: active.id });
 		}
-	}, [active, focused, lastActiveId, state.status, send, dispatch]);
+	}, [active, focused, lastActiveId, state.status, activeData?.hasNewer, send, dispatch]);
 
 	useEffect(() => {
 		const unread = Object.values(state.unread).reduce((sum, n) => sum + n, 0);
-		document.title = `${unread ? `(${unread}) ` : ''}${active ? `#${active.name} · ` : ''}${state.info?.name ?? 'Synq'}`;
-	}, [state.unread, active, state.info]);
+		const mentions = Object.values(state.mentions).reduce((sum, n) => sum + n, 0);
+		const badge = mentions ? `(${mentions}) ` : unread ? '• ' : '';
+		document.title = `${badge}${active ? `${active.kind === 'text' ? '#' : ''}${active.name} · ` : ''}${state.info?.name ?? 'Synq'}`;
+	}, [state.unread, state.mentions, active, state.info]);
+
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+				event.preventDefault();
+				setSearchOpen(true);
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, []);
 
 	if (state.closed) {
 		return (
-			<main className='invite'>
+			<main className='center-screen'>
 				<Logo />
-				<div className='stack invite-card'>
+				<div className='center-card'>
 					<p>{state.closed}</p>
 					<button
 						type='button'
-						className='button button-primary'
+						className='btn btn-primary'
 						onClick={() => {
 							void onMeChanged();
-							navigate('/', true);
+							navigate('/espaces', true);
 						}}
 					>
-						Retour à l’accueil
+						Retour à mes espaces
 					</button>
 				</div>
 			</main>
 		);
-	}
-
-	const categories = new Map<string, Channel[]>();
-	for (const channel of channels ?? []) {
-		categories.set(channel.category, [...(categories.get(channel.category) ?? []), channel]);
 	}
 
 	const typingNames = active
@@ -103,183 +170,171 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 				.filter(([, until]) => until > Date.now())
 				.map(([id]) => members.get(id)?.name ?? 'Quelqu’un')
 		: [];
+	const onlineMembers = [...members.values()].filter((m) => state.online.has(m.id));
+	const otherVoice = voice.snapshot && voice.snapshot.channelId !== active?.id ? channels?.find((c) => c.id === voice.snapshot!.channelId)?.name ?? null : null;
 
-	const sortedMembers = [...members.values()].sort((a, b) => Number(state.online.has(b.id)) - Number(state.online.has(a.id)) || a.name.localeCompare(b.name));
-
-	const sendMessage = async (body: string, attachmentKey?: string) => {
+	const sendMessage = async (body: string, attachmentKey?: string, reply?: number) => {
 		if (!active) {
 			return;
 		}
-		const message = await api<Message>('POST', `/w/${workspaceId}/channels/${active.id}/messages`, { body, attachmentKey });
+		if (activeData?.hasNewer) {
+			await loadMessages(active.id);
+		}
+		const message = await api<Message>('POST', `/w/${workspaceId}/channels/${active.id}/messages`, { body, attachmentKey, replyTo: reply });
 		dispatch({ type: 'message', message });
 	};
 
 	return (
-		<div className={`app${navOpen ? ' nav-open' : ''}${membersOpen ? ' members-open' : ''}`}>
-			<nav className='rail' aria-label='Espaces'>
-				<button type='button' className='rail-home' aria-label='Accueil' title='Accueil' onClick={() => navigate('/')}>
-					<img src='/favicon.svg' alt='' width={36} height={36} />
-				</button>
-				{me.workspaces.map((w) => (
-					<button
-						key={w.id}
-						type='button'
-						className={`rail-item${w.id === workspaceId ? ' rail-item-active' : ''}`}
-						title={w.name}
-						aria-label={w.name}
-						aria-current={w.id === workspaceId}
-						onClick={() => navigate(`/w/${w.id}`)}
-					>
-						<Avatar id={w.id} name={w.name} size={40} />
-					</button>
-				))}
-				<button type='button' className='rail-add' aria-label='Créer ou rejoindre un espace' title='Créer un espace' onClick={() => navigate('/')}>
-					<Icon name='plus' />
-				</button>
-			</nav>
+		<div className={`app themed${navOpen ? ' nav-open' : ''}`} style={{ '--accent': state.info?.accent ?? '#6A4BFF' } as CSSProperties}>
+			<Sidebar
+				me={me}
+				workspaceId={workspaceId}
+				state={state}
+				channelId={channelId}
+				members={members}
+				voice={voice}
+				width={width}
+				onOpenSettings={() => setSettingsOpen(true)}
+				onOpenSearch={() => setSearchOpen(true)}
+				onNavigate={() => setNavOpen(false)}
+				onCreateChannel={setCreateKind}
+			/>
 
-			<aside className='sidebar'>
-				<header className='sidebar-head'>
-					<h1>{state.info?.name ?? ' '}</h1>
-					<button type='button' className='icon-button' aria-label='Réglages de l’espace' title='Réglages' onClick={() => setSettingsOpen(true)}>
-						<Icon name='settings' />
-					</button>
-				</header>
-				<div className='channel-groups'>
-					{[...categories].map(([category, list]) => (
-						<section key={category || '_'} className='channel-group'>
-							{category && <h2>{category}</h2>}
-							<ul>
-								{list.map((channel) => {
-									const unread = state.unread[channel.id] ?? 0;
-									return (
-										<li key={channel.id}>
-											<a
-												href={`/w/${workspaceId}/${channel.id}`}
-												className={`channel-link${channel.id === channelId ? ' channel-link-active' : ''}${unread ? ' channel-link-unread' : ''}`}
-												aria-current={channel.id === channelId ? 'page' : undefined}
-												onClick={(e) => {
-													e.preventDefault();
-													setNavOpen(false);
-													navigate(`/w/${workspaceId}/${channel.id}`);
-												}}
-											>
-												<Icon name={channel.readOnly ? 'megaphone' : 'hash'} size={16} />
-												<span className='grow'>{channel.name}</span>
-												{unread > 0 && channel.id !== channelId && <span className='badge'>{unread > 99 ? '99+' : unread}</span>}
-											</a>
-										</li>
-									);
-								})}
-							</ul>
-						</section>
-					))}
-				</div>
-				<footer className='sidebar-me'>
-					<Avatar id={me.user.id} name={me.user.name} url={me.user.avatarUrl} size={32} />
-					<span className='grow'>{me.user.name}</span>
-					<span className={`status-dot status-${state.status}`} title={state.status === 'live' ? 'Connecté' : 'Reconnexion…'} />
-				</footer>
-			</aside>
-
-			<section className='main'>
-				<header className='channel-head'>
-					<button type='button' className='icon-button only-mobile' aria-label='Salons' onClick={() => setNavOpen(!navOpen)}>
+			<main className='main'>
+				<header className='topbar'>
+					<button type='button' className='icon-btn only-mobile' aria-label='Salons' onClick={() => setNavOpen(!navOpen)}>
 						<Icon name='menu' />
 					</button>
 					{active && (
 						<>
-							<h2>
-								<Icon name={active.readOnly ? 'megaphone' : 'hash'} />
-								{active.name}
-							</h2>
-							{active.topic && <p className='channel-topic'>{active.topic}</p>}
+							<h1>
+								<Icon name={active.kind === 'voice' ? 'speaker' : active.readOnly ? 'megaphone' : 'hash'} />
+								<span className='ellipsis'>{active.name}</span>
+							</h1>
+							<p className='topbar-topic'>{active.topic}</p>
 						</>
 					)}
-					<button
-						type='button'
-						className={`icon-button members-toggle${membersOpen ? ' icon-button-on' : ''}`}
-						aria-label='Membres'
-						aria-pressed={membersOpen}
-						title='Membres'
-						onClick={() => setMembersOpen(!membersOpen)}
-					>
+					<span className='grow' />
+					<button type='button' className='facepile hide-mobile' aria-pressed={panel === 'members'} aria-label={`${onlineMembers.length} membres en ligne`} onClick={() => setPanel(panel === 'members' ? null : 'members')}>
+						<span className='facepile-stack'>
+							{onlineMembers.slice(0, 3).map((m) => (
+								<Avatar key={m.id} name={m.name} url={m.avatarUrl} size={26} />
+							))}
+						</span>
+						{onlineMembers.length} en ligne
+					</button>
+					<button type='button' className='icon-btn only-mobile' aria-pressed={panel === 'members'} aria-label='Membres' onClick={() => setPanel(panel === 'members' ? null : 'members')}>
 						<Icon name='users' />
-						<span className='members-count'>{state.online.size}</span>
+					</button>
+					<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
+						<Icon name='drive' />
+					</button>
+					<button type='button' className='icon-btn' aria-label='Rechercher' title='Rechercher (Ctrl K)' onClick={() => setSearchOpen(true)}>
+						<Icon name='search' />
 					</button>
 				</header>
 
-				{state.status === 'offline' && <p className='connection-lost'>Connexion perdue. Reconnexion en cours…</p>}
+				{state.status === 'offline' && <p className='banner'>Connexion perdue. Reconnexion en cours…</p>}
 
-				{active ? (
-					<MessageList
-						key={`messages-${active.id}`}
-						workspaceId={workspaceId}
-						channel={active}
-						data={activeData}
-						members={members}
-						myId={me.user.id}
-						role={role}
-						onLoadOlder={() => activeData?.items[0] && void loadMessages(active.id, activeData.items[0].id)}
-						onEdit={async (id, body) => {
-							await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
-						}}
-						onDelete={async (id) => {
-							await api('DELETE', `/w/${workspaceId}/messages/${id}`);
-						}}
-					/>
-				) : (
-					<div className='messages' />
-				)}
-
-				<p className='typing' aria-live='polite'>
-					{typingNames.length === 1 && `${typingNames[0]} écrit…`}
-					{typingNames.length === 2 && `${typingNames[0]} et ${typingNames[1]} écrivent…`}
-					{typingNames.length > 2 && 'Plusieurs personnes écrivent…'}
-				</p>
-
-				{active && (
-					<Composer
-						key={`composer-${active.id}`}
-						workspaceId={workspaceId}
-						channel={active}
-						canPost={!active.readOnly || role !== 'member'}
-						onSend={sendMessage}
-						onTyping={() => send({ t: 'typing', channelId: active.id })}
-					/>
-				)}
-			</section>
-
-			<aside className='members' aria-label='Membres'>
-				<h2>Membres · {members.size}</h2>
-				<ul>
-					{sortedMembers.map((member) => (
-						<li key={member.id} className={state.online.has(member.id) ? 'member-online' : 'member-offline'}>
-							<span className='member-avatar'>
-								<Avatar id={member.id} name={member.name} url={member.avatarUrl} size={30} />
-								<span className='presence' />
-							</span>
-							<span className='grow'>{member.name}</span>
-							{member.role !== 'member' && <span className='role-tag'>{member.role === 'owner' ? 'Propriétaire' : 'Admin'}</span>}
-						</li>
-					))}
-				</ul>
-			</aside>
+				<div className='body'>
+					<div className='content'>
+						{!active ? (
+							<div className='spinner' aria-busy />
+						) : active.kind === 'voice' ? (
+							<CallView channel={active} participants={state.voice[active.id] ?? []} members={members} myId={myId} voice={voice} otherChannelName={otherVoice} />
+						) : (
+							<>
+								<MessageList
+									key={`messages-${active.id}`}
+									workspaceId={workspaceId}
+									channel={active}
+									data={activeData}
+									lookup={lookup}
+									role={role}
+									highlightId={highlight}
+									onLoadOlder={() => activeData?.items[0] && void loadMessages(active.id, 'older', activeData.items[0].id)}
+									onLoadNewer={() => {
+										const last = activeData?.items.at(-1);
+										if (last) {
+											void loadMessages(active.id, 'newer', last.id);
+										}
+									}}
+									onJumpLatest={() => void loadMessages(active.id)}
+									onJumpTo={(id) => setJump({ channelId: active.id, id })}
+									onReply={setReplyTo}
+									onEdit={async (id, body) => {
+										await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
+									}}
+									onDelete={async (id) => {
+										await api('DELETE', `/w/${workspaceId}/messages/${id}`);
+									}}
+								/>
+								<div className='typing' aria-live='polite'>
+									{typingNames.length > 0 && (
+										<>
+											<span className='typing-dots' aria-hidden>
+												<span />
+												<span />
+												<span />
+											</span>
+											{typingNames.length === 1 && `${typingNames[0]} écrit`}
+											{typingNames.length === 2 && `${typingNames[0]} et ${typingNames[1]} écrivent`}
+											{typingNames.length > 2 && 'Plusieurs personnes écrivent'}
+										</>
+									)}
+								</div>
+								<Composer
+									key={`composer-${active.id}`}
+									workspaceId={workspaceId}
+									channel={active}
+									canPost={!active.readOnly || role !== 'member'}
+									lookup={lookup}
+									replyTo={replyTo}
+									onCancelReply={() => setReplyTo(null)}
+									onSend={sendMessage}
+									onTyping={() => send({ t: 'typing', channelId: active.id })}
+								/>
+							</>
+						)}
+					</div>
+					{panel === 'members' && state.info && <MembersPanel members={state.info.members} online={state.online} voice={state.voice} myId={myId} onClose={() => setPanel(null)} />}
+					{panel === 'drive' && active && (
+						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} role={role} onClose={() => setPanel(null)} />
+					)}
+				</div>
+			</main>
 
 			{navOpen && <button type='button' className='scrim' aria-label='Fermer le menu' onClick={() => setNavOpen(false)} />}
 
+			<RemoteAudio voice={voice} />
+
 			{state.info && channels && (
-				<SettingsDialog
-					open={settingsOpen}
-					onClose={() => setSettingsOpen(false)}
-					info={state.info}
-					channels={channels}
-					myId={me.user.id}
-					onChanged={async () => {
-						await reloadInfo().catch(() => undefined);
-						await onMeChanged();
-					}}
-				/>
+				<>
+					<SettingsDialog
+						open={settingsOpen}
+						onClose={() => setSettingsOpen(false)}
+						info={state.info}
+						channels={channels}
+						myId={myId}
+						onChanged={async () => {
+							await reloadInfo().catch(() => undefined);
+							await onMeChanged();
+						}}
+					/>
+					<CreateChannelDialog workspaceId={workspaceId} kind={createKind} onClose={() => setCreateKind(null)} />
+					<SearchPalette
+						open={searchOpen}
+						onClose={() => setSearchOpen(false)}
+						workspaceId={workspaceId}
+						channels={channels}
+						lookup={lookup}
+						onOpenChannel={openChannel}
+						onOpenMessage={(cid, id) => {
+							setJump({ channelId: cid, id });
+							openChannel(cid);
+						}}
+					/>
+				</>
 			)}
 		</div>
 	);
