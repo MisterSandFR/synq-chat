@@ -647,8 +647,10 @@ export class Workspace extends DurableObject<Env> {
 		return remoteSessionIds.every((id) => id !== sessionId && allowed.has(id));
 	}
 
+	// Sockets ouverts avant la v2 : pièce jointe { id, name, role } sans connId.
 	private conn(ws: WebSocket): Conn | null {
-		return ws.deserializeAttachment() as Conn | null;
+		const value = ws.deserializeAttachment() as Partial<Conn> | null;
+		return value && typeof value.connId === 'string' && value.actor ? (value as Conn) : null;
 	}
 
 	private socketFor(userId: string, connId: string): WebSocket | undefined {
@@ -914,7 +916,12 @@ export class Workspace extends DurableObject<Env> {
 		if (!actor || request.headers.get('Upgrade') !== 'websocket') {
 			return new Response('Bad request', { status: 400 });
 		}
-		const wasOnline = this.ctx.getWebSockets(actor.id).length > 0;
+		for (const ws of this.ctx.getWebSockets()) {
+			if (!this.conn(ws)) {
+				ws.close(4000, 'Mise à jour du serveur');
+			}
+		}
+		const wasOnline = this.ctx.getWebSockets(actor.id).some((ws) => this.conn(ws));
 		const { 0: client, 1: server } = new WebSocketPair();
 		const conn: Conn = { connId: crypto.randomUUID(), actor, voice: null };
 		this.ctx.acceptWebSocket(server, [actor.id]);
@@ -962,8 +969,8 @@ export class Workspace extends DurableObject<Env> {
 		}
 	}
 
-	async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-		ws.close(code, reason);
+	// Réponse au Close automatique (web_socket_auto_reply_to_close) ; renvoyer 1006 lèverait une erreur.
+	async webSocketClose(ws: WebSocket): Promise<void> {
 		this.dropConnection(ws);
 	}
 

@@ -1,4 +1,5 @@
-import { exports } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
+import { env, exports } from 'cloudflare:workers';
 import { sign } from 'hono/jwt';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -617,5 +618,23 @@ describe('vocal', () => {
 		expect(full).toEqual({ status: 403, data: { error: 'Salon complet' } });
 		alice.ws.close(1000);
 		bob.ws.close(1000);
+	});
+});
+
+describe('compatibilité des connexions', () => {
+	it('accepte une connexion malgré un socket à l’ancien format', async () => {
+		const { owner, member, wid } = await workspaceWithMember();
+		const legacy = await member.socket(wid);
+		await legacy.next('hello');
+		const stub = env.WORKSPACE.getByName(wid);
+		await runInDurableObject(stub, (_instance, state) => {
+			for (const ws of state.getWebSockets()) {
+				ws.serializeAttachment({ id: member.user.id, name: 'Ancien', role: 'member' });
+			}
+		});
+		const fresh = await owner.socket(wid);
+		const hello = (await fresh.next('hello')) as Extract<ServerEvent, { t: 'hello' }>;
+		expect(hello.online).toEqual([owner.user.id]);
+		fresh.ws.close(1000);
 	});
 });
