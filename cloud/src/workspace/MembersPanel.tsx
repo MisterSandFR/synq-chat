@@ -1,21 +1,38 @@
-import type { Member, VoiceParticipant } from '../../shared/types';
+import type { Grade, Member, VoiceParticipant } from '../../shared/types';
 import { Avatar, Icon } from '../ui';
+import { memberColor, memberGrades } from './grades';
 
 type Props = {
 	members: Member[];
+	grades: Grade[];
 	online: Set<string>;
 	voice: Record<string, VoiceParticipant[]>;
 	myId: string;
 	onClose: () => void;
 };
 
-export function MembersPanel({ members, online, voice, myId, onClose }: Props) {
+// Membres en ligne rangés sous leur plus haut grade, comme une liste TeamSpeak ; hors ligne à part.
+export function MembersPanel({ members, grades, online, voice, myId, onClose }: Props) {
 	const inVoice = new Set(Object.values(voice).flatMap((list) => list.map((p) => p.userId)));
 	const sorted = [...members].sort((a, b) => a.name.localeCompare(b.name));
-	const groups: Array<[string, Member[]]> = [
-		['En ligne', sorted.filter((m) => online.has(m.id))],
-		['Hors ligne', sorted.filter((m) => !online.has(m.id))],
-	];
+	const groups = new Map<string, { label: string; color?: string; order: number; list: Member[] }>();
+	for (const member of sorted.filter((m) => online.has(m.id))) {
+		const top = member.owner ? null : memberGrades(member, grades)[0];
+		const key = member.owner ? 'owner' : (top?.id ?? 'default');
+		const group = groups.get(key) ?? {
+			label: member.owner ? 'Propriétaire' : (top?.name ?? 'En ligne'),
+			color: top?.color || undefined,
+			order: member.owner ? Number.MAX_SAFE_INTEGER : (top?.position ?? -1),
+			list: [],
+		};
+		group.list.push(member);
+		groups.set(key, group);
+	}
+	const offline = sorted.filter((m) => !online.has(m.id));
+	const sections = [...groups.values()].sort((a, b) => b.order - a.order);
+	if (offline.length) {
+		sections.push({ label: 'Hors ligne', order: -2, list: offline });
+	}
 	return (
 		<aside className='side-panel' aria-label='Membres'>
 			<header className='side-panel-head'>
@@ -25,33 +42,29 @@ export function MembersPanel({ members, online, voice, myId, onClose }: Props) {
 				</button>
 			</header>
 			<div className='side-panel-body'>
-				{groups.map(
-					([label, list]) =>
-						list.length > 0 && (
-							<section key={label}>
-								<h3 className='member-group'>
-									{label} : {list.length}
-								</h3>
-								<ul className='list'>
-									{list.map((member) => (
-										<li key={member.id} className={`list-row${online.has(member.id) ? '' : ' member-offline'}`}>
-											<Avatar name={member.name} url={member.avatarUrl} size={32} online={online.has(member.id)} />
-											<span className='grow ellipsis'>
-												{member.name}
-												{member.id === myId && <span className='muted'> (toi)</span>}
-											</span>
-											{inVoice.has(member.id) && (
-												<span className='muted' title='En vocal'>
-													<Icon name='speaker' size={16} />
-												</span>
-											)}
-											{member.role !== 'member' && <span className='tag'>{member.role === 'owner' ? 'Propriétaire' : 'Admin'}</span>}
-										</li>
-									))}
-								</ul>
-							</section>
-						),
-				)}
+				{sections.map((section) => (
+					<section key={section.label}>
+						<h3 className='member-group' style={section.color ? { color: section.color } : undefined}>
+							{section.label} : {section.list.length}
+						</h3>
+						<ul className='list'>
+							{section.list.map((member) => (
+								<li key={member.id} className={`list-row${online.has(member.id) ? '' : ' member-offline'}`}>
+									<Avatar name={member.name} url={member.avatarUrl} size={32} online={online.has(member.id)} />
+									<span className='grow ellipsis' style={{ color: memberColor(member, grades) }}>
+										{member.name}
+										{member.id === myId && <span className='muted'> (toi)</span>}
+									</span>
+									{inVoice.has(member.id) && (
+										<span className='muted' title='En vocal'>
+											<Icon name='speaker' size={16} />
+										</span>
+									)}
+								</li>
+							))}
+						</ul>
+					</section>
+				))}
 			</div>
 		</aside>
 	);

@@ -14,6 +14,7 @@ export interface WorkspaceState {
 	info: WorkspaceDetail | null;
 	connId: string | null;
 	channels: Channel[] | null;
+	perms: Record<string, number>;
 	unread: Record<string, number>;
 	mentions: Record<string, number>;
 	online: Set<string>;
@@ -22,6 +23,7 @@ export interface WorkspaceState {
 	typing: Record<string, Record<string, number>>;
 	drive: Record<string, number>;
 	voiceEnded: { reason: string; at: number } | null;
+	forceMuted: { by: string; at: number } | null;
 	status: 'connecting' | 'live' | 'offline';
 	closed: string | null;
 }
@@ -45,6 +47,7 @@ const initial: WorkspaceState = {
 	info: null,
 	connId: null,
 	channels: null,
+	perms: {},
 	unread: {},
 	mentions: {},
 	online: new Set(),
@@ -53,6 +56,7 @@ const initial: WorkspaceState = {
 	typing: {},
 	drive: {},
 	voiceEnded: null,
+	forceMuted: null,
 	status: 'connecting',
 	closed: null,
 };
@@ -88,6 +92,7 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 				...state,
 				connId: event.connId,
 				channels: sortChannels(event.channels),
+				perms: event.perms,
 				unread: event.unread,
 				mentions: event.mentions,
 				online: new Set(event.online),
@@ -121,7 +126,18 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, messages: { ...state.messages, [event.channelId]: { ...current, items: current.items.filter((m) => m.id !== event.id) } } };
 		}
 		case 'channel_upsert':
-			return { ...state, channels: sortChannels([...(state.channels ?? []).filter((c) => c.id !== event.channel.id), event.channel]) };
+			return {
+				...state,
+				channels: sortChannels([...(state.channels ?? []).filter((c) => c.id !== event.channel.id), event.channel]),
+				perms: { ...state.perms, [event.channel.id]: event.perms },
+			};
+		case 'access': {
+			const visible = new Set(event.channels.map((c) => c.id));
+			const messages = Object.fromEntries(Object.entries(state.messages).filter(([id]) => visible.has(id)));
+			return { ...state, channels: sortChannels(event.channels), perms: event.perms, unread: event.unread, mentions: event.mentions, voice: event.voice, messages };
+		}
+		case 'voice_force_mute':
+			return { ...state, forceMuted: { by: event.by, at: Date.now() } };
 		case 'channel_deleted': {
 			const { [event.id]: _messages, ...messages } = state.messages;
 			const { [event.id]: _unread, ...unread } = state.unread;

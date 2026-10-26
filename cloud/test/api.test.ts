@@ -3,7 +3,7 @@ import { env, exports } from 'cloudflare:workers';
 import { sign } from 'hono/jwt';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Attachment, Channel, DriveFile, DriveFolder, DriveListing, Me, Message, MessagePage, SearchHit, ServerEvent, User, WorkspaceDetail } from '../shared/types';
+import type { Attachment, Channel, DriveFile, DriveFolder, DriveListing, Grade, Me, Message, MessagePage, SearchHit, ServerEvent, User, WorkspaceDetail } from '../shared/types';
 
 const BASE = 'https://synq.test';
 
@@ -138,10 +138,11 @@ describe('espaces et membres', () => {
 	it('crée les salons par défaut et isole les non-membres', async () => {
 		const { owner, wid } = await workspaceWithMember();
 		const info = await owner.req<WorkspaceDetail>('GET', `/api/w/${wid}/info`);
-		expect(info.data.members.map((m) => [m.name, m.role])).toEqual([
-			['Alice', 'owner'],
-			['Bob', 'member'],
+		expect(info.data.members.map((m) => [m.name, m.owner])).toEqual([
+			['Alice', true],
+			['Bob', false],
 		]);
+		expect(info.data.grades.map((g) => g.id)).toEqual(['admin', 'default']);
 		const stranger = await signup('Eve');
 		expect((await stranger.req('GET', `/api/w/${wid}/info`)).status).toBe(404);
 		expect((await stranger.req('GET', `/api/w/${wid}/channels`)).status).toBe(404);
@@ -149,8 +150,8 @@ describe('espaces et membres', () => {
 
 	it('gère rôles et retrait', async () => {
 		const { owner, member, wid } = await workspaceWithMember();
-		expect((await member.req('PATCH', `/api/w/${wid}/members/${owner.user.id}`, { role: 'member' })).status).toBe(403);
-		expect((await owner.req('PATCH', `/api/w/${wid}/members/${member.user.id}`, { role: 'admin' })).status).toBe(200);
+		expect((await member.req('PUT', `/api/w/${wid}/members/${owner.user.id}/grades`, { gradeIds: [] })).status).toBe(403);
+		expect((await owner.req('PUT', `/api/w/${wid}/members/${member.user.id}/grades`, { gradeIds: ['admin'] })).status).toBe(200);
 		expect((await member.req('POST', `/api/w/${wid}/channels`, { name: 'staff' })).status).toBe(200);
 		expect((await member.req('DELETE', `/api/w/${wid}/members/${owner.user.id}`)).status).toBe(403);
 		expect((await owner.req('DELETE', `/api/w/${wid}/members/${member.user.id}`)).status).toBe(200);
@@ -673,3 +674,112 @@ describe('compatibilité des connexions', () => {
 		fresh.ws.close(1000);
 	});
 });
+
+describe('grades et permissions', () => {
+	const P = { MANAGE_GRADES: 4, MANAGE_CHANNELS: 8, KICK_MEMBERS: 16, VIEW_CHANNEL: 64, SEND_MESSAGES: 128, MANAGE_MESSAGES: 512, VOICE_CONNECT: 4096, VOICE_SPEAK: 8192 };
+
+	async function team() {
+		const base = await workspaceWithMember();
+		const carol = await signup('Carol');
+		const invite = await base.owner.req<{ code: string }>('POST', `/api/w/${base.wid}/invites`);
+		await carol.req('POST', `/api/invites/${invite.data.code}/accept`);
+		const modo = await base.owner.req<Grade>('POST', `/api/w/${base.wid}/grades`, { name: 'Modo', color: '#2563eb', permissions: P.MANAGE_GRADES | P.KICK_MEMBERS | P.MANAGE_MESSAGES });
+		expect(modo.status).toBe(201);
+		expect((await base.owner.req('PUT', `/api/w/${base.wid}/members/${base.member.user.id}/grades`, { gradeIds: [modo.data.id] })).status).toBe(200);
+		return { ...base, bob: base.member, carol, modo: modo.data };
+	}
+
+	it('respecte la hiérarchie des grades', async () => {
+		const { owner, bob, carol, wid, modo } = await team();
+		const grades = await owner.req<Grade[]>('GET', `/api/w/${wid}/grades`);
+		expect(grades.data.map((g) => [g.name, g.position])).toEqual([
+			['Admin', 2],
+			['Modo', 1],
+			['Membre', 0],
+		]);
+		expect((await bob.req('PATCH', `/api/w/${wid}/grades/admin`, { name: 'Pirate' })).status).toBe(403);
+		expect((await bob.req('PUT', `/api/w/${wid}/members/${bob.user.id}/grades`, { gradeIds: [modo.id, 'admin'] })).status).toBe(403);
+		expect((await bob.req('POST', `/api/w/${wid}/grades`, { name: 'Salons', permissions: P.MANAGE_CHANNELS })).status).toBe(403);
+		const helper = await bob.req<Grade>('POST', `/api/w/${wid}/grades`, { name: 'Aide', permissions: P.MANAGE_MESSAGES });
+		expect(helper.status).toBe(201);
+		expect((await bob.req('PUT', `/api/w/${wid}/members/${carol.user.id}/grades`, { gradeIds: [helper.data.id] })).status).toBe(200);
+		expect((await bob.req('DELETE', `/api/w/${wid}/members/${owner.user.id}`)).status).toBe(403);
+		expect((await bob.req('DELETE', `/api/w/${wid}/members/${carol.user.id}`)).status).toBe(200);
+		expect((await bob.req('DELETE', `/api/w/${wid}/grades/default`)).status).toBe(400);
+	});
+
+	it('cache un salon privé et ses messages', async () => {
+		const { owner, bob, carol, wid, modo } = await team();
+		const staff = await owner.req<Channel>('POST', `/api/w/${wid}/channels`, { name: 'staff' });
+		const set = await owner.req('PUT', `/api/w/${wid}/channels/${staff.data.id}/overrides`, {
+			overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL }, [modo.id]: { allow: P.VIEW_CHANNEL, deny: 0 } },
+		});
+		expect(set.status).toBe(200);
+		const carolSocket = await carol.socket(wid);
+		await carolSocket.next('hello');
+		const bobSocket = await bob.socket(wid);
+		await bobSocket.next('hello');
+		await owner.req('POST', `/api/w/${wid}/channels/${staff.data.id}/messages`, { body: 'réunion secrète' });
+		expect(((await bobSocket.next('message')) as Extract<ServerEvent, { t: 'message' }>).message.body).toBe('réunion secrète');
+		expect((await carol.req<Channel[]>('GET', `/api/w/${wid}/channels`)).data.map((c) => c.name)).not.toContain('staff');
+		expect((await carol.req('GET', `/api/w/${wid}/channels/${staff.data.id}/messages`)).status).toBe(404);
+		expect((await carol.req<SearchHit[]>('GET', `/api/w/${wid}/search?q=secrete`)).data).toEqual([]);
+		expect((await bob.req<SearchHit[]>('GET', `/api/w/${wid}/search?q=secrete`)).data).toHaveLength(1);
+		expect((await carol.req('POST', `/api/w/${wid}/channels/${staff.data.id}/messages`, { body: 'x' })).status).toBe(404);
+		await expect(carolSocket.next('message')).rejects.toThrow('timeout');
+
+		// Grade attribué en direct : Carol voit le salon sans recharger.
+		await owner.req('PUT', `/api/w/${wid}/members/${carol.user.id}/grades`, { gradeIds: [modo.id] });
+		const access = (await carolSocket.next('access')) as Extract<ServerEvent, { t: 'access' }>;
+		expect(access.channels.map((c) => c.name)).toContain('staff');
+		carolSocket.ws.close(1000);
+		bobSocket.ws.close(1000);
+	});
+
+	it('applique les permissions vocales et la modération', async () => {
+		mockVoice();
+		const { owner, bob, wid } = await team();
+		const channels = await owner.req<Channel[]>('GET', `/api/w/${wid}/channels`);
+		const voice = channels.data.find((c) => c.kind === 'voice')!;
+		await owner.req('PUT', `/api/w/${wid}/channels/${voice.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VOICE_SPEAK } } });
+		const ownerSocket = await owner.socket(wid);
+		const ownerConn = ((await ownerSocket.next('hello')) as Extract<ServerEvent, { t: 'hello' }>).connId;
+		const bobSocket = await bob.socket(wid);
+		const hello = (await bobSocket.next('hello')) as Extract<ServerEvent, { t: 'hello' }>;
+		expect(hello.perms[voice.id]! & P.VOICE_SPEAK).toBe(0);
+		const joined = await bob.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: hello.connId });
+		expect(joined.status).toBe(200);
+		const mic = await bob.req('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: hello.connId,
+			sessionId: joined.data.sessionId,
+			sessionDescription: { type: 'offer', sdp: 'v=0' },
+			tracks: [{ location: 'local', mid: '0', trackName: 'mic' }],
+		});
+		expect(mic.status).toBe(403);
+		await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: ownerConn });
+		expect((await bob.req('POST', `/api/w/${wid}/voice/moderate`, { userId: owner.user.id, action: 'mute' })).status).toBe(403);
+		expect((await owner.req('POST', `/api/w/${wid}/voice/moderate`, { userId: bob.user.id, action: 'kick' })).status).toBe(200);
+		expect(((await bobSocket.next('voice_ended')) as Extract<ServerEvent, { t: 'voice_ended' }>).reason).toContain('retiré du salon vocal');
+		await owner.req('PUT', `/api/w/${wid}/channels/${voice.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VOICE_CONNECT } } });
+		await bobSocket.next('access');
+		expect((await bob.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: hello.connId })).status).toBe(403);
+		ownerSocket.ws.close(1000);
+		bobSocket.ws.close(1000);
+		vi.restoreAllMocks();
+	});
+});
+
+function mockVoice() {
+	let n = 0;
+	vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+		const url = new URL(input instanceof Request ? input.url : String(input));
+		const body = init?.body ? JSON.parse(String(init.body)) : null;
+		if (url.pathname.endsWith('/sessions/new')) {
+			return Response.json({ sessionId: `V${++n}` });
+		}
+		if (url.pathname.endsWith('/tracks/new')) {
+			return Response.json({ sessionDescription: { type: 'answer', sdp: 'v=0' }, tracks: body.tracks.map((t: { trackName: string }) => ({ trackName: t.trackName, mid: '0' })) });
+		}
+		return Response.json({});
+	});
+}

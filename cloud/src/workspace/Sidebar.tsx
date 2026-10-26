@@ -1,9 +1,11 @@
 import { useCallback, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
-import type { Channel, Me, Member, VoiceParticipant } from '../../shared/types';
+import { P, has } from '../../shared/permissions';
+import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
 import { api } from '../api';
 import { navigate, readPref, writePref } from '../router';
 import { Avatar, Icon, useDismiss } from '../ui';
+import { memberColor } from './grades';
 import { CallControls } from './voice/CallView';
 import type { VoiceControls } from './voice/useVoice';
 import type { WorkspaceState } from './useWorkspace';
@@ -79,7 +81,8 @@ type Props = {
 };
 
 export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel }: Props) {
-	const staff = state.info?.role !== 'member';
+	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
+	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
 	const sections = new Map<string, { kind: 'text' | 'voice'; label: string; items: Channel[] }>();
 	for (const channel of channels) {
@@ -140,6 +143,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 									mentions={state.mentions[channel.id] ?? 0}
 									participants={state.voice[channel.id] ?? []}
 									members={members}
+									grades={grades}
 									speaking={voice.snapshot?.channelId === channel.id ? voice.snapshot.speaking : null}
 									onOpen={() => open(channel.id)}
 									onJoin={() => {
@@ -176,7 +180,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 							)}
 						</span>
 					</div>
-					<CallControls voice={voice} />
+					<CallControls voice={voice} perms={state.perms[voice.snapshot.channelId] ?? 0} />
 				</div>
 			)}
 
@@ -229,12 +233,13 @@ type VoiceRowProps = {
 	mentions: number;
 	participants: VoiceParticipant[];
 	members: Map<string, Member>;
+	grades: Grade[];
 	speaking: Set<string> | null;
 	onOpen: () => void;
 	onJoin: () => void;
 };
 
-function VoiceChannelRow({ channel, active, unread, mentions, participants, members, speaking, onOpen, onJoin }: VoiceRowProps) {
+function VoiceChannelRow({ channel, active, unread, mentions, participants, members, grades, speaking, onOpen, onJoin }: VoiceRowProps) {
 	return (
 		<>
 			<a
@@ -270,7 +275,9 @@ function VoiceChannelRow({ channel, active, unread, mentions, participants, memb
 						return (
 							<li key={p.userId} className={`voice-user${speaking?.has(p.userId) ? ' voice-user-speaking' : ''}`}>
 								<Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={22} />
-								<span className='grow ellipsis'>{member?.name ?? 'Membre'}</span>
+								<span className='grow ellipsis' style={{ color: memberColor(member, grades) }}>
+									{member?.name ?? 'Membre'}
+								</span>
 								<span className='voice-user-icons'>
 									{p.screen && <Icon name='screen' size={14} />}
 									{p.video && <Icon name='video' size={14} />}

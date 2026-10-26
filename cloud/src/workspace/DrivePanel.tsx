@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 
-import { LIMITS, type Channel, type DriveFile, type DriveFolder, type DriveListing, type Member, type Role } from '../../shared/types';
+import { P, has } from '../../shared/permissions';
+import { LIMITS, type Channel, type DriveFile, type DriveFolder, type DriveListing, type Member } from '../../shared/types';
 import { api, errorText, fileUrl, upload } from '../api';
 import { Icon, fileIcon, formatSize, useDismiss } from '../ui';
 
@@ -12,19 +13,19 @@ type Props = {
 	version: number;
 	members: Map<string, Member>;
 	myId: string;
-	role: Role;
+	perms: number;
 	onClose: () => void;
 };
 
-export function DrivePanel({ workspaceId, channel, version, members, myId, role, onClose }: Props) {
+export function DrivePanel({ workspaceId, channel, version, members, myId, perms, onClose }: Props) {
 	const [folderId, setFolderId] = useState<string | null>(null);
 	const [listing, setListing] = useState<DriveListing | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [uploads, setUploads] = useState<Array<{ name: string; ratio: number }>>([]);
 	const [dragging, setDragging] = useState(false);
 	const fileInput = useRef<HTMLInputElement>(null);
-	const staff = role !== 'member';
-	const canWrite = !channel.readOnly || staff;
+	const canWrite = has(perms, P.DRIVE_UPLOAD);
+	const canManage = has(perms, P.DRIVE_MANAGE);
 
 	useEffect(() => setFolderId(null), [channel.id]);
 
@@ -164,7 +165,7 @@ export function DrivePanel({ workspaceId, channel, version, members, myId, role,
 							<FolderRow
 								key={folder.id}
 								folder={folder}
-								canEdit={staff || folder.createdBy === myId}
+								canEdit={canManage || folder.createdBy === myId}
 								onOpen={() => setFolderId(folder.id)}
 								onRename={(name) => run(() => api('PATCH', `/w/${workspaceId}/drive/folders/${folder.id}`, { name }))}
 								onDelete={() => run(() => api('DELETE', `/w/${workspaceId}/drive/folders/${folder.id}`))}
@@ -176,7 +177,7 @@ export function DrivePanel({ workspaceId, channel, version, members, myId, role,
 								workspaceId={workspaceId}
 								file={file}
 								uploader={members.get(file.uploadedBy)?.name ?? 'Ancien membre'}
-								canEdit={staff || file.uploadedBy === myId}
+								canEdit={canManage || file.uploadedBy === myId}
 								canMoveUp={folderId !== null}
 								onRename={(name) => run(() => api('PATCH', `/w/${workspaceId}/drive/files/${file.id}`, { name }))}
 								onMoveUp={() => run(() => api('PATCH', `/w/${workspaceId}/drive/files/${file.id}`, { folderId: parentOf }))}

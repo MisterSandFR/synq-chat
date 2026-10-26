@@ -10,12 +10,13 @@ type Options = {
 	myId: string;
 	voice: Record<string, VoiceParticipant[]>;
 	voiceEnded: { reason: string; at: number } | null;
+	forceMuted: { by: string; at: number } | null;
 	send: (event: ClientEvent) => void;
 };
 
 export type VoiceControls = ReturnType<typeof useVoice>;
 
-export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, send }: Options) {
+export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, forceMuted, send }: Options) {
 	const clientRef = useRef<VoiceClient | null>(null);
 	const [snapshot, setSnapshot] = useState<VoiceSnapshot | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -116,6 +117,13 @@ export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, send }:
 			setNotice(voiceEnded.reason);
 		}
 	}, [voiceEnded, stop]);
+
+	useEffect(() => {
+		if (forceMuted && clientRef.current) {
+			void clientRef.current.setMuted(true);
+			setNotice(`${forceMuted.by} a coupé ton micro.`);
+		}
+	}, [forceMuted]);
 
 	useEffect(() => () => void clientRef.current?.leave().catch(() => undefined), []);
 

@@ -1,4 +1,25 @@
-export type Role = 'owner' | 'admin' | 'member';
+import type { Override } from './permissions';
+
+export interface Actor {
+	id: string;
+	name: string;
+	owner: boolean;
+	// Toujours avec le grade par défaut.
+	grades: string[];
+	perms: number;
+	// Position du plus haut grade ; le propriétaire est au-dessus de tout.
+	top: number;
+}
+
+export interface Grade {
+	id: string;
+	name: string;
+	color: string;
+	position: number;
+	permissions: number;
+}
+
+export type ChannelOverrides = Record<string, Override>;
 
 export interface User {
 	id: string;
@@ -17,7 +38,7 @@ export interface Me {
 export interface WorkspaceSummary {
 	id: string;
 	name: string;
-	role: Role;
+	owner: boolean;
 	accent: string;
 }
 
@@ -25,14 +46,18 @@ export interface Member {
 	id: string;
 	name: string;
 	avatarUrl: string | null;
-	role: Role;
+	owner: boolean;
+	gradeIds: string[];
 }
 
 export interface WorkspaceDetail {
 	id: string;
 	name: string;
-	role: Role;
 	accent: string;
+	owner: boolean;
+	perms: number;
+	top: number;
+	grades: Grade[];
 	members: Member[];
 }
 
@@ -145,15 +170,25 @@ export type ServerEvent =
 			t: 'hello';
 			connId: string;
 			channels: Channel[];
+			perms: Record<string, number>;
 			online: string[];
 			unread: Record<string, number>;
 			mentions: Record<string, number>;
 			voice: Record<string, VoiceParticipant[]>;
 	  }
+	| {
+			t: 'access';
+			channels: Channel[];
+			perms: Record<string, number>;
+			unread: Record<string, number>;
+			mentions: Record<string, number>;
+			voice: Record<string, VoiceParticipant[]>;
+	  }
+	| { t: 'voice_force_mute'; by: string }
 	| { t: 'message'; message: Message }
 	| { t: 'message_updated'; message: Message }
 	| { t: 'message_deleted'; channelId: string; id: number }
-	| { t: 'channel_upsert'; channel: Channel }
+	| { t: 'channel_upsert'; channel: Channel; perms: number }
 	| { t: 'channel_deleted'; id: string }
 	| { t: 'presence'; userId: string; online: boolean }
 	| { t: 'typing'; channelId: string; userId: string }

@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { mentionedUsers, type Channel, type Message, type Role } from '../../shared/types';
+import { mentionedUsers, type Channel, type Grade, type Message } from '../../shared/types';
 import { fileUrl } from '../api';
 import { Avatar, Icon, fileIcon, formatSize } from '../ui';
+import { memberColor, memberLabel } from './grades';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import type { ChannelMessages } from './useWorkspace';
 
@@ -33,7 +34,8 @@ type Props = {
 	channel: Channel;
 	data: ChannelMessages | undefined;
 	lookup: Lookup;
-	role: Role;
+	canModerate: boolean;
+	grades: Grade[];
 	highlightId: number | null;
 	onLoadOlder: () => void;
 	onLoadNewer: () => void;
@@ -44,7 +46,7 @@ type Props = {
 	onDelete: (id: number) => Promise<void>;
 };
 
-export function MessageList({ workspaceId, channel, data, lookup, role, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete }: Props) {
+export function MessageList({ workspaceId, channel, data, lookup, canModerate, grades, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const prevHeight = useRef(0);
@@ -53,7 +55,6 @@ export function MessageList({ workspaceId, channel, data, lookup, role, highligh
 	const lastId = items.at(-1)?.id;
 	const prevFirst = useRef(firstId);
 	const [editing, setEditing] = useState<number | null>(null);
-	const staff = role !== 'member';
 
 	useLayoutEffect(() => {
 		const el = ref.current;
@@ -153,8 +154,10 @@ export function MessageList({ workspaceId, channel, data, lookup, role, highligh
 								)}
 								{!grouped && (
 									<header className='msg-head'>
-										<span className={`msg-author${author ? '' : ' muted'}`}>{author?.name ?? 'Ancien membre'}</span>
-										{author && author.role !== 'member' && <span className='tag'>{author.role === 'owner' ? 'Propriétaire' : 'Admin'}</span>}
+										<span className={`msg-author${author ? '' : ' muted'}`} style={{ color: memberColor(author, grades) }}>
+											{author?.name ?? 'Ancien membre'}
+										</span>
+										{memberLabel(author, grades) && <span className='tag'>{memberLabel(author, grades)}</span>}
 										<time dateTime={new Date(message.createdAt).toISOString()} title={fullDate.format(message.createdAt)}>
 											{time.format(message.createdAt)}
 										</time>
@@ -189,7 +192,7 @@ export function MessageList({ workspaceId, channel, data, lookup, role, highligh
 											<Icon name='pencil' size={16} />
 										</button>
 									)}
-									{(mine || staff) && (
+									{(mine || canModerate) && (
 										<button
 											type='button'
 											className='icon-btn icon-btn-sm'

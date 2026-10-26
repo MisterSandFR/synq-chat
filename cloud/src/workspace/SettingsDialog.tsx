@@ -1,11 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 
-import { ACCENTS, type Channel, type ChannelKind, type Role, type WorkspaceDetail } from '../../shared/types';
+import { DEFAULT_GRADE, P, PERMISSIONS, has, type Override, type PermGroup } from '../../shared/permissions';
+import { ACCENTS, type Channel, type ChannelKind, type ChannelOverrides, type Grade, type Member, type WorkspaceDetail } from '../../shared/types';
 import { api, errorText } from '../api';
 import { navigate } from '../router';
-import { Avatar, Dialog, Icon } from '../ui';
+import { Avatar, Dialog, Icon, useDismiss } from '../ui';
+import { memberColor, memberGrades } from './grades';
 
-type Tab = 'space' | 'channels' | 'members' | 'invites';
+type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites';
 
 type Props = {
 	open: boolean;
@@ -31,41 +33,46 @@ function useAction() {
 	return { error, run };
 }
 
+const OWNER_TOP = Number.MAX_SAFE_INTEGER;
+
+const topOf = (member: Member, grades: Grade[]) => (member.owner ? OWNER_TOP : Math.max(0, ...memberGrades(member, grades).map((g) => g.position)));
+
+// Grade modifiable : sous son plus haut grade, ou propriétaire.
+const canTouchGrade = (info: WorkspaceDetail, grade: Grade) => info.owner || (has(info.perms, P.MANAGE_GRADES) && (grade.id === DEFAULT_GRADE || grade.position < info.top));
+
 export function SettingsDialog({ open, onClose, info, channels, myId, onChanged }: Props) {
-	const staff = info.role !== 'member';
 	const [tab, setTab] = useState<Tab>('space');
-	const tabs: Array<[Tab, string]> = staff
-		? [
-				['space', 'Espace'],
-				['channels', 'Salons'],
-				['members', 'Membres'],
-				['invites', 'Invitations'],
-			]
-		: [
-				['space', 'Espace'],
-				['members', 'Membres'],
-			];
+	const tabs: Array<[Tab, string, boolean]> = [
+		['space', 'Espace', true],
+		['channels', 'Salons', has(info.perms, P.MANAGE_CHANNELS)],
+		['grades', 'Grades', has(info.perms, P.MANAGE_GRADES)],
+		['members', 'Membres', true],
+		['invites', 'Invitations', has(info.perms, P.CREATE_INVITES)],
+	];
+	const visible = tabs.filter(([, , allowed]) => allowed);
+	const current = visible.some(([key]) => key === tab) ? tab : 'space';
 
 	return (
 		<Dialog open={open} onClose={onClose} title='Réglages de l’espace' wide>
 			<div className='tabs' role='tablist'>
-				{tabs.map(([key, label]) => (
-					<button key={key} type='button' role='tab' aria-selected={tab === key} className='tab' onClick={() => setTab(key)}>
+				{visible.map(([key, label]) => (
+					<button key={key} type='button' role='tab' aria-selected={current === key} className='tab' onClick={() => setTab(key)}>
 						{label}
 					</button>
 				))}
 			</div>
-			{tab === 'space' && <SpaceTab info={info} myId={myId} onChanged={onChanged} />}
-			{tab === 'channels' && staff && <ChannelsTab workspaceId={info.id} channels={channels} />}
-			{tab === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
-			{tab === 'invites' && staff && <InvitesTab workspaceId={info.id} />}
+			{current === 'space' && <SpaceTab info={info} myId={myId} onChanged={onChanged} />}
+			{current === 'channels' && <ChannelsTab info={info} channels={channels} />}
+			{current === 'grades' && <GradesTab info={info} onChanged={onChanged} />}
+			{current === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
+			{current === 'invites' && <InvitesTab workspaceId={info.id} />}
 		</Dialog>
 	);
 }
 
 function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: string; onChanged: () => Promise<unknown> }) {
 	const { error, run } = useAction();
-	const staff = info.role !== 'member';
+	const canEdit = has(info.perms, P.MANAGE_WORKSPACE);
 	const setAccent = (accent: string) =>
 		run(async () => {
 			await api('PATCH', `/w/${info.id}/info`, { accent });
@@ -73,7 +80,7 @@ function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: stri
 		});
 	return (
 		<div className='stack' style={{ gap: 22 }}>
-			{staff && (
+			{canEdit && (
 				<form
 					className='field'
 					onSubmit={(e: FormEvent<HTMLFormElement>) => {
@@ -92,22 +99,14 @@ function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: stri
 					</div>
 				</form>
 			)}
-			{staff && (
+			{canEdit && (
 				<div className='field'>
 					Couleur de l’espace
 					<span className='field-hint'>Utilisée pour le salon actif, les mentions et les boutons principaux.</span>
-					<div className='swatches'>
-						{ACCENTS.map((color) => (
-							<button key={color} type='button' className='swatch' style={{ background: color }} aria-label={`Couleur ${color}`} aria-pressed={info.accent === color} onClick={() => void setAccent(color)} />
-						))}
-						<label className='swatch' style={{ display: 'grid', placeItems: 'center', background: 'var(--surface)', cursor: 'pointer' }} title='Couleur personnalisée'>
-							<Icon name='plus' size={14} />
-							<input type='color' className='sr-only' defaultValue={info.accent} onChange={(e) => void setAccent(e.target.value)} aria-label='Couleur personnalisée' />
-						</label>
-					</div>
+					<Swatches value={info.accent} onPick={(color) => void setAccent(color)} />
 				</div>
 			)}
-			{info.role === 'owner' ? (
+			{info.owner ? (
 				<button
 					type='button'
 					className='btn btn-danger'
@@ -141,6 +140,25 @@ function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: stri
 				</button>
 			)}
 			{error && <p className='notice notice-error'>{error}</p>}
+		</div>
+	);
+}
+
+function Swatches({ value, onPick, allowNone }: { value: string; onPick: (color: string) => void; allowNone?: boolean }) {
+	return (
+		<div className='swatches'>
+			{allowNone && (
+				<button type='button' className='swatch swatch-none' aria-label='Sans couleur' aria-pressed={value === ''} onClick={() => onPick('')}>
+					<Icon name='close' size={14} />
+				</button>
+			)}
+			{ACCENTS.map((color) => (
+				<button key={color} type='button' className='swatch' style={{ background: color }} aria-label={`Couleur ${color}`} aria-pressed={value.toUpperCase() === color} onClick={() => onPick(color)} />
+			))}
+			<label className='swatch' style={{ display: 'grid', placeItems: 'center', background: 'var(--surface)', cursor: 'pointer' }} title='Couleur personnalisée'>
+				<Icon name='plus' size={14} />
+				<input type='color' className='sr-only' defaultValue={value || '#6A4BFF'} onChange={(e) => onPick(e.target.value)} aria-label='Couleur personnalisée' />
+			</label>
 		</div>
 	);
 }
@@ -179,13 +197,13 @@ export function ChannelForm({ workspaceId, channel, kind, onDone }: { workspaceI
 			</label>
 			{kind === 'text' ? (
 				<label className='check'>
-					<input type='checkbox' name='readOnly' defaultChecked={channel?.readOnly} /> Lecture seule : seuls les admins publient
+					<input type='checkbox' name='readOnly' defaultChecked={channel?.readOnly} /> Lecture seule pour le grade Membre
 				</label>
 			) : (
 				<label className='field'>
 					Places
 					<input name='userLimit' type='number' min={0} max={99} defaultValue={channel?.userLimit ?? 0} style={{ width: 120 }} />
-					<span className='field-hint'>0 pour un salon sans limite. Les admins entrent même quand c’est complet.</span>
+					<span className='field-hint'>0 pour un salon sans limite. La permission « Ignorer la limite » permet d’entrer quand c’est complet.</span>
 				</label>
 			)}
 			{error && <p className='notice notice-error'>{error}</p>}
@@ -207,17 +225,39 @@ export function CreateChannelDialog({ workspaceId, kind, onClose }: { workspaceI
 	);
 }
 
-function ChannelsTab({ workspaceId, channels }: { workspaceId: string; channels: Channel[] }) {
+function ChannelsTab({ info, channels }: { info: WorkspaceDetail; channels: Channel[] }) {
 	const { error, run } = useAction();
-	const [editing, setEditing] = useState<string | null>(null);
+	const [editing, setEditing] = useState<{ id: string; view: 'settings' | 'perms' } | null>(null);
 	const [creating, setCreating] = useState<ChannelKind | null>(null);
 
 	if (creating) {
-		return <ChannelForm workspaceId={workspaceId} kind={creating} onDone={() => setCreating(null)} />;
+		return <ChannelForm workspaceId={info.id} kind={creating} onDone={() => setCreating(null)} />;
 	}
-	const edited = channels.find((c) => c.id === editing);
-	if (edited) {
-		return <ChannelForm workspaceId={workspaceId} channel={edited} kind={edited.kind} onDone={() => setEditing(null)} />;
+	const edited = channels.find((c) => c.id === editing?.id);
+	if (edited && editing) {
+		return (
+			<div className='stack'>
+				<div className='row'>
+					<button type='button' className='btn btn-ghost' onClick={() => setEditing(null)}>
+						<Icon name='chevron-left' size={16} /> Tous les salons
+					</button>
+					<span className='grow' />
+					<div className='segmented' role='tablist'>
+						<button type='button' role='tab' aria-selected={editing.view === 'settings'} onClick={() => setEditing({ id: edited.id, view: 'settings' })}>
+							Réglages
+						</button>
+						<button type='button' role='tab' aria-selected={editing.view === 'perms'} onClick={() => setEditing({ id: edited.id, view: 'perms' })}>
+							Permissions
+						</button>
+					</div>
+				</div>
+				{editing.view === 'settings' ? (
+					<ChannelForm workspaceId={info.id} channel={edited} kind={edited.kind} onDone={() => setEditing(null)} />
+				) : (
+					<PermissionMatrix info={info} channel={edited} />
+				)}
+			</div>
+		);
 	}
 	return (
 		<div className='stack'>
@@ -236,16 +276,18 @@ function ChannelsTab({ workspaceId, channels }: { workspaceId: string; channels:
 						<span className='grow ellipsis'>
 							{channel.name}
 							{channel.category && <span className='muted'>, {channel.category}</span>}
-							{channel.kind === 'voice' && channel.userLimit > 0 && <span className='muted'>, {channel.userLimit} places</span>}
 						</span>
-						<button type='button' className='icon-btn icon-btn-sm' aria-label={`Modifier ${channel.name}`} onClick={() => setEditing(channel.id)}>
+						<button type='button' className='btn btn-ghost' style={{ height: 32 }} onClick={() => setEditing({ id: channel.id, view: 'perms' })}>
+							Permissions
+						</button>
+						<button type='button' className='icon-btn icon-btn-sm' aria-label={`Modifier ${channel.name}`} onClick={() => setEditing({ id: channel.id, view: 'settings' })}>
 							<Icon name='pencil' size={16} />
 						</button>
 						<button
 							type='button'
 							className='icon-btn icon-btn-sm'
 							aria-label={`Supprimer ${channel.name}`}
-							onClick={() => window.confirm(`Supprimer ${channel.name} avec ses messages et fichiers ?`) && void run(() => api('DELETE', `/w/${workspaceId}/channels/${channel.id}`))}
+							onClick={() => window.confirm(`Supprimer ${channel.name} avec ses messages et fichiers ?`) && void run(() => api('DELETE', `/w/${info.id}/channels/${channel.id}`))}
 						>
 							<Icon name='trash' size={16} />
 						</button>
@@ -257,43 +299,367 @@ function ChannelsTab({ workspaceId, channels }: { workspaceId: string; channels:
 	);
 }
 
-const ROLE_LABEL: Record<Role, string> = { owner: 'Propriétaire', admin: 'Admin', member: 'Membre' };
+type Cell = 'inherit' | 'allow' | 'deny';
+
+const cellOf = (override: Override | undefined, flag: number): Cell => (override && has(override.allow, flag) ? 'allow' : override && has(override.deny, flag) ? 'deny' : 'inherit');
+
+const NEXT: Record<Cell, Cell> = { inherit: 'allow', allow: 'deny', deny: 'inherit' };
+
+const CELL_LABEL: Record<Cell, string> = { inherit: 'hérité du grade', allow: 'autorisé', deny: 'refusé' };
+
+// Matrice permissions × grades : chaque cellule passe hérité, autorisé, refusé.
+function PermissionMatrix({ info, channel }: { info: WorkspaceDetail; channel: Channel }) {
+	const { error, run } = useAction();
+	const [overrides, setOverrides] = useState<ChannelOverrides | null>(null);
+	const [saved, setSaved] = useState(false);
+	const grades = [...info.grades].sort((a, b) => (a.id === DEFAULT_GRADE ? -1 : b.id === DEFAULT_GRADE ? 1 : b.position - a.position));
+	const rows = PERMISSIONS.filter((p) => p.channel && (channel.kind === 'voice' || p.group !== 'Vocal'));
+
+	useEffect(() => {
+		void api<ChannelOverrides>('GET', `/w/${info.id}/channels/${channel.id}/overrides`)
+			.then(setOverrides)
+			.catch(() => setOverrides({}));
+	}, [info.id, channel.id]);
+
+	const toggle = (gradeId: string, flag: number) => {
+		setSaved(false);
+		setOverrides((current) => {
+			const value = { allow: 0, deny: 0, ...current?.[gradeId] };
+			const next = NEXT[cellOf(value, flag)];
+			const allow = next === 'allow' ? value.allow | flag : value.allow & ~flag;
+			const deny = next === 'deny' ? value.deny | flag : value.deny & ~flag;
+			return { ...current, [gradeId]: { allow, deny } };
+		});
+	};
+
+	if (!overrides) {
+		return <div className='spinner' aria-busy />;
+	}
+
+	let group: PermGroup | null = null;
+	return (
+		<div className='stack'>
+			<p className='muted' style={{ fontSize: 14 }}>
+				Hérité suit les permissions du grade. Un refus du grade Membre s’applique à tous, une autorisation d’un autre grade l’emporte sur les refus.
+			</p>
+			<div className='matrix-scroll'>
+				<table className='matrix'>
+					<thead>
+						<tr>
+							<th scope='col'>Permission</th>
+							{grades.map((grade) => (
+								<th key={grade.id} scope='col' style={grade.color ? { color: grade.color } : undefined}>
+									{grade.id === DEFAULT_GRADE ? 'Membre (tous)' : grade.name}
+								</th>
+							))}
+						</tr>
+					</thead>
+					<tbody>
+						{rows.map((perm) => {
+							const header = perm.group !== group;
+							group = perm.group;
+							return (
+								<Fragment key={perm.key}>
+									{header && (
+										<tr className='matrix-group'>
+											<th colSpan={grades.length + 1}>{perm.group}</th>
+										</tr>
+									)}
+									<tr>
+										<th scope='row'>
+											<span>{perm.label}</span>
+											<span className='field-hint'>{perm.hint}</span>
+										</th>
+										{grades.map((grade) => {
+											const cell = cellOf(overrides[grade.id], P[perm.key]);
+											const editable = canTouchGrade(info, grade) || info.owner;
+											return (
+												<td key={grade.id}>
+													<button
+														type='button'
+														className={`matrix-cell matrix-${cell}`}
+														disabled={!editable}
+														aria-label={`${perm.label} pour ${grade.name} : ${CELL_LABEL[cell]}`}
+														title={CELL_LABEL[cell]}
+														onClick={() => toggle(grade.id, P[perm.key])}
+													>
+														{cell === 'allow' ? <Icon name='check' size={16} strokeWidth={2.4} /> : cell === 'deny' ? <Icon name='close' size={16} strokeWidth={2.4} /> : <span aria-hidden>/</span>}
+													</button>
+												</td>
+											);
+										})}
+									</tr>
+								</Fragment>
+							);
+						})}
+					</tbody>
+				</table>
+			</div>
+			{error && <p className='notice notice-error'>{error}</p>}
+			<div className='row'>
+				<button
+					type='button'
+					className='btn btn-primary'
+					onClick={() =>
+						void run(async () => {
+							setOverrides(await api<ChannelOverrides>('PUT', `/w/${info.id}/channels/${channel.id}/overrides`, { overrides }));
+							setSaved(true);
+						})
+					}
+				>
+					Enregistrer les permissions
+				</button>
+				{saved && <span className='muted'>Permissions enregistrées.</span>}
+			</div>
+		</div>
+	);
+}
+
+function GradesTab({ info, onChanged }: { info: WorkspaceDetail; onChanged: () => Promise<unknown> }) {
+	const { error, run } = useAction();
+	const [editing, setEditing] = useState<string | null>(null);
+	const ordered = [...info.grades].sort((a, b) => b.position - a.position);
+	const movable = ordered.filter((g) => g.id !== DEFAULT_GRADE);
+	const counts = new Map(info.grades.map((g) => [g.id, info.members.filter((m) => g.id === DEFAULT_GRADE || m.gradeIds.includes(g.id)).length]));
+
+	const move = (grade: Grade, direction: 1 | -1) =>
+		run(async () => {
+			const ids = [...movable].reverse().map((g) => g.id);
+			const index = ids.indexOf(grade.id);
+			const swap = index + direction;
+			if (swap < 0 || swap >= ids.length) {
+				return;
+			}
+			[ids[index], ids[swap]] = [ids[swap]!, ids[index]!];
+			await api('PUT', `/w/${info.id}/grades/order`, { ids });
+			await onChanged();
+		});
+
+	const edited = info.grades.find((g) => g.id === editing);
+	if (edited) {
+		return <GradeEditor info={info} grade={edited} onDone={() => setEditing(null)} onChanged={onChanged} />;
+	}
+
+	return (
+		<div className='stack'>
+			<div className='row'>
+				<p className='muted grow' style={{ fontSize: 14 }}>
+					Les grades du haut l’emportent. Tu ne gères que ceux placés sous ton plus haut grade.
+				</p>
+				<button
+					type='button'
+					className='btn btn-primary'
+					onClick={() =>
+						void run(async () => {
+							const grade = await api<Grade>('POST', `/w/${info.id}/grades`, { name: 'Nouveau grade', permissions: 0 });
+							await onChanged();
+							setEditing(grade.id);
+						})
+					}
+				>
+					<Icon name='plus' size={16} /> Nouveau grade
+				</button>
+			</div>
+			<ul className='list'>
+				{ordered.map((grade) => {
+					const editable = canTouchGrade(info, grade);
+					const index = movable.indexOf(grade);
+					return (
+						<li key={grade.id} className='list-row'>
+							<span className='grade-dot' style={{ background: grade.color || 'var(--line-strong)' }} aria-hidden />
+							<span className='grow ellipsis' style={{ fontWeight: 600, color: grade.color || undefined }}>
+								{grade.name}
+								{grade.id === DEFAULT_GRADE && <span className='muted' style={{ fontWeight: 400 }}> (tout le monde)</span>}
+							</span>
+							<span className='muted' style={{ fontSize: 13 }}>
+								{counts.get(grade.id) ?? 0} membre{(counts.get(grade.id) ?? 0) > 1 ? 's' : ''}
+							</span>
+							{grade.id !== DEFAULT_GRADE && editable && (
+								<>
+									<button type='button' className='icon-btn icon-btn-sm' aria-label={`Monter ${grade.name}`} disabled={index === 0 || !canTouchGrade(info, movable[index - 1]!)} onClick={() => void move(grade, 1)}>
+										<Icon name='up' size={14} />
+									</button>
+									<button type='button' className='icon-btn icon-btn-sm' aria-label={`Descendre ${grade.name}`} disabled={index === movable.length - 1} onClick={() => void move(grade, -1)}>
+										<Icon name='down' size={14} />
+									</button>
+								</>
+							)}
+							<button type='button' className='icon-btn icon-btn-sm' aria-label={`Modifier ${grade.name}`} disabled={!editable} onClick={() => setEditing(grade.id)}>
+								<Icon name='pencil' size={16} />
+							</button>
+						</li>
+					);
+				})}
+			</ul>
+			{error && <p className='notice notice-error'>{error}</p>}
+		</div>
+	);
+}
+
+function GradeEditor({ info, grade, onDone, onChanged }: { info: WorkspaceDetail; grade: Grade; onDone: () => void; onChanged: () => Promise<unknown> }) {
+	const { error, run } = useAction();
+	const [name, setName] = useState(grade.name);
+	const [color, setColor] = useState(grade.color);
+	const [perms, setPerms] = useState(grade.permissions);
+	const fullPower = info.owner || has(info.perms, P.ADMINISTRATOR);
+	const groups = [...new Set(PERMISSIONS.map((p) => p.group))];
+
+	return (
+		<div className='stack' style={{ gap: 20 }}>
+			<button type='button' className='btn btn-ghost' style={{ alignSelf: 'flex-start' }} onClick={onDone}>
+				<Icon name='chevron-left' size={16} /> Tous les grades
+			</button>
+			<label className='field'>
+				Nom
+				<input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} />
+			</label>
+			<div className='field'>
+				Couleur
+				<Swatches value={color} onPick={setColor} allowNone />
+			</div>
+			{groups.map((group) => (
+				<fieldset key={group} className='perm-group'>
+					<legend>{group}</legend>
+					{PERMISSIONS.filter((p) => p.group === group).map((perm) => {
+						const flag = P[perm.key];
+						const allowed = fullPower || has(info.perms, flag);
+						return (
+							<label key={perm.key} className='perm-row'>
+								<input type='checkbox' checked={has(perms, flag)} disabled={!allowed} onChange={(e) => setPerms(e.target.checked ? perms | flag : perms & ~flag)} />
+								<span>
+									<span className='perm-label'>{perm.label}</span>
+									<span className='field-hint'>{perm.hint}</span>
+								</span>
+							</label>
+						);
+					})}
+				</fieldset>
+			))}
+			{error && <p className='notice notice-error'>{error}</p>}
+			<div className='row'>
+				<button
+					type='button'
+					className='btn btn-primary'
+					onClick={() =>
+						void run(async () => {
+							await api('PATCH', `/w/${info.id}/grades/${grade.id}`, { name, color, permissions: perms });
+							await onChanged();
+							onDone();
+						})
+					}
+				>
+					Enregistrer
+				</button>
+				{grade.id !== DEFAULT_GRADE && (
+					<button
+						type='button'
+						className='btn btn-danger'
+						onClick={() =>
+							window.confirm(`Supprimer le grade « ${grade.name} » ? Ses membres le perdent.`) &&
+							void run(async () => {
+								await api('DELETE', `/w/${info.id}/grades/${grade.id}`);
+								await onChanged();
+								onDone();
+							})
+						}
+					>
+						Supprimer le grade
+					</button>
+				)}
+			</div>
+		</div>
+	);
+}
 
 function MembersTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: string; onChanged: () => Promise<unknown> }) {
 	const { error, run } = useAction();
-	const canRemove = (role: Role) => (info.role === 'owner' ? role !== 'owner' : info.role === 'admin' && role === 'member');
+	const assignable = info.grades.filter((g) => g.id !== DEFAULT_GRADE && (info.owner || (has(info.perms, P.MANAGE_GRADES) && g.position < info.top)));
+	const canManage = (member: Member) => !member.owner && (info.owner || (has(info.perms, P.MANAGE_GRADES) && (member.id === myId || topOf(member, info.grades) < info.top)));
+	const canKick = (member: Member) => member.id !== myId && !member.owner && (info.owner || (has(info.perms, P.KICK_MEMBERS) && topOf(member, info.grades) < info.top));
+	const setGrades = (member: Member, gradeIds: string[]) =>
+		run(async () => {
+			await api('PUT', `/w/${info.id}/members/${member.id}/grades`, { gradeIds });
+			await onChanged();
+		});
+
 	return (
 		<div className='stack'>
 			<ul className='list'>
-				{info.members.map((member) => (
-					<li key={member.id} className='list-row'>
-						<Avatar name={member.name} url={member.avatarUrl} size={30} />
-						<span className='grow ellipsis'>
-							{member.name}
-							{member.id === myId && <span className='muted'> (toi)</span>}
-						</span>
-						{info.role === 'owner' && member.role !== 'owner' ? (
-							<select value={member.role} aria-label={`Rôle de ${member.name}`} onChange={(e) => void run(() => api('PATCH', `/w/${info.id}/members/${member.id}`, { role: e.target.value }).then(onChanged))}>
-								<option value='member'>Membre</option>
-								<option value='admin'>Admin</option>
-							</select>
-						) : (
-							<span className='muted'>{ROLE_LABEL[member.role]}</span>
-						)}
-						{member.id !== myId && canRemove(member.role) && (
-							<button
-								type='button'
-								className='icon-btn icon-btn-sm'
-								aria-label={`Retirer ${member.name}`}
-								onClick={() => window.confirm(`Retirer ${member.name} de l’espace ?`) && void run(() => api('DELETE', `/w/${info.id}/members/${member.id}`).then(onChanged))}
-							>
-								<Icon name='trash' size={16} />
-							</button>
-						)}
-					</li>
-				))}
+				{info.members.map((member) => {
+					const grades = memberGrades(member, info.grades);
+					const editable = canManage(member);
+					return (
+						<li key={member.id} className='list-row' style={{ flexWrap: 'wrap' }}>
+							<Avatar name={member.name} url={member.avatarUrl} size={30} />
+							<span className='ellipsis' style={{ fontWeight: 600, color: memberColor(member, info.grades) }}>
+								{member.name}
+								{member.id === myId && <span className='muted' style={{ fontWeight: 400 }}> (toi)</span>}
+							</span>
+							<span className='grow row' style={{ flexWrap: 'wrap', gap: 4 }}>
+								{member.owner && <span className='grade-chip'>Propriétaire</span>}
+								{grades.map((grade) => (
+									<span key={grade.id} className='grade-chip' style={{ borderColor: grade.color || undefined }}>
+										<span className='grade-dot' style={{ background: grade.color || 'var(--line-strong)' }} aria-hidden />
+										{grade.name}
+										{editable && assignable.some((g) => g.id === grade.id) && (
+											<button type='button' className='chip-x' aria-label={`Retirer ${grade.name} à ${member.name}`} onClick={() => void setGrades(member, member.gradeIds.filter((id) => id !== grade.id))}>
+												<Icon name='close' size={12} />
+											</button>
+										)}
+									</span>
+								))}
+							</span>
+							{editable && <GradePicker grades={assignable.filter((g) => !member.gradeIds.includes(g.id))} onPick={(id) => void setGrades(member, [...member.gradeIds, id])} label={`Ajouter un grade à ${member.name}`} />}
+							{canKick(member) && (
+								<button
+									type='button'
+									className='icon-btn icon-btn-sm'
+									aria-label={`Retirer ${member.name} de l’espace`}
+									onClick={() => window.confirm(`Retirer ${member.name} de l’espace ?`) && void run(() => api('DELETE', `/w/${info.id}/members/${member.id}`).then(onChanged))}
+								>
+									<Icon name='trash' size={16} />
+								</button>
+							)}
+						</li>
+					);
+				})}
 			</ul>
 			{error && <p className='notice notice-error'>{error}</p>}
+		</div>
+	);
+}
+
+function GradePicker({ grades, onPick, label }: { grades: Grade[]; onPick: (id: string) => void; label: string }) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	if (grades.length === 0) {
+		return null;
+	}
+	return (
+		<div ref={ref} style={{ position: 'relative' }}>
+			<button type='button' className='icon-btn icon-btn-sm' aria-label={label} title={label} aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
+				<Icon name='plus' size={16} />
+			</button>
+			{open && (
+				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 200 }}>
+					{grades.map((grade) => (
+						<button
+							key={grade.id}
+							type='button'
+							role='menuitem'
+							className='menu-item'
+							onClick={() => {
+								setOpen(false);
+								onPick(grade.id);
+							}}
+						>
+							<span className='grade-dot' style={{ background: grade.color || 'var(--line-strong)' }} aria-hidden />
+							{grade.name}
+						</button>
+					))}
+				</div>
+			)}
 		</div>
 	);
 }
@@ -304,7 +670,7 @@ function InvitesTab({ workspaceId }: { workspaceId: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
 		<div className='stack'>
-			<p className='muted'>Un lien d’invitation reste valable 7 jours. Toute personne qui l’ouvre peut rejoindre l’espace.</p>
+			<p className='muted'>Un lien d’invitation reste valable 7 jours. Toute personne qui l’ouvre peut rejoindre l’espace avec le grade Membre.</p>
 			<button
 				type='button'
 				className='btn btn-primary'

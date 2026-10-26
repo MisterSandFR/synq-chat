@@ -1,7 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import type { Channel, Member, VoiceParticipant } from '../../../shared/types';
-import { Avatar, Icon } from '../../ui';
+import { P, has } from '../../../shared/permissions';
+import type { Channel, Grade, Member, VoiceParticipant } from '../../../shared/types';
+import { api, errorText } from '../../api';
+import { Avatar, Icon, useDismiss } from '../../ui';
+import { memberColor } from '../grades';
 import type { VoiceControls } from './useVoice';
 
 export function Video({ stream, mirror }: { stream: MediaStream; mirror?: boolean }) {
@@ -49,19 +52,30 @@ export function RemoteAudio({ voice }: { voice: VoiceControls }) {
 }
 
 type Props = {
+	workspaceId: string;
 	channel: Channel;
 	participants: VoiceParticipant[];
 	members: Map<string, Member>;
+	grades: Grade[];
+	perms: number;
 	myId: string;
 	voice: VoiceControls;
 	otherChannelName: string | null;
 };
 
-export function CallView({ channel, participants, members, myId, voice, otherChannelName }: Props) {
+export function CallView({ workspaceId, channel, participants, members, grades, perms, myId, voice, otherChannelName }: Props) {
 	const snapshot = voice.snapshot;
 	const connected = snapshot?.channelId === channel.id;
 	const speaking = connected ? snapshot.speaking : new Set<string>();
-	const full = channel.userLimit > 0 && participants.length >= channel.userLimit;
+	const full = channel.userLimit > 0 && participants.length >= channel.userLimit && !has(perms, P.BYPASS_LIMIT);
+	const canConnect = has(perms, P.VOICE_CONNECT);
+	const canModerate = has(perms, P.VOICE_MODERATE);
+	const [modError, setModError] = useState<string | null>(null);
+	const moderate = (userId: string, action: 'mute' | 'kick') =>
+		api('POST', `/w/${workspaceId}/voice/moderate`, { userId, action }).then(
+			() => setModError(null),
+			(error) => setModError(errorText(error)),
+		);
 
 	const camFor = (p: VoiceParticipant) => {
 		if (!connected || !p.video) {
@@ -78,8 +92,9 @@ export function CallView({ channel, participants, members, myId, voice, otherCha
 		return (
 			<div key={p.userId} className={`tile${speaking.has(p.userId) ? ' tile-speaking' : ''}`}>
 				{cam ? <Video stream={cam} mirror={p.userId === myId} /> : <Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={72} />}
+				{canModerate && p.userId !== myId && <TileMenu name={member?.name ?? 'ce membre'} onMute={() => void moderate(p.userId, 'mute')} onKick={() => void moderate(p.userId, 'kick')} />}
 				<span className='tile-label'>
-					<span className='ellipsis'>
+					<span className='ellipsis' style={{ color: memberColor(member, grades) }}>
 						{member?.name ?? 'Membre'}
 						{p.userId === myId && ' (toi)'}
 					</span>
@@ -114,9 +129,9 @@ export function CallView({ channel, participants, members, myId, voice, otherCha
 						</p>
 						{otherChannelName && <p className='muted'>Tu es connecté à « {otherChannelName} ». Rejoindre ici te déplace.</p>}
 					</div>
-					<button type='button' className='btn btn-primary btn-lg' disabled={Boolean(voice.joining) || full} onClick={() => void voice.join(channel.id)}>
+					<button type='button' className='btn btn-primary btn-lg' disabled={Boolean(voice.joining) || full || !canConnect} onClick={() => void voice.join(channel.id)}>
 						<Icon name='speaker' />
-						{voice.joining === channel.id ? 'Connexion…' : full ? 'Salon complet' : 'Rejoindre le salon'}
+						{voice.joining === channel.id ? 'Connexion…' : !canConnect ? 'Accès réservé' : full ? 'Salon complet' : 'Rejoindre le salon'}
 					</button>
 					{voice.notice && (
 						<p className='notice notice-error' role='alert'>
@@ -139,36 +154,78 @@ export function CallView({ channel, participants, members, myId, voice, otherCha
 							<div className='call-grid'>{tiles}</div>
 						)}
 					</div>
-					{snapshot.error && (
+					{(snapshot.error || voice.notice || modError) && (
 						<p className='notice notice-error' role='alert' style={{ margin: '0 16px 10px', alignSelf: 'center' }}>
-							{snapshot.error}
+							{snapshot.error ?? modError ?? voice.notice}
 						</p>
 					)}
-					<CallControls voice={voice} large />
+					<CallControls voice={voice} perms={perms} large />
 				</>
 			)}
 		</section>
 	);
 }
 
-export function CallControls({ voice, large }: { voice: VoiceControls; large?: boolean }) {
+function TileMenu({ name, onMute, onKick }: { name: string; onMute: () => void; onKick: () => void }) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	return (
+		<div ref={ref} className='tile-menu'>
+			<button type='button' className='icon-btn icon-btn-sm' aria-label={`Modérer ${name}`} aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
+				<Icon name='shield' size={16} />
+			</button>
+			{open && (
+				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 200 }}>
+					<button
+						type='button'
+						role='menuitem'
+						className='menu-item'
+						onClick={() => {
+							setOpen(false);
+							onMute();
+						}}
+					>
+						<Icon name='mic-off' size={16} /> Couper son micro
+					</button>
+					<button
+						type='button'
+						role='menuitem'
+						className='menu-item menu-item-danger'
+						onClick={() => {
+							setOpen(false);
+							onKick();
+						}}
+					>
+						<Icon name='hangup' size={16} /> Retirer du vocal
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+export function CallControls({ voice, perms, large }: { voice: VoiceControls; perms: number; large?: boolean }) {
 	const s = voice.snapshot;
 	if (!s) {
 		return null;
 	}
 	const cls = large ? 'call-btn' : 'icon-btn';
+	const canSpeak = has(perms, P.VOICE_SPEAK);
+	const canVideo = has(perms, P.VOICE_VIDEO);
+	const canScreen = has(perms, P.VOICE_SCREEN);
 	return (
 		<div className={large ? 'call-controls' : 'voice-dock-controls'}>
-			<button type='button' className={`${cls}${s.muted ? (large ? ' call-btn-off' : ' icon-btn-off') : ''}`} aria-label={s.muted ? 'Activer le micro' : 'Couper le micro'} title={s.muted ? 'Activer le micro' : 'Couper le micro'} onClick={voice.toggleMute}>
+			<button type='button' className={`${cls}${s.muted ? (large ? ' call-btn-off' : ' icon-btn-off') : ''}`} aria-label={s.muted ? 'Activer le micro' : 'Couper le micro'} title={canSpeak ? (s.muted ? 'Activer le micro' : 'Couper le micro') : 'Ton grade ne permet pas de parler ici'} disabled={!canSpeak} onClick={voice.toggleMute}>
 				<Icon name={s.muted ? 'mic-off' : 'mic'} size={large ? 22 : 18} />
 			</button>
 			<button type='button' className={`${cls}${s.deafened ? (large ? ' call-btn-off' : ' icon-btn-off') : ''}`} aria-label={s.deafened ? 'Réactiver le son' : 'Couper le son'} title={s.deafened ? 'Réactiver le son' : 'Couper le son'} onClick={voice.toggleDeafen}>
 				<Icon name={s.deafened ? 'headphones-off' : 'headphones'} size={large ? 22 : 18} />
 			</button>
-			<button type='button' className={cls} aria-pressed={s.video} aria-label={s.video ? 'Couper la caméra' : 'Activer la caméra'} title={s.video ? 'Couper la caméra' : 'Activer la caméra'} onClick={voice.toggleVideo}>
+			<button type='button' className={cls} aria-pressed={s.video} aria-label={s.video ? 'Couper la caméra' : 'Activer la caméra'} title={canVideo ? (s.video ? 'Couper la caméra' : 'Activer la caméra') : 'Caméra non autorisée ici'} disabled={!canVideo && !s.video} onClick={voice.toggleVideo}>
 				<Icon name={s.video ? 'video' : 'video-off'} size={large ? 22 : 18} />
 			</button>
-			<button type='button' className={cls} aria-pressed={s.screen} aria-label={s.screen ? 'Arrêter le partage' : 'Partager l’écran'} title={s.screen ? 'Arrêter le partage' : 'Partager l’écran'} onClick={voice.toggleScreen}>
+			<button type='button' className={cls} aria-pressed={s.screen} aria-label={s.screen ? 'Arrêter le partage' : 'Partager l’écran'} title={canScreen ? (s.screen ? 'Arrêter le partage' : 'Partager l’écran') : 'Partage d’écran non autorisé ici'} disabled={!canScreen && !s.screen} onClick={voice.toggleScreen}>
 				<Icon name='screen' size={large ? 22 : 18} />
 			</button>
 			<button type='button' className={large ? 'call-btn call-btn-hangup' : 'icon-btn icon-btn-hangup'} aria-label='Quitter le vocal' title='Quitter le vocal' onClick={() => void voice.leave()}>

@@ -1,31 +1,27 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
 	mentionedUsers,
+	type Actor,
 	type Attachment,
 	type Channel,
 	type ChannelInput,
 	type ChannelKind,
+	type ChannelOverrides,
 	type ClientEvent,
 	type DriveFile,
 	type DriveFolder,
 	type DriveListing,
 	type Message,
 	type MessagePage,
-	type Role,
 	type SearchHit,
 	type ServerEvent,
 	type VoiceFlags,
 	type VoiceParticipant,
 } from '../shared/types';
 import { err, ok, type Result } from './result';
-
-export interface Actor {
-	id: string;
-	name: string;
-	role: Role;
-}
 
 interface Voice {
 	channelId: string;
@@ -51,6 +47,7 @@ type ChannelRow = {
 	topic: string;
 	category: string;
 	read_only: number;
+	ro_deny: number | null;
 	user_limit: number;
 	position: number;
 	created_at: number;
@@ -163,12 +160,28 @@ const MIGRATIONS = [
 		SELECT substr(json_extract(attachment, '$.key'), -36), channel_id, NULL, json_extract(attachment, '$.key'), json_extract(attachment, '$.name'),
 			json_extract(attachment, '$.size'), json_extract(attachment, '$.type'), user_id, id, created_at
 		FROM messages WHERE attachment IS NOT NULL;`,
+	// 1408 = READ_ONLY_DENY : la lecture seule devient une surcharge du grade par défaut.
+	`CREATE TABLE channel_overrides (
+		channel_id TEXT NOT NULL,
+		grade_id TEXT NOT NULL,
+		allow INTEGER NOT NULL DEFAULT 0,
+		deny INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (channel_id, grade_id)
+	);
+	INSERT INTO channel_overrides (channel_id, grade_id, allow, deny) SELECT id, 'default', 0, 1408 FROM channels WHERE read_only = 1;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
 	FROM messages m LEFT JOIN messages r ON r.id = m.reply_to`;
 
-const isStaff = (actor: Actor) => actor.role !== 'member';
+const CHANNEL_SELECT = `SELECT c.*, o.deny AS ro_deny FROM channels c
+	LEFT JOIN channel_overrides o ON o.channel_id = c.id AND o.grade_id = '${DEFAULT_GRADE}'`;
+
+const CHANNEL_BITS = PERMISSIONS.filter((p) => p.channel).reduce((acc, p) => acc | P[p.key], 0);
+
+const TRACK_PERM: Record<string, number> = { mic: P.VOICE_SPEAK, cam: P.VOICE_VIDEO, screen: P.VOICE_SCREEN, 'screen-audio': P.VOICE_SCREEN };
+
+const trackPerm = (name: string) => TRACK_PERM[name.startsWith('screen-audio') ? 'screen-audio' : (name.split('-')[0] ?? '')] ?? P.ADMINISTRATOR;
 
 const toChannel = (row: ChannelRow): Channel => ({
 	id: row.id,
@@ -176,7 +189,7 @@ const toChannel = (row: ChannelRow): Channel => ({
 	kind: row.kind,
 	topic: row.topic,
 	category: row.category,
-	readOnly: row.read_only === 1,
+	readOnly: has(row.ro_deny ?? 0, P.SEND_MESSAGES),
 	userLimit: row.user_limit,
 	position: row.position,
 	createdAt: row.created_at,
@@ -229,8 +242,11 @@ export function normalizeChannelName(raw: string, kind: ChannelKind = 'text'): s
 
 const cleanFileName = (raw: string) => raw.trim().replace(/[/\\\0]/g, '_').slice(0, 120);
 
+const DENIED = 'Permission insuffisante';
+
 export class Workspace extends DurableObject<Env> {
 	private readonly sql: SqlStorage;
+	private readonly overrideCache = new Map<string, ChannelOverrides>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -257,24 +273,143 @@ export class Workspace extends DurableObject<Env> {
 		const { n } = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM channels').one();
 		if (n === 0) {
 			const now = Date.now();
-			const insert = 'INSERT INTO channels (id, name, kind, topic, category, read_only, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-			this.sql.exec(insert, crypto.randomUUID(), 'général', 'text', 'Discussions de l’équipe', '', 0, 0, now);
-			this.sql.exec(insert, crypto.randomUUID(), 'annonces', 'text', 'Annonces officielles, lecture seule', '', 1, 1, now);
-			this.sql.exec(insert, crypto.randomUUID(), 'Salon vocal', 'voice', '', 'Vocal', 0, 0, now);
+			const insert = 'INSERT INTO channels (id, name, kind, topic, category, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)';
+			const announcements = crypto.randomUUID();
+			this.sql.exec(insert, crypto.randomUUID(), 'général', 'text', 'Discussions de l’équipe', '', 0, now);
+			this.sql.exec(insert, announcements, 'annonces', 'text', 'Annonces officielles, lecture seule', '', 1, now);
+			this.sql.exec(insert, crypto.randomUUID(), 'Salon vocal', 'voice', '', 'Vocal', 0, now);
+			this.writeOverride(announcements, DEFAULT_GRADE, { allow: 0, deny: READ_ONLY_DENY });
 		}
-		return this.channels();
+		return this.allChannels();
 	}
 
-	channels(): Channel[] {
+	private overrides(channelId: string): ChannelOverrides {
+		const cached = this.overrideCache.get(channelId);
+		if (cached) {
+			return cached;
+		}
+		const rows = this.sql.exec<{ grade_id: string; allow: number; deny: number }>('SELECT grade_id, allow, deny FROM channel_overrides WHERE channel_id = ?', channelId).toArray();
+		const value = Object.fromEntries(rows.map((row) => [row.grade_id, { allow: row.allow, deny: row.deny }]));
+		this.overrideCache.set(channelId, value);
+		return value;
+	}
+
+	private writeOverride(channelId: string, gradeId: string, override: Override): void {
+		const allow = override.allow & CHANNEL_BITS;
+		const deny = override.deny & CHANNEL_BITS & ~allow;
+		if (allow === 0 && deny === 0) {
+			this.sql.exec('DELETE FROM channel_overrides WHERE channel_id = ? AND grade_id = ?', channelId, gradeId);
+		} else {
+			this.sql.exec(
+				'INSERT INTO channel_overrides (channel_id, grade_id, allow, deny) VALUES (?, ?, ?, ?) ON CONFLICT (channel_id, grade_id) DO UPDATE SET allow = excluded.allow, deny = excluded.deny',
+				channelId,
+				gradeId,
+				allow,
+				deny,
+			);
+		}
+		this.overrideCache.delete(channelId);
+	}
+
+	private permsIn(actor: Actor, channelId: string): number {
+		return channelPerms({ owner: actor.owner, base: actor.perms, grades: actor.grades }, this.overrides(channelId));
+	}
+
+	private can(actor: Actor, channelId: string, flag: number): boolean {
+		return has(this.permsIn(actor, channelId), flag);
+	}
+
+	private visibleIds(actor: Actor): Set<string> {
+		return new Set(this.allChannels().filter((c) => this.can(actor, c.id, P.VIEW_CHANNEL)).map((c) => c.id));
+	}
+
+	private access(actor: Actor) {
+		const channels = this.allChannels().filter((c) => this.can(actor, c.id, P.VIEW_CHANNEL));
+		const visible = new Set(channels.map((c) => c.id));
+		const perms = Object.fromEntries(channels.map((c) => [c.id, this.permsIn(actor, c.id)]));
+		const { unread, mentions } = this.unread(actor, visible);
+		const voice = Object.fromEntries(Object.entries(this.voiceSnapshot()).filter(([id]) => visible.has(id)));
+		return { channels, perms, unread, mentions, voice };
+	}
+
+	getOverrides(actor: Actor, channelId: string): Result<ChannelOverrides> {
+		if (!this.channelRow(channelId)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
+		}
+		return ok(this.overrides(channelId));
+	}
+
+	setOverrides(actor: Actor, channelId: string, overrides: ChannelOverrides): Result<ChannelOverrides> {
+		if (!this.channelRow(channelId)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
+		}
+		this.ctx.storage.transactionSync(() => {
+			this.sql.exec('DELETE FROM channel_overrides WHERE channel_id = ?', channelId);
+			for (const [gradeId, override] of Object.entries(overrides)) {
+				this.writeOverride(channelId, gradeId, override);
+			}
+		});
+		this.overrideCache.delete(channelId);
+		this.resync();
+		return ok(this.overrides(channelId));
+	}
+
+	gradeDeleted(gradeId: string): void {
+		this.sql.exec('DELETE FROM channel_overrides WHERE grade_id = ?', gradeId);
+		this.overrideCache.clear();
+	}
+
+	// Grades modifiés côté D1 : nouveaux acteurs pour les sockets ouverts, puis resynchronisation.
+	refreshActors(actors: Actor[]): void {
+		const byId = new Map(actors.map((a) => [a.id, a]));
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			const actor = conn && byId.get(conn.actor.id);
+			if (conn && actor) {
+				conn.actor = actor;
+				ws.serializeAttachment(conn);
+			}
+		}
+		this.resync();
+		this.broadcast({ t: 'members_changed' });
+	}
+
+	private resync(): void {
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			if (!conn) {
+				continue;
+			}
+			if (conn.voice && !this.can(conn.actor, conn.voice.channelId, P.VIEW_CHANNEL | P.VOICE_CONNECT)) {
+				const channelId = conn.voice.channelId;
+				this.setVoice(ws, conn, null);
+				this.send(ws, { t: 'voice_ended', reason: 'Accès au salon vocal retiré' });
+				this.broadcastVoice(channelId);
+			}
+			this.send(ws, { t: 'access', ...this.access(conn.actor) });
+		}
+	}
+
+	private allChannels(): Channel[] {
 		return this.sql
-			.exec<ChannelRow>("SELECT * FROM channels ORDER BY kind = 'voice', category, position, name")
+			.exec<ChannelRow>(`${CHANNEL_SELECT} ORDER BY c.kind = 'voice', c.category, c.position, c.name`)
 			.toArray()
 			.map(toChannel);
 	}
 
+	channels(actor: Actor): Channel[] {
+		return this.allChannels().filter((c) => this.can(actor, c.id, P.VIEW_CHANNEL));
+	}
+
 	createChannel(actor: Actor, input: ChannelInput): Result<Channel> {
-		if (!isStaff(actor)) {
-			return err(403, 'Réservé aux administrateurs');
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
 		}
 		const kind: ChannelKind = input.kind === 'voice' ? 'voice' : 'text';
 		const name = normalizeChannelName(input.name ?? '', kind);
@@ -285,28 +420,31 @@ export class Workspace extends DurableObject<Env> {
 			return err(409, 'Un salon porte déjà ce nom');
 		}
 		const { max } = this.sql.exec<{ max: number | null }>('SELECT MAX(position) AS max FROM channels WHERE kind = ?', kind).one();
-		const row = this.sql
-			.exec<ChannelRow>(
-				'INSERT INTO channels (id, name, kind, topic, category, read_only, user_limit, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *',
-				crypto.randomUUID(),
+		const id = crypto.randomUUID();
+		this.ctx.storage.transactionSync(() => {
+			this.sql.exec(
+				'INSERT INTO channels (id, name, kind, topic, category, user_limit, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				id,
 				name,
 				kind,
 				(input.topic ?? '').trim().slice(0, LIMITS.topicLength),
 				(input.category ?? '').trim().slice(0, LIMITS.categoryLength),
-				kind === 'text' && input.readOnly ? 1 : 0,
 				kind === 'voice' ? this.clampLimit(input.userLimit) : 0,
 				input.position ?? (max ?? -1) + 1,
 				Date.now(),
-			)
-			.one();
-		const channel = toChannel(row);
-		this.broadcast({ t: 'channel_upsert', channel });
+			);
+			if (kind === 'text' && input.readOnly) {
+				this.writeOverride(id, DEFAULT_GRADE, { allow: 0, deny: READ_ONLY_DENY });
+			}
+		});
+		const channel = this.channelView(id)!;
+		this.broadcastChannel(channel);
 		return ok(channel);
 	}
 
 	updateChannel(actor: Actor, id: string, input: ChannelInput): Result<Channel> {
-		if (!isStaff(actor)) {
-			return err(403, 'Réservé aux administrateurs');
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
 		}
 		const current = this.channelRow(id);
 		if (!current) {
@@ -320,33 +458,39 @@ export class Workspace extends DurableObject<Env> {
 		if (clash && clash.id !== id) {
 			return err(409, 'Un salon porte déjà ce nom');
 		}
-		const row = this.sql
-			.exec<ChannelRow>(
-				'UPDATE channels SET name = ?, topic = ?, category = ?, read_only = ?, user_limit = ?, position = ? WHERE id = ? RETURNING *',
+		this.ctx.storage.transactionSync(() => {
+			this.sql.exec(
+				'UPDATE channels SET name = ?, topic = ?, category = ?, user_limit = ?, position = ? WHERE id = ?',
 				name,
 				input.topic === undefined ? current.topic : input.topic.trim().slice(0, LIMITS.topicLength),
 				input.category === undefined ? current.category : input.category.trim().slice(0, LIMITS.categoryLength),
-				current.kind === 'text' && (input.readOnly ?? current.read_only === 1) ? 1 : 0,
 				current.kind === 'voice' ? this.clampLimit(input.userLimit ?? current.user_limit) : 0,
 				input.position ?? current.position,
 				id,
-			)
-			.one();
-		const channel = toChannel(row);
-		this.broadcast({ t: 'channel_upsert', channel });
+			);
+			if (input.readOnly !== undefined) {
+				const base = this.overrides(id)[DEFAULT_GRADE] ?? { allow: 0, deny: 0 };
+				this.writeOverride(id, DEFAULT_GRADE, input.readOnly ? { allow: base.allow & ~READ_ONLY_DENY, deny: base.deny | READ_ONLY_DENY } : { allow: base.allow, deny: base.deny & ~READ_ONLY_DENY });
+			}
+		});
+		if (input.readOnly !== undefined) {
+			this.resync();
+		}
+		const channel = this.channelView(id)!;
+		this.broadcastChannel(channel);
 		return ok(channel);
 	}
 
 	async deleteChannel(actor: Actor, id: string): Promise<Result<null>> {
-		if (!isStaff(actor)) {
-			return err(403, 'Réservé aux administrateurs');
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
 		}
-		if (!this.channelRow(id)) {
+		const current = this.channelRow(id);
+		if (!current) {
 			return err(404, 'Salon introuvable');
 		}
 		const { n } = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM channels WHERE kind = 'text'").one();
-		const isLastText = this.channelRow(id)?.kind === 'text' && n <= 1;
-		if (isLastText) {
+		if (current.kind === 'text' && n <= 1) {
 			return err(400, 'Impossible de supprimer le dernier salon écrit');
 		}
 		const keys = this.sql.exec<{ key: string }>('SELECT key FROM files WHERE channel_id = ?', id).toArray().map((row) => row.key);
@@ -355,8 +499,10 @@ export class Workspace extends DurableObject<Env> {
 			this.sql.exec('DELETE FROM reads WHERE channel_id = ?', id);
 			this.sql.exec('DELETE FROM files WHERE channel_id = ?', id);
 			this.sql.exec('DELETE FROM folders WHERE channel_id = ?', id);
+			this.sql.exec('DELETE FROM channel_overrides WHERE channel_id = ?', id);
 			this.sql.exec('DELETE FROM channels WHERE id = ?', id);
 		});
+		this.overrideCache.delete(id);
 		for (const ws of this.ctx.getWebSockets()) {
 			const conn = this.conn(ws);
 			if (conn?.voice?.channelId === id) {
@@ -369,8 +515,8 @@ export class Workspace extends DurableObject<Env> {
 		return ok(null);
 	}
 
-	listMessages(channelId: string, cursor: { before?: number; after?: number; around?: number } = {}): Result<MessagePage> {
-		if (!this.channelRow(channelId)) {
+	listMessages(actor: Actor, channelId: string, cursor: { before?: number; after?: number; around?: number } = {}): Result<MessagePage> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
 		}
 		const older = (before: number, limit: number) =>
@@ -396,12 +542,14 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	postMessage(actor: Actor, channelId: string, body: string, attachment: Attachment | null, replyTo: number | null = null): Result<Message> {
-		const channel = this.channelRow(channelId);
-		if (!channel) {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
 		}
-		if (channel.read_only && !isStaff(actor)) {
-			return err(403, 'Salon en lecture seule');
+		if (!this.can(actor, channelId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		if (attachment && !this.can(actor, channelId, P.ATTACH_FILES)) {
+			return err(403, 'Tu ne peux pas joindre de fichier ici');
 		}
 		const text = body.trim();
 		if (!text && !attachment) {
@@ -435,16 +583,16 @@ export class Workspace extends DurableObject<Env> {
 		});
 		this.setRead(actor.id, channelId, id);
 		const message = this.message(id)!;
-		this.broadcast({ t: 'message', message });
+		this.broadcastIn(channelId, { t: 'message', message });
 		if (attachment) {
-			this.broadcast({ t: 'drive', channelId });
+			this.broadcastIn(channelId, { t: 'drive', channelId });
 		}
 		return ok(message);
 	}
 
 	editMessage(actor: Actor, id: number, body: string): Result<Message> {
 		const current = this.message(id);
-		if (!current) {
+		if (!current || !this.can(actor, current.channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Message introuvable');
 		}
 		if (current.userId !== actor.id) {
@@ -463,38 +611,39 @@ export class Workspace extends DurableObject<Env> {
 			this.saveMentions(id, text);
 		});
 		const message = this.message(id)!;
-		this.broadcast({ t: 'message_updated', message });
+		this.broadcastIn(message.channelId, { t: 'message_updated', message });
 		return ok(message);
 	}
 
 	async deleteMessage(actor: Actor, id: number): Promise<Result<null>> {
 		const current = this.message(id);
-		if (!current) {
+		if (!current || !this.can(actor, current.channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Message introuvable');
 		}
-		if (current.userId !== actor.id && !isStaff(actor)) {
+		if (current.userId !== actor.id && !this.can(actor, current.channelId, P.MANAGE_MESSAGES)) {
 			return err(403, 'Suppression non autorisée');
 		}
 		this.ctx.storage.transactionSync(() => {
 			this.sql.exec('DELETE FROM messages WHERE id = ?', id);
 			this.sql.exec('DELETE FROM files WHERE message_id = ?', id);
 		});
-		this.broadcast({ t: 'message_deleted', channelId: current.channelId, id });
+		this.broadcastIn(current.channelId, { t: 'message_deleted', channelId: current.channelId, id });
 		if (current.attachment) {
-			this.broadcast({ t: 'drive', channelId: current.channelId });
+			this.broadcastIn(current.channelId, { t: 'drive', channelId: current.channelId });
 			await this.deleteObjects([current.attachment.key]);
 		}
 		return ok(null);
 	}
 
-	search(query: string): SearchHit[] {
+	search(actor: Actor, query: string): SearchHit[] {
 		const terms = query
 			.trim()
 			.split(/\s+/)
 			.filter(Boolean)
 			.slice(0, 8)
 			.map((term) => `"${term.replace(/"/g, '""')}"*`);
-		if (terms.length === 0) {
+		const visible = [...this.visibleIds(actor)];
+		if (terms.length === 0 || visible.length === 0) {
 			return [];
 		}
 		const rows = this.sql
@@ -503,9 +652,10 @@ export class Workspace extends DurableObject<Env> {
 				FROM messages_fts
 				JOIN messages m ON m.id = messages_fts.rowid
 				LEFT JOIN messages r ON r.id = m.reply_to
-				WHERE messages_fts MATCH ?
+				WHERE messages_fts MATCH ? AND m.channel_id IN (${visible.map(() => '?').join(',')})
 				ORDER BY m.id DESC LIMIT 30`,
 				terms.join(' '),
+				...visible,
 			)
 			.toArray();
 		return rows.map((row) => ({ message: toMessage(row), snippet: row.snippet }));
@@ -518,7 +668,7 @@ export class Workspace extends DurableObject<Env> {
 		}
 	}
 
-	unread(userId: string): { unread: Record<string, number>; mentions: Record<string, number> } {
+	private unread(actor: Actor, visible: Set<string>): { unread: Record<string, number>; mentions: Record<string, number> } {
 		const rows = this.sql
 			.exec<{ channel_id: string; n: number; mentions: number }>(
 				`SELECT m.channel_id AS channel_id, COUNT(*) AS n, COUNT(x.user_id) AS mentions
@@ -527,9 +677,10 @@ export class Workspace extends DurableObject<Env> {
 				LEFT JOIN mentions x ON x.message_id = m.id AND x.user_id = ?1
 				WHERE m.id > COALESCE(r.last_read_id, 0) AND m.user_id != ?1
 				GROUP BY m.channel_id`,
-				userId,
+				actor.id,
 			)
-			.toArray();
+			.toArray()
+			.filter((row) => visible.has(row.channel_id));
 		return {
 			unread: Object.fromEntries(rows.map((row) => [row.channel_id, row.n])),
 			mentions: Object.fromEntries(rows.filter((row) => row.mentions > 0).map((row) => [row.channel_id, row.mentions])),
@@ -577,17 +728,26 @@ export class Workspace extends DurableObject<Env> {
 		await this.deleteObjects(keys);
 	}
 
+	// Fichier lisible si son salon l'est ; un envoi pas encore rattaché reste à son auteur.
+	canReadFile(actor: Actor, key: string, uploadedBy: string | undefined): boolean {
+		const file = this.sql.exec<{ channel_id: string }>('SELECT channel_id FROM files WHERE key = ?', key).toArray()[0];
+		return file ? this.can(actor, file.channel_id, P.VIEW_CHANNEL) : uploadedBy === actor.id || actor.owner;
+	}
+
 	voiceJoin(actor: Actor, connId: string, channelId: string, sessionId: string, recvSessionId: string): Result<VoiceParticipant[]> {
 		const ws = this.socketFor(actor.id, connId);
 		if (!ws) {
 			return err(404, 'Connexion temps réel introuvable, recharge la page');
 		}
 		const channel = this.channelRow(channelId);
-		if (!channel || channel.kind !== 'voice') {
+		if (!channel || channel.kind !== 'voice' || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon vocal introuvable');
 		}
+		if (!this.can(actor, channelId, P.VOICE_CONNECT)) {
+			return err(403, 'Tu ne peux pas rejoindre ce salon vocal');
+		}
 		const others = this.participants(channelId).filter((p) => p.userId !== actor.id);
-		if (channel.user_limit > 0 && others.length >= channel.user_limit && !isStaff(actor)) {
+		if (channel.user_limit > 0 && others.length >= channel.user_limit && !this.can(actor, channelId, P.BYPASS_LIMIT)) {
 			return err(403, 'Salon complet');
 		}
 		// Un seul vocal par personne : les autres onglets sont déconnectés.
@@ -625,6 +785,17 @@ export class Workspace extends DurableObject<Env> {
 		return Boolean(voice && (voice.sessionId === sessionId || voice.recvSessionId === sessionId));
 	}
 
+	// Micro, caméra et écran ont chacun leur permission dans le salon.
+	voiceMayPublish(actor: Actor, connId: string, sessionId: string, trackNames: string[]): boolean {
+		const ws = this.socketFor(actor.id, connId);
+		const voice = ws && this.conn(ws)?.voice;
+		if (!voice || voice.sessionId !== sessionId) {
+			return false;
+		}
+		const perms = this.permsIn(actor, voice.channelId);
+		return trackNames.every((name) => has(perms, trackPerm(name)));
+	}
+
 	voicePublished(actor: Actor, connId: string, sessionId: string, trackNames: string[]): void {
 		const ws = this.socketFor(actor.id, connId);
 		const conn = ws && this.conn(ws);
@@ -656,10 +827,37 @@ export class Workspace extends DurableObject<Env> {
 		return remoteSessionIds.every((id) => id !== voice.sessionId && allowed.has(id));
 	}
 
-	// Sockets ouverts avant la v2 : pièce jointe { id, name, role } sans connId.
+	voiceModerate(actor: Actor, targetId: string, action: 'mute' | 'kick'): Result<null> {
+		const sockets = this.ctx.getWebSockets(targetId).filter((ws) => this.conn(ws)?.voice);
+		const target = sockets[0] && this.conn(sockets[0]);
+		if (!target?.voice) {
+			return err(404, 'Ce membre n’est pas en vocal');
+		}
+		const channelId = target.voice.channelId;
+		if (!this.can(actor, channelId, P.VOICE_MODERATE)) {
+			return err(403, DENIED);
+		}
+		if (targetId !== actor.id && (target.actor.owner || (!actor.owner && target.actor.top >= actor.top))) {
+			return err(403, 'Grade égal ou supérieur au tien');
+		}
+		for (const ws of sockets) {
+			const conn = this.conn(ws)!;
+			if (action === 'kick') {
+				this.setVoice(ws, conn, null);
+				this.send(ws, { t: 'voice_ended', reason: `${actor.name} t’a retiré du salon vocal` });
+			} else {
+				this.setVoice(ws, conn, { ...conn.voice!, muted: true });
+				this.send(ws, { t: 'voice_force_mute', by: actor.name });
+			}
+		}
+		this.broadcastVoice(channelId);
+		return ok(null);
+	}
+
 	private conn(ws: WebSocket): Conn | null {
 		const value = ws.deserializeAttachment() as Partial<Conn> | null;
-		return value && typeof value.connId === 'string' && value.actor ? (value as Conn) : null;
+		// Sockets ouverts avant les grades : acteur sans liste de grades, ignorés.
+		return value && typeof value.connId === 'string' && value.actor && Array.isArray(value.actor.grades) ? (value as Conn) : null;
 	}
 
 	private socketFor(userId: string, connId: string): WebSocket | undefined {
@@ -703,12 +901,12 @@ export class Workspace extends DurableObject<Env> {
 
 	private broadcastVoice(channelId: string, exceptUser?: string, exceptSocket?: WebSocket): VoiceParticipant[] {
 		const participants = this.participants(channelId, exceptUser, exceptSocket);
-		this.broadcast({ t: 'voice', channelId, participants }, exceptSocket);
+		this.broadcastIn(channelId, { t: 'voice', channelId, participants }, exceptSocket);
 		return participants;
 	}
 
-	driveList(channelId: string, folderId: string | null): Result<DriveListing> {
-		if (!this.channelRow(channelId)) {
+	driveList(actor: Actor, channelId: string, folderId: string | null): Result<DriveListing> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
 		}
 		if (folderId && !this.folderRow(folderId, channelId)) {
@@ -754,16 +952,16 @@ export class Workspace extends DurableObject<Env> {
 				Date.now(),
 			)
 			.one();
-		this.broadcast({ t: 'drive', channelId });
+		this.broadcastIn(channelId, { t: 'drive', channelId });
 		return ok(toFolder(row));
 	}
 
 	driveRenameFolder(actor: Actor, id: string, rawName: string): Result<DriveFolder> {
 		const folder = this.sql.exec<FolderRow>('SELECT * FROM folders WHERE id = ?', id).toArray()[0];
-		if (!folder) {
+		if (!folder || !this.can(actor, folder.channel_id, P.VIEW_CHANNEL)) {
 			return err(404, 'Dossier introuvable');
 		}
-		if (folder.created_by !== actor.id && !isStaff(actor)) {
+		if (folder.created_by !== actor.id && !this.can(actor, folder.channel_id, P.DRIVE_MANAGE)) {
 			return err(403, 'Modification non autorisée');
 		}
 		const name = cleanFileName(rawName);
@@ -771,16 +969,16 @@ export class Workspace extends DurableObject<Env> {
 			return err(400, 'Nom de dossier requis');
 		}
 		const row = this.sql.exec<FolderRow>('UPDATE folders SET name = ? WHERE id = ? RETURNING *', name, id).one();
-		this.broadcast({ t: 'drive', channelId: folder.channel_id });
+		this.broadcastIn(folder.channel_id, { t: 'drive', channelId: folder.channel_id });
 		return ok(toFolder(row));
 	}
 
 	async driveDeleteFolder(actor: Actor, id: string): Promise<Result<null>> {
 		const folder = this.sql.exec<FolderRow>('SELECT * FROM folders WHERE id = ?', id).toArray()[0];
-		if (!folder) {
+		if (!folder || !this.can(actor, folder.channel_id, P.VIEW_CHANNEL)) {
 			return err(404, 'Dossier introuvable');
 		}
-		if (folder.created_by !== actor.id && !isStaff(actor)) {
+		if (folder.created_by !== actor.id && !this.can(actor, folder.channel_id, P.DRIVE_MANAGE)) {
 			return err(403, 'Suppression non autorisée');
 		}
 		const ids = [id];
@@ -809,16 +1007,16 @@ export class Workspace extends DurableObject<Env> {
 			return err(404, 'Dossier introuvable');
 		}
 		const file = this.insertFile(channelId, folderId, attachment, actor.id, null);
-		this.broadcast({ t: 'drive', channelId });
+		this.broadcastIn(channelId, { t: 'drive', channelId });
 		return ok(file);
 	}
 
 	driveUpdateFile(actor: Actor, id: string, input: { name?: string; folderId?: string | null }): Result<DriveFile> {
 		const file = this.sql.exec<FileRow>('SELECT * FROM files WHERE id = ?', id).toArray()[0];
-		if (!file) {
+		if (!file || !this.can(actor, file.channel_id, P.VIEW_CHANNEL)) {
 			return err(404, 'Fichier introuvable');
 		}
-		if (file.uploaded_by !== actor.id && !isStaff(actor)) {
+		if (file.uploaded_by !== actor.id && !this.can(actor, file.channel_id, P.DRIVE_MANAGE)) {
 			return err(403, 'Modification non autorisée');
 		}
 		const name = input.name === undefined ? file.name : cleanFileName(input.name);
@@ -830,16 +1028,16 @@ export class Workspace extends DurableObject<Env> {
 			return err(404, 'Dossier introuvable');
 		}
 		const row = this.sql.exec<FileRow>('UPDATE files SET name = ?, folder_id = ? WHERE id = ? RETURNING *', name, folderId, id).one();
-		this.broadcast({ t: 'drive', channelId: file.channel_id });
+		this.broadcastIn(file.channel_id, { t: 'drive', channelId: file.channel_id });
 		return ok(toFile(row));
 	}
 
 	async driveDeleteFile(actor: Actor, id: string): Promise<Result<null>> {
 		const file = this.sql.exec<FileRow>('SELECT * FROM files WHERE id = ?', id).toArray()[0];
-		if (!file) {
+		if (!file || !this.can(actor, file.channel_id, P.VIEW_CHANNEL)) {
 			return err(404, 'Fichier introuvable');
 		}
-		if (file.uploaded_by !== actor.id && !isStaff(actor)) {
+		if (file.uploaded_by !== actor.id && !this.can(actor, file.channel_id, P.DRIVE_MANAGE)) {
 			return err(403, 'Suppression non autorisée');
 		}
 		const touched = this.ctx.storage.transactionSync(() => this.detachFiles([file]));
@@ -848,18 +1046,12 @@ export class Workspace extends DurableObject<Env> {
 		return ok(null);
 	}
 
-	fileByKey(key: string): DriveFile | null {
-		const row = this.sql.exec<FileRow>('SELECT * FROM files WHERE key = ?', key).toArray()[0];
-		return row ? toFile(row) : null;
-	}
-
 	private driveDenied<T>(actor: Actor, channelId: string): Result<T> | null {
-		const channel = this.channelRow(channelId);
-		if (!channel) {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
 		}
-		if (channel.read_only && !isStaff(actor)) {
-			return err(403, 'Salon en lecture seule');
+		if (!this.can(actor, channelId, P.DRIVE_UPLOAD)) {
+			return err(403, 'Tu ne peux pas déposer de fichier ici');
 		}
 		return null;
 	}
@@ -911,13 +1103,13 @@ export class Workspace extends DurableObject<Env> {
 		for (const id of touched.updated) {
 			const message = this.message(id);
 			if (message) {
-				this.broadcast({ t: 'message_updated', message });
+				this.broadcastIn(message.channelId, { t: 'message_updated', message });
 			}
 		}
 		for (const { id, channelId: messageChannel } of touched.deleted) {
-			this.broadcast({ t: 'message_deleted', channelId: messageChannel, id });
+			this.broadcastIn(messageChannel, { t: 'message_deleted', channelId: messageChannel, id });
 		}
-		this.broadcast({ t: 'drive', channelId });
+		this.broadcastIn(channelId, { t: 'drive', channelId });
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -935,16 +1127,7 @@ export class Workspace extends DurableObject<Env> {
 		const conn: Conn = { connId: crypto.randomUUID(), actor, voice: null };
 		this.ctx.acceptWebSocket(server, [actor.id]);
 		server.serializeAttachment(conn);
-		const { unread, mentions } = this.unread(actor.id);
-		this.send(server, {
-			t: 'hello',
-			connId: conn.connId,
-			channels: this.channels(),
-			online: this.onlineIds(),
-			unread,
-			mentions,
-			voice: this.voiceSnapshot(),
-		});
+		this.send(server, { t: 'hello', connId: conn.connId, online: this.onlineIds(), ...this.access(actor) });
 		if (!wasOnline) {
 			this.broadcast({ t: 'presence', userId: actor.id, online: true }, server);
 		}
@@ -962,9 +1145,9 @@ export class Workspace extends DurableObject<Env> {
 		} catch {
 			return;
 		}
-		if (event.t === 'typing' && this.channelRow(event.channelId)) {
-			this.broadcast({ t: 'typing', channelId: event.channelId, userId: conn.actor.id }, ws);
-		} else if (event.t === 'read') {
+		if (event.t === 'typing' && this.channelRow(event.channelId) && this.can(conn.actor, event.channelId, P.SEND_MESSAGES)) {
+			this.broadcastIn(event.channelId, { t: 'typing', channelId: event.channelId, userId: conn.actor.id }, ws);
+		} else if (event.t === 'read' && this.channelRow(event.channelId) && this.can(conn.actor, event.channelId, P.VIEW_CHANNEL)) {
 			this.markRead(conn.actor.id, event.channelId);
 		} else if (event.t === 'voice_update' && conn.voice) {
 			const flags: VoiceFlags = {};
@@ -1010,11 +1193,16 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	private channelRow(id: string): ChannelRow | null {
-		return this.sql.exec<ChannelRow>('SELECT * FROM channels WHERE id = ?', id).toArray()[0] ?? null;
+		return this.sql.exec<ChannelRow>(`${CHANNEL_SELECT} WHERE c.id = ?`, id).toArray()[0] ?? null;
+	}
+
+	private channelView(id: string): Channel | null {
+		const row = this.channelRow(id);
+		return row ? toChannel(row) : null;
 	}
 
 	private channelByName(name: string): ChannelRow | null {
-		return this.sql.exec<ChannelRow>('SELECT * FROM channels WHERE name = ?', name).toArray()[0] ?? null;
+		return this.sql.exec<ChannelRow>(`${CHANNEL_SELECT} WHERE c.name = ?`, name).toArray()[0] ?? null;
 	}
 
 	private folderRow(id: string, channelId: string): FolderRow | null {
@@ -1059,13 +1247,41 @@ export class Workspace extends DurableObject<Env> {
 	private broadcast(event: ServerEvent, except?: WebSocket): void {
 		const payload = JSON.stringify(event);
 		for (const ws of this.ctx.getWebSockets()) {
-			if (ws === except) {
+			if (ws === except || !this.conn(ws)) {
 				continue;
 			}
 			try {
 				ws.send(payload);
 			} catch {
 				// Socket déjà fermé.
+			}
+		}
+	}
+
+	// Seuls ceux qui voient le salon reçoivent ses évènements.
+	private broadcastIn(channelId: string, event: ServerEvent, except?: WebSocket): void {
+		const payload = JSON.stringify(event);
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			if (ws === except || !conn || !this.can(conn.actor, channelId, P.VIEW_CHANNEL)) {
+				continue;
+			}
+			try {
+				ws.send(payload);
+			} catch {
+				// Socket déjà fermé.
+			}
+		}
+	}
+
+	private broadcastChannel(channel: Channel): void {
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			if (conn) {
+				this.send(
+					ws,
+					this.can(conn.actor, channel.id, P.VIEW_CHANNEL) ? { t: 'channel_upsert', channel, perms: this.permsIn(conn.actor, channel.id) } : { t: 'channel_deleted', id: channel.id },
+				);
 			}
 		}
 	}

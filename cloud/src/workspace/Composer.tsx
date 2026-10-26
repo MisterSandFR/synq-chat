@@ -9,6 +9,7 @@ type Props = {
 	workspaceId: string;
 	channel: Channel;
 	canPost: boolean;
+	canAttach: boolean;
 	lookup: Lookup;
 	replyTo: Message | null;
 	onCancelReply: () => void;
@@ -21,7 +22,7 @@ type Suggestion = { key: string; label: string; insert: string; avatar?: { name:
 const TYPING_EVERY = 3000;
 const TRIGGER_RE = /(^|\s)([@#])([\p{L}\p{N}_ -]{0,32})$/u;
 
-export function Composer({ workspaceId, channel, canPost, lookup, replyTo, onCancelReply, onSend, onTyping }: Props) {
+export function Composer({ workspaceId, channel, canPost, canAttach, lookup, replyTo, onCancelReply, onSend, onTyping }: Props) {
 	const [text, setText] = useState('');
 	const [attachment, setAttachment] = useState<Attachment | null>(null);
 	const [progress, setProgress] = useState<{ name: string; ratio: number } | null>(null);
@@ -60,7 +61,7 @@ export function Composer({ workspaceId, channel, canPost, lookup, replyTo, onCan
 	}, [trigger, dismissed, lookup]);
 
 	if (!canPost) {
-		return <p className='composer-locked'>Seuls les admins publient dans #{channel.name}.</p>;
+		return <p className='composer-locked'>{channel.readOnly ? `#${channel.name} est en lecture seule.` : `Ton grade ne permet pas d’écrire dans #${channel.name}.`}</p>;
 	}
 
 	const accept = (suggestion: Suggestion) => {
@@ -143,7 +144,7 @@ export function Composer({ workspaceId, channel, canPost, lookup, replyTo, onCan
 
 	const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
 		const file = event.clipboardData.files[0];
-		if (file) {
+		if (file && canAttach) {
 			event.preventDefault();
 			void attach(file);
 		}
@@ -235,9 +236,11 @@ export function Composer({ workspaceId, channel, canPost, lookup, replyTo, onCan
 					}}
 				/>
 				<div className='composer-tools'>
-					<button type='button' className='icon-btn' aria-label='Joindre un fichier' title='Joindre un fichier' onClick={() => fileInput.current?.click()}>
-						<Icon name='paperclip' />
-					</button>
+					{canAttach && (
+						<button type='button' className='icon-btn' aria-label='Joindre un fichier' title='Joindre un fichier' onClick={() => fileInput.current?.click()}>
+							<Icon name='paperclip' />
+						</button>
+					)}
 					<input
 						ref={fileInput}
 						type='file'

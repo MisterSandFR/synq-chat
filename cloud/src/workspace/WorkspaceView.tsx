@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 
+import { P, has } from '../../shared/permissions';
 import type { ChannelKind, Me, Member, Message } from '../../shared/types';
 import { api } from '../api';
 import { navigate, readPref, rememberWorkspace, writePref } from '../router';
@@ -44,7 +45,7 @@ function useFocused(): boolean {
 export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props) {
 	const myId = me.user.id;
 	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
-	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, send });
+	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, forceMuted: state.forceMuted, send });
 	const width = useSidebarWidth();
 	const focused = useFocused();
 	const [navOpen, setNavOpen] = useState(false);
@@ -70,7 +71,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const channels = state.channels;
 	const active = channels?.find((c) => c.id === channelId);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
-	const role = state.info?.role ?? 'member';
+	const grades = state.info?.grades ?? [];
+	const activePerms = active ? (state.perms[active.id] ?? 0) : 0;
 	const activeData = active ? state.messages[active.id] : undefined;
 	const lastActiveId = activeData?.items.at(-1)?.id;
 	const chatVisible = active?.kind === 'text' || (active?.kind === 'voice' && voiceChat);
@@ -199,7 +201,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					channel={active}
 					data={activeData}
 					lookup={lookup}
-					role={role}
+					canModerate={has(activePerms, P.MANAGE_MESSAGES)}
+					grades={grades}
 					highlightId={highlight}
 					onLoadOlder={() => activeData?.items[0] && void loadMessages(active.id, 'older', activeData.items[0].id)}
 					onLoadNewer={() => {
@@ -236,7 +239,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					key={`composer-${active.id}`}
 					workspaceId={workspaceId}
 					channel={active}
-					canPost={!active.readOnly || role !== 'member'}
+					canPost={has(activePerms, P.SEND_MESSAGES)}
+					canAttach={has(activePerms, P.ATTACH_FILES)}
 					lookup={lookup}
 					replyTo={replyTo}
 					onCancelReply={() => setReplyTo(null)}
@@ -310,7 +314,17 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 							<div className='spinner' aria-busy />
 						) : active.kind === 'voice' ? (
 							<div className='call-layout'>
-								<CallView channel={active} participants={state.voice[active.id] ?? []} members={members} myId={myId} voice={voice} otherChannelName={otherVoice} />
+								<CallView
+									workspaceId={workspaceId}
+									channel={active}
+									participants={state.voice[active.id] ?? []}
+									members={members}
+									grades={grades}
+									perms={activePerms}
+									myId={myId}
+									voice={voice}
+									otherChannelName={otherVoice}
+								/>
 								{voiceChat && (
 									<aside className='call-chat' aria-label={`Chat de ${active.name}`}>
 										{messagePane}
@@ -321,9 +335,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 							messagePane
 						)}
 					</div>
-					{panel === 'members' && state.info && <MembersPanel members={state.info.members} online={state.online} voice={state.voice} myId={myId} onClose={() => setPanel(null)} />}
+					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onClose={() => setPanel(null)} />}
 					{panel === 'drive' && active && (
-						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} role={role} onClose={() => setPanel(null)} />
+						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}
 				</div>
 			</main>

@@ -116,6 +116,10 @@ const PATHS = {
 	arrow: 'M5 12h14M13 6l6 6-6 6',
 	link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
 	chat: 'M4 5h16v11H9l-5 4zM8 9h8M8 12h5',
+	'chevron-left': 'M15 6l-6 6 6 6',
+	up: 'M12 19V5M5 12l7-7 7 7',
+	down: 'M12 5v14M5 12l7 7 7-7',
+	shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
 } as const;
 
 export type IconName = keyof typeof PATHS;

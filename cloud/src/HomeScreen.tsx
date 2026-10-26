@@ -6,8 +6,6 @@ import { api, errorText } from './api';
 import { navigate, rememberReturn } from './router';
 import { Avatar, Icon, Logo } from './ui';
 
-const ROLE_LABEL = { owner: 'Propriétaire', admin: 'Admin', member: 'Membre' } as const;
-
 type Props = { me: Me; notice: Notice; onNotice: (n: Notice) => void; onChanged: () => Promise<unknown> };
 
 export function HomeScreen({ me, notice, onNotice, onChanged }: Props) {
@@ -87,7 +85,7 @@ export function HomeScreen({ me, notice, onNotice, onChanged }: Props) {
 												{w.name}
 											</span>
 											<span className='muted' style={{ fontSize: 13 }}>
-												{ROLE_LABEL[w.role]}
+												{w.owner ? 'Propriétaire' : 'Membre'}
 											</span>
 										</span>
 										<Icon name='chevron-right' />

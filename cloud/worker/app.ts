@@ -1,15 +1,18 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
+import { ALL_PERMS, DEFAULT_GRADE, P, has } from '../shared/permissions';
 import {
 	ACCENTS,
 	LIMITS,
 	VOICE_TRACK_RE,
+	type Actor,
 	type Attachment,
 	type ChannelInput,
+	type ChannelOverrides,
+	type Grade,
 	type Me,
 	type Member,
-	type Role,
 	type User,
 	type WorkspaceDetail,
 	type WorkspaceSummary,
@@ -18,7 +21,7 @@ import { DUMMY_HASH, hashPassword, randomToken, sha256, verifyPassword } from '.
 import { authorizeUrl, completeLogin } from './recube';
 import type { Result } from './result';
 import { iceServers, sfu, voiceEnabled } from './sfu';
-import type { Actor } from './workspace';
+import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
 
 type AppEnv = {
 	Bindings: Env;
@@ -297,17 +300,17 @@ app.use('*', async (c, next) => {
 app.get('/me', async (c) => {
 	const user = c.get('user');
 	const { results } = await c.env.DB.prepare(
-		'SELECT w.id, w.name, w.accent, m.role FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY w.name COLLATE NOCASE',
+		"SELECT w.id, w.name, w.accent, m.role = 'owner' AS owner FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY w.name COLLATE NOCASE",
 	)
 		.bind(user.id)
-		.all<WorkspaceSummary>();
+		.all<Omit<WorkspaceSummary, 'owner'> & { owner: number }>();
 	const [identities, account] = await c.env.DB.batch([
 		c.env.DB.prepare('SELECT provider FROM identities WHERE user_id = ?').bind(user.id),
 		c.env.DB.prepare("SELECT password_hash != '' AS has_password FROM users WHERE id = ?").bind(user.id),
 	]);
 	return c.json({
 		user,
-		workspaces: results,
+		workspaces: results.map((w) => ({ ...w, owner: w.owner === 1 })),
 		identities: (identities!.results as { provider: string }[]).map((row) => row.provider),
 		hasPassword: (account!.results[0] as { has_password: number }).has_password === 1,
 	} satisfies Me);
@@ -348,9 +351,10 @@ app.post('/workspaces', async (c) => {
 	await c.env.DB.batch([
 		c.env.DB.prepare('INSERT INTO workspaces (id, name, owner_id, accent, created_at) VALUES (?, ?, ?, ?, ?)').bind(id, name, user.id, accent, now),
 		c.env.DB.prepare("INSERT INTO members (workspace_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)").bind(id, user.id, now),
+		...defaultGrades(c.env.DB, id),
 	]);
 	const channels = await workspaceStub(c.env, id).setup();
-	return c.json({ id, name, accent, role: 'owner', channels }, 201);
+	return c.json({ id, name, accent, owner: true, channels }, 201);
 });
 
 app.get('/invites/:code', async (c) => {
@@ -381,41 +385,57 @@ app.post('/invites/:code/accept', async (c) => {
 	return c.json({ workspaceId: invite.workspace_id });
 });
 
-// Routes d'espace : membre requis, rôle relu à chaque requête.
+// Routes d'espace : membre requis, grades et permissions relus à chaque requête.
 app.use('/w/:wid/*', async (c, next) => {
-	const user = c.get('user');
 	const workspaceId = c.req.param('wid');
-	const member = await c.env.DB.prepare('SELECT role FROM members WHERE workspace_id = ? AND user_id = ?')
-		.bind(workspaceId, user.id)
-		.first<{ role: Role }>();
-	if (!member) {
+	const actor = await loadActor(c.env.DB, workspaceId, c.get('user').id);
+	if (!actor) {
 		return fail(c, 404, 'Espace introuvable');
 	}
 	c.set('workspaceId', workspaceId);
-	c.set('actor', { id: user.id, name: user.name, role: member.role });
+	c.set('actor', actor);
 	await next();
 });
 
 const stub = (c: Ctx) => workspaceStub(c.env, c.get('workspaceId'));
 
-const requireStaff = (c: Ctx) => (c.get('actor').role === 'member' ? fail(c, 403, 'Réservé aux administrateurs') : null);
+const denyUnless = (c: Ctx, flag: number) => (has(c.get('actor').perms, flag) ? null : fail(c, 403, 'Permission insuffisante'));
+
+const refreshActors = async (c: Ctx) => stub(c).refreshActors(await loadActors(c.env.DB, c.get('workspaceId')));
 
 app.get('/w/:wid/info', async (c) => {
 	const workspaceId = c.get('workspaceId');
-	const [workspace, members] = await c.env.DB.batch([
+	const actor = c.get('actor');
+	const [workspace, members, links] = await c.env.DB.batch([
 		c.env.DB.prepare('SELECT id, name, accent FROM workspaces WHERE id = ?').bind(workspaceId),
 		c.env.DB.prepare(
-			'SELECT u.id, u.name, u.avatar_url AS avatarUrl, m.role FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE',
-		).bind(
-			workspaceId,
-		),
+			"SELECT u.id, u.name, u.avatar_url AS avatarUrl, m.role = 'owner' AS owner FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE",
+		).bind(workspaceId),
+		c.env.DB.prepare('SELECT user_id, grade_id FROM member_grades WHERE workspace_id = ?').bind(workspaceId),
 	]);
+	const gradesOf = new Map<string, string[]>();
+	for (const link of links!.results as Array<{ user_id: string; grade_id: string }>) {
+		gradesOf.set(link.user_id, [...(gradesOf.get(link.user_id) ?? []), link.grade_id]);
+	}
 	const { id, name, accent } = workspace!.results[0] as { id: string; name: string; accent: string };
-	return c.json({ id, name, accent, role: c.get('actor').role, members: members!.results as unknown as Member[] } satisfies WorkspaceDetail);
+	return c.json({
+		id,
+		name,
+		accent,
+		owner: actor.owner,
+		perms: actor.perms,
+		top: actor.top,
+		grades: await listGrades(c.env.DB, workspaceId),
+		members: (members!.results as Array<Omit<Member, 'owner' | 'gradeIds'> & { owner: number }>).map((m) => ({
+			...m,
+			owner: m.owner === 1,
+			gradeIds: gradesOf.get(m.id) ?? [],
+		})),
+	} satisfies WorkspaceDetail);
 });
 
 app.patch('/w/:wid/info', async (c) => {
-	const denied = requireStaff(c);
+	const denied = denyUnless(c, P.MANAGE_WORKSPACE);
 	if (denied) {
 		return denied;
 	}
@@ -436,7 +456,7 @@ app.patch('/w/:wid/info', async (c) => {
 });
 
 app.delete('/w/:wid/info', async (c) => {
-	if (c.get('actor').role !== 'owner') {
+	if (!c.get('actor').owner) {
 		return fail(c, 403, 'Réservé au propriétaire');
 	}
 	await stub(c).destroy();
@@ -445,7 +465,7 @@ app.delete('/w/:wid/info', async (c) => {
 });
 
 app.post('/w/:wid/invites', async (c) => {
-	const denied = requireStaff(c);
+	const denied = denyUnless(c, P.CREATE_INVITES);
 	if (denied) {
 		return denied;
 	}
@@ -457,38 +477,18 @@ app.post('/w/:wid/invites', async (c) => {
 	return c.json({ code, expiresAt: now + INVITE_TTL }, 201);
 });
 
-app.patch('/w/:wid/members/:uid', async (c) => {
-	if (c.get('actor').role !== 'owner') {
-		return fail(c, 403, 'Réservé au propriétaire');
-	}
-	const { role } = await readJson<{ role: Role }>(c);
-	if (role !== 'admin' && role !== 'member') {
-		return fail(c, 400, 'Rôle invalide');
-	}
-	const updated = await c.env.DB.prepare("UPDATE members SET role = ? WHERE workspace_id = ? AND user_id = ? AND role != 'owner'")
-		.bind(role, c.get('workspaceId'), c.req.param('uid'))
-		.run();
-	if (!updated.meta.changes) {
-		return fail(c, 404, 'Membre introuvable');
-	}
-	await stub(c).membersChanged();
-	return c.json({ ok: true });
-});
-
 app.delete('/w/:wid/members/:uid', async (c) => {
 	const actor = c.get('actor');
 	const targetId = c.req.param('uid');
-	const target = await c.env.DB.prepare('SELECT role FROM members WHERE workspace_id = ? AND user_id = ?')
-		.bind(c.get('workspaceId'), targetId)
-		.first<{ role: Role }>();
+	const target = await loadActor(c.env.DB, c.get('workspaceId'), targetId);
 	if (!target) {
 		return fail(c, 404, 'Membre introuvable');
 	}
 	const self = targetId === actor.id;
-	if (target.role === 'owner') {
+	if (target.owner) {
 		return fail(c, 403, self ? 'Le propriétaire ne peut pas quitter son espace' : 'Impossible de retirer le propriétaire');
 	}
-	const allowed = self || actor.role === 'owner' || (actor.role === 'admin' && target.role === 'member');
+	const allowed = self || actor.owner || (has(actor.perms, P.KICK_MEMBERS) && target.top < actor.top);
 	if (!allowed) {
 		return fail(c, 403, 'Retrait non autorisé');
 	}
@@ -497,7 +497,167 @@ app.delete('/w/:wid/members/:uid', async (c) => {
 	return c.json({ ok: true });
 });
 
-app.get('/w/:wid/channels', async (c) => c.json(await stub(c).channels()));
+// Grades : on ne touche qu'aux grades strictement sous son plus haut grade.
+app.get('/w/:wid/grades', async (c) => c.json(await listGrades(c.env.DB, c.get('workspaceId'))));
+
+const gradeInput = async (c: Ctx) => {
+	const body = await readJson<{ name: string; color: string; permissions: number }>(c);
+	return {
+		name: body.name === undefined ? undefined : cleanName(body.name).slice(0, 32),
+		color: body.color === undefined ? undefined : body.color === '' || (typeof body.color === 'string' && HEX_RE.test(body.color)) ? body.color.toUpperCase() : null,
+		permissions: body.permissions === undefined ? undefined : Number.isInteger(body.permissions) ? body.permissions & ALL_PERMS : null,
+	};
+};
+
+// Un grade ne peut recevoir que des permissions que son auteur possède.
+const grantable = (actor: Actor, permissions: number) => actor.owner || has(actor.perms, P.ADMINISTRATOR) || (permissions & ~actor.perms) === 0;
+
+app.post('/w/:wid/grades', async (c) => {
+	const denied = denyUnless(c, P.MANAGE_GRADES);
+	if (denied) {
+		return denied;
+	}
+	const actor = c.get('actor');
+	const input = await gradeInput(c);
+	if (!input.name) {
+		return fail(c, 400, 'Nom du grade requis');
+	}
+	if (input.color === null || input.permissions === null) {
+		return fail(c, 400, 'Couleur ou permissions invalides');
+	}
+	const permissions = input.permissions ?? 0;
+	if (!grantable(actor, permissions)) {
+		return fail(c, 403, 'Tu ne peux pas donner une permission que tu n’as pas');
+	}
+	const workspaceId = c.get('workspaceId');
+	const id = crypto.randomUUID();
+	// Nouveau grade juste au-dessus du grade par défaut.
+	await c.env.DB.batch([
+		c.env.DB.prepare('UPDATE grades SET position = position + 1 WHERE workspace_id = ? AND position >= 1').bind(workspaceId),
+		c.env.DB.prepare('INSERT INTO grades (workspace_id, id, name, color, position, permissions) VALUES (?, ?, ?, ?, 1, ?)').bind(
+			workspaceId,
+			id,
+			input.name,
+			input.color ?? '',
+			permissions,
+		),
+	]);
+	await refreshActors(c);
+	return c.json((await listGrades(c.env.DB, workspaceId)).find((g) => g.id === id), 201);
+});
+
+const editableGrade = async (c: Ctx, gradeId: string) => {
+	const actor = c.get('actor');
+	const grade = await c.env.DB.prepare('SELECT id, name, color, position, permissions FROM grades WHERE workspace_id = ? AND id = ?')
+		.bind(c.get('workspaceId'), gradeId)
+		.first<Grade>();
+	if (!grade) {
+		return { error: fail(c, 404, 'Grade introuvable') };
+	}
+	if (!has(actor.perms, P.MANAGE_GRADES) || (!actor.owner && grade.position >= actor.top && grade.id !== DEFAULT_GRADE)) {
+		return { error: fail(c, 403, 'Grade égal ou supérieur au tien') };
+	}
+	return { grade };
+};
+
+app.patch('/w/:wid/grades/:gid', async (c) => {
+	const { grade, error } = await editableGrade(c, c.req.param('gid'));
+	if (error) {
+		return error;
+	}
+	const input = await gradeInput(c);
+	if (input.name === '' || input.color === null || input.permissions === null) {
+		return fail(c, 400, 'Nom, couleur ou permissions invalides');
+	}
+	const actor = c.get('actor');
+	const permissions = input.permissions ?? grade.permissions;
+	if (!grantable(actor, permissions & ~grade.permissions)) {
+		return fail(c, 403, 'Tu ne peux pas donner une permission que tu n’as pas');
+	}
+	await c.env.DB.prepare('UPDATE grades SET name = ?, color = ?, permissions = ? WHERE workspace_id = ? AND id = ?')
+		.bind(input.name ?? grade.name, input.color ?? grade.color, permissions, c.get('workspaceId'), grade.id)
+		.run();
+	await refreshActors(c);
+	return c.json({ ...grade, name: input.name ?? grade.name, color: input.color ?? grade.color, permissions } satisfies Grade);
+});
+
+app.delete('/w/:wid/grades/:gid', async (c) => {
+	const { grade, error } = await editableGrade(c, c.req.param('gid'));
+	if (error) {
+		return error;
+	}
+	if (grade.id === DEFAULT_GRADE) {
+		return fail(c, 400, 'Le grade par défaut ne peut pas être supprimé');
+	}
+	const workspaceId = c.get('workspaceId');
+	await c.env.DB.batch([
+		c.env.DB.prepare('DELETE FROM grades WHERE workspace_id = ? AND id = ?').bind(workspaceId, grade.id),
+		c.env.DB.prepare('UPDATE grades SET position = position - 1 WHERE workspace_id = ? AND position > ?').bind(workspaceId, grade.position),
+	]);
+	await stub(c).gradeDeleted(grade.id);
+	await refreshActors(c);
+	return c.json({ ok: true });
+});
+
+// Ordre complet des grades hors défaut, du plus bas au plus haut ; les grades au-dessus de soi restent en place.
+app.put('/w/:wid/grades/order', async (c) => {
+	const denied = denyUnless(c, P.MANAGE_GRADES);
+	if (denied) {
+		return denied;
+	}
+	const actor = c.get('actor');
+	const { ids } = await readJson<{ ids: string[] }>(c);
+	const workspaceId = c.get('workspaceId');
+	const grades = (await listGrades(c.env.DB, workspaceId)).filter((g) => g.id !== DEFAULT_GRADE);
+	if (!Array.isArray(ids) || ids.length !== grades.length || new Set(ids).size !== ids.length || !ids.every((id) => grades.some((g) => g.id === id))) {
+		return fail(c, 400, 'Ordre invalide');
+	}
+	const position = (id: string) => ids.indexOf(id) + 1;
+	const locked = grades.filter((g) => !actor.owner && g.position >= actor.top);
+	if (locked.some((g) => position(g.id) !== g.position)) {
+		return fail(c, 403, 'Tu ne peux pas déplacer un grade égal ou supérieur au tien');
+	}
+	await c.env.DB.batch(ids.map((id) => c.env.DB.prepare('UPDATE grades SET position = ? WHERE workspace_id = ? AND id = ?').bind(position(id), workspaceId, id)));
+	await refreshActors(c);
+	return c.json(await listGrades(c.env.DB, workspaceId));
+});
+
+app.put('/w/:wid/members/:uid/grades', async (c) => {
+	const denied = denyUnless(c, P.MANAGE_GRADES);
+	if (denied) {
+		return denied;
+	}
+	const actor = c.get('actor');
+	const workspaceId = c.get('workspaceId');
+	const targetId = c.req.param('uid');
+	const target = await loadActor(c.env.DB, workspaceId, targetId);
+	if (!target) {
+		return fail(c, 404, 'Membre introuvable');
+	}
+	if (target.owner || (!actor.owner && targetId !== actor.id && target.top >= actor.top)) {
+		return fail(c, 403, 'Membre de grade égal ou supérieur au tien');
+	}
+	const { gradeIds } = await readJson<{ gradeIds: string[] }>(c);
+	const grades = await listGrades(c.env.DB, workspaceId);
+	const wanted = new Set(Array.isArray(gradeIds) ? gradeIds.filter((id) => id !== DEFAULT_GRADE) : []);
+	if (![...wanted].every((id) => grades.some((g) => g.id === id))) {
+		return fail(c, 400, 'Grade inconnu');
+	}
+	// Seuls les grades sous le sien peuvent être ajoutés ou retirés.
+	const current = new Set(target.grades.filter((id) => id !== DEFAULT_GRADE));
+	const changed = grades.filter((g) => wanted.has(g.id) !== current.has(g.id));
+	if (!actor.owner && changed.some((g) => g.position >= actor.top)) {
+		return fail(c, 403, 'Tu ne peux attribuer que des grades inférieurs au tien');
+	}
+	await c.env.DB.batch([
+		c.env.DB.prepare('DELETE FROM member_grades WHERE workspace_id = ? AND user_id = ?').bind(workspaceId, targetId),
+		...[...wanted].map((id) => c.env.DB.prepare('INSERT INTO member_grades (workspace_id, user_id, grade_id) VALUES (?, ?, ?)').bind(workspaceId, targetId, id)),
+	]);
+	await refreshActors(c);
+	return c.json({ gradeIds: [...wanted] });
+});
+
+app.get('/w/:wid/channels', async (c) => c.json(await stub(c).channels(c.get('actor'))));
 
 app.post('/w/:wid/channels', async (c) => unwrap(c, await stub(c).createChannel(c.get('actor'), await readJson<ChannelInput>(c))));
 
@@ -507,6 +667,24 @@ app.patch('/w/:wid/channels/:cid', async (c) =>
 
 app.delete('/w/:wid/channels/:cid', async (c) => unwrap(c, await stub(c).deleteChannel(c.get('actor'), c.req.param('cid'))));
 
+app.get('/w/:wid/channels/:cid/overrides', async (c) => unwrap(c, await stub(c).getOverrides(c.get('actor'), c.req.param('cid'))));
+
+app.put('/w/:wid/channels/:cid/overrides', async (c) => {
+	const { overrides } = await readJson<{ overrides: ChannelOverrides }>(c);
+	if (!overrides || typeof overrides !== 'object') {
+		return fail(c, 400, 'Surcharges invalides');
+	}
+	const grades = new Set((await listGrades(c.env.DB, c.get('workspaceId'))).map((g) => g.id));
+	const clean: ChannelOverrides = {};
+	for (const [gradeId, value] of Object.entries(overrides)) {
+		if (!grades.has(gradeId) || !value || !Number.isInteger(value.allow) || !Number.isInteger(value.deny)) {
+			return fail(c, 400, 'Surcharges invalides');
+		}
+		clean[gradeId] = { allow: value.allow, deny: value.deny };
+	}
+	return unwrap(c, await stub(c).setOverrides(c.get('actor'), c.req.param('cid'), clean));
+});
+
 const cursor = (value: string | undefined) => {
 	const n = Number(value);
 	return Number.isInteger(n) && n > 0 ? n : undefined;
@@ -515,7 +693,7 @@ const cursor = (value: string | undefined) => {
 app.get('/w/:wid/channels/:cid/messages', async (c) =>
 	unwrap(
 		c,
-		await stub(c).listMessages(c.req.param('cid'), {
+		await stub(c).listMessages(c.get('actor'), c.req.param('cid'), {
 			before: cursor(c.req.query('before')),
 			after: cursor(c.req.query('after')),
 			around: cursor(c.req.query('around')),
@@ -525,7 +703,7 @@ app.get('/w/:wid/channels/:cid/messages', async (c) =>
 
 app.get('/w/:wid/search', async (c) => {
 	const q = (c.req.query('q') ?? '').slice(0, 200);
-	return c.json(await stub(c).search(q));
+	return c.json(await stub(c).search(c.get('actor'), q));
 });
 
 app.post('/w/:wid/channels/:cid/messages', async (c) => {
@@ -597,7 +775,7 @@ app.get('/w/:wid/files/:fid', async (c) => {
 	const key = `w/${c.get('workspaceId')}/${c.req.param('fid')}`;
 	const ranged = c.req.header('Range') !== undefined;
 	const object = await c.env.FILES.get(key, ranged ? { range: c.req.raw.headers } : {});
-	if (!object) {
+	if (!object || !(await stub(c).canReadFile(c.get('actor'), key, object.customMetadata?.uploadedBy))) {
 		return fail(c, 404, 'Fichier introuvable');
 	}
 	const type = object.httpMetadata?.contentType ?? 'application/octet-stream';
@@ -621,7 +799,7 @@ app.get('/w/:wid/files/:fid', async (c) => {
 	return new Response(object.body, { headers });
 });
 
-app.get('/w/:wid/channels/:cid/drive', async (c) => unwrap(c, await stub(c).driveList(c.req.param('cid'), c.req.query('folder') || null)));
+app.get('/w/:wid/channels/:cid/drive', async (c) => unwrap(c, await stub(c).driveList(c.get('actor'), c.req.param('cid'), c.req.query('folder') || null)));
 
 app.post('/w/:wid/channels/:cid/drive/folders', async (c) => {
 	const { name, parentId } = await readJson<{ name: string; parentId: string }>(c);
@@ -722,7 +900,7 @@ app.post('/w/:wid/voice/tracks', async (c) => {
 	const remote = tracks.every((t) => t.location === 'remote');
 	if (local) {
 		const valid = isDescription(body.sessionDescription) && tracks.every((t) => typeof t.mid === 'string' && VOICE_TRACK_RE.test(t.trackName));
-		if (!valid || !(await stub(c).voiceOwns(actor, connId, sessionId))) {
+		if (!valid || !(await stub(c).voiceMayPublish(actor, connId, sessionId, tracks.map((t) => t.trackName)))) {
 			return fail(c, 403, 'Publication refusée');
 		}
 		const reply = await sfu(c.env, 'POST', `/sessions/${sessionId}/tracks/new`, {
@@ -791,6 +969,14 @@ app.put('/w/:wid/voice/tracks/close', async (c) => {
 		await stub(c).voiceUnpublished(c.get('actor'), connId, sessionId, names);
 	}
 	return sfuReply(c, reply);
+});
+
+app.post('/w/:wid/voice/moderate', async (c) => {
+	const { userId, action } = await readJson<{ userId: string; action: 'mute' | 'kick' }>(c);
+	if (typeof userId !== 'string' || (action !== 'mute' && action !== 'kick')) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	return unwrap(c, await stub(c).voiceModerate(c.get('actor'), userId, action));
 });
 
 // Diagnostic envoyé par le navigateur quand le média échoue : seule trace côté serveur d'un souci WebRTC.
