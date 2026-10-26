@@ -6,6 +6,17 @@
 		<meta name="color-scheme" content="dark light" />
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<title>Synq Chat</title>
+		<script>
+			// Bundle introuvable juste après un déploiement : un seul rechargement automatique.
+			setTimeout(function () {
+				try {
+					if (!window.__synqBooted && !sessionStorage.getItem('synq_boot_retry')) {
+						sessionStorage.setItem('synq_boot_retry', '1');
+						location.reload();
+					}
+				} catch (e) {}
+			}, 6000);
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>

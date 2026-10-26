@@ -136,6 +136,8 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 									key={channel.id}
 									channel={channel}
 									active={channel.id === channelId}
+									unread={state.unread[channel.id] ?? 0}
+									mentions={state.mentions[channel.id] ?? 0}
 									participants={state.voice[channel.id] ?? []}
 									members={members}
 									speaking={voice.snapshot?.channelId === channel.id ? voice.snapshot.speaking : null}
@@ -163,7 +165,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 				<div className='voice-dock'>
 					<div className='voice-dock-status'>
 						<span className='grow ellipsis'>
-							<strong>{voice.snapshot.status === 'connecting' ? 'Connexion…' : 'Vocal connecté'}</strong>
+							<strong>{voice.snapshot.status === 'connecting' ? 'Connexion…' : voice.snapshot.status === 'reconnecting' ? 'Reconnexion…' : 'Vocal connecté'}</strong>
 							{connectedChannel && (
 								<>
 									{' '}
@@ -223,6 +225,8 @@ function TextChannelRow({ channel, active, unread, mentions, onOpen }: { channel
 type VoiceRowProps = {
 	channel: Channel;
 	active: boolean;
+	unread: number;
+	mentions: number;
 	participants: VoiceParticipant[];
 	members: Map<string, Member>;
 	speaking: Set<string> | null;
@@ -230,7 +234,7 @@ type VoiceRowProps = {
 	onJoin: () => void;
 };
 
-function VoiceChannelRow({ channel, active, participants, members, speaking, onOpen, onJoin }: VoiceRowProps) {
+function VoiceChannelRow({ channel, active, unread, mentions, participants, members, speaking, onOpen, onJoin }: VoiceRowProps) {
 	return (
 		<>
 			<a
@@ -251,6 +255,7 @@ function VoiceChannelRow({ channel, active, participants, members, speaking, onO
 					<Icon name='speaker' size={16} />
 				</span>
 				<span className='channel-name'>{channel.name}</span>
+				{!active && mentions > 0 ? <span className='pill'>{mentions > 99 ? '99+' : mentions}</span> : !active && unread > 0 && <span className='dot' aria-label='Messages non lus' />}
 				{(participants.length > 0 || channel.userLimit > 0) && (
 					<span className='channel-meta'>
 						{participants.length}

@@ -16,16 +16,19 @@ export function App() {
 	const path = usePath();
 
 	const refresh = useCallback(async (): Promise<Me | null> => {
-		try {
-			const next = await api<Me>('GET', '/me');
-			setMe(next);
-			return next;
-		} catch (error) {
-			if (error instanceof ApiError && error.status === 401) {
-				setMe(null);
-				return null;
+		// Panne réseau ou serveur : on réessaie au lieu de rester bloqué sur le chargement.
+		for (let attempt = 0; ; attempt++) {
+			try {
+				const next = await api<Me>('GET', '/me');
+				setMe(next);
+				return next;
+			} catch (error) {
+				if (error instanceof ApiError && error.status === 401) {
+					setMe(null);
+					return null;
+				}
+				await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, 500 * 2 ** attempt)));
 			}
-			throw error;
 		}
 	}, []);
 

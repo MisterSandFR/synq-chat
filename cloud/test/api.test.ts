@@ -580,20 +580,26 @@ describe('vocal', () => {
 		});
 		expect(outsider.status).toBe(403);
 
-		const bobJoined = await member.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn });
-		const pulled = await member.req<{ requiresImmediateRenegotiation: boolean }>('POST', `/api/w/${wid}/voice/tracks`, {
+		const bobJoined = await member.req<{ sessionId: string; recvSessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn });
+		const onPublishSession = await member.req('POST', `/api/w/${wid}/voice/tracks`, {
 			connId: bobConn,
 			sessionId: bobJoined.data.sessionId,
+			tracks: [{ location: 'remote', sessionId: aliceSession, trackName: 'mic' }],
+		});
+		expect(onPublishSession.status).toBe(403);
+		const pulled = await member.req<{ requiresImmediateRenegotiation: boolean }>('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: bobConn,
+			sessionId: bobJoined.data.recvSessionId,
 			tracks: [{ location: 'remote', sessionId: aliceSession, trackName: 'mic' }],
 		});
 		expect(pulled.data.requiresImmediateRenegotiation).toBe(true);
 		const answer = await member.req('PUT', `/api/w/${wid}/voice/renegotiate`, {
 			connId: bobConn,
-			sessionId: bobJoined.data.sessionId,
+			sessionId: bobJoined.data.recvSessionId,
 			sessionDescription: { type: 'answer', sdp: 'v=0' },
 		});
 		expect(answer.status).toBe(200);
-		expect(sfuCalls.at(-1)!.path).toBe(`/v1/apps/8da7b4df0958febdfb5af2d7f19b4238/sessions/${bobJoined.data.sessionId}/renegotiate`);
+		expect(sfuCalls.at(-1)!.path).toBe(`/v1/apps/8da7b4df0958febdfb5af2d7f19b4238/sessions/${bobJoined.data.recvSessionId}/renegotiate`);
 
 		alice.ws.send(JSON.stringify({ t: 'voice_update', muted: true, video: true }));
 		bob.drain();
@@ -608,6 +614,35 @@ describe('vocal', () => {
 		const empty = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
 		expect(empty.participants).toEqual([]);
 		bob.ws.close(1000);
+	});
+
+	it('publie des pistes numérotées et les retire à la fermeture', async () => {
+		const { owner, wid, voice, alice, bob, aliceConn } = await voiceSetup();
+		const joined = await owner.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
+		const sessionId = joined.data.sessionId;
+		const offer = { type: 'offer', sdp: 'v=0' };
+		for (const [mid, trackName] of [['0', 'mic'], ['1', 'cam-1']]) {
+			expect((await owner.req('POST', `/api/w/${wid}/voice/tracks`, { connId: aliceConn, sessionId, sessionDescription: offer, tracks: [{ location: 'local', mid, trackName }] })).status).toBe(200);
+		}
+		expect(
+			(await owner.req('POST', `/api/w/${wid}/voice/tracks`, { connId: aliceConn, sessionId, sessionDescription: offer, tracks: [{ location: 'local', mid: '2', trackName: 'webcam' }] })).status,
+		).toBe(403);
+		bob.drain();
+		const closed = await owner.req('PUT', `/api/w/${wid}/voice/tracks/close`, { connId: aliceConn, sessionId, sessionDescription: offer, tracks: [{ mid: '1' }], trackNames: ['cam-1'] });
+		expect(closed.status).toBe(200);
+		const state = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
+		expect(state.participants[0]!.tracks).toEqual(['mic']);
+		expect((await owner.req('POST', `/api/w/${wid}/voice/diag`, { kind: 'pc_failed', ice: 'failed' })).status).toBe(200);
+		alice.ws.close(1000);
+		bob.ws.close(1000);
+	});
+
+	it('accepte les messages dans le chat d’un salon vocal', async () => {
+		const { owner, wid, voice } = await voiceSetup();
+		const posted = await owner.req<Message>('POST', `/api/w/${wid}/channels/${voice.id}/messages`, { body: 'lien de la réunion' });
+		expect(posted.status).toBe(200);
+		const page = await owner.req<MessagePage>('GET', `/api/w/${wid}/channels/${voice.id}/messages`);
+		expect(page.data.messages.map((m) => m.body)).toEqual(['lien de la réunion']);
 	});
 
 	it('applique la limite de places aux membres', async () => {

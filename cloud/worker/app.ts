@@ -4,7 +4,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
 	ACCENTS,
 	LIMITS,
-	VOICE_TRACKS,
+	VOICE_TRACK_RE,
 	type Attachment,
 	type ChannelInput,
 	type Me,
@@ -668,6 +668,15 @@ const isDescription = (value: unknown): value is SessionDescription =>
 
 const sfuReply = (c: Ctx, reply: { status: number; data: Record<string, unknown> }) => c.json(reply.data, reply.status as 200);
 
+function logSfuErrors(c: Ctx, operation: string, reply: { status: number; data: Record<string, unknown> }): void {
+	const items = ((reply.data.tracks as Array<{ trackName?: string; mid?: string; errorCode?: string; errorDescription?: string }> | undefined) ?? []).filter((t) => t.errorCode);
+	if (reply.status >= 300 || reply.data.errorCode || items.length) {
+		console.log(
+			JSON.stringify({ level: 'warn', message: 'sfu error', operation, status: reply.status, error: reply.data.errorCode ?? null, description: reply.data.errorDescription ?? null, items, user: c.get('actor').id }),
+		);
+	}
+}
+
 app.use('/w/:wid/voice/*', async (c, next) => {
 	if (!voiceEnabled(c.env)) {
 		return c.json({ error: 'Vocal non configuré' }, 503);
@@ -680,16 +689,18 @@ app.post('/w/:wid/voice/join', async (c) => {
 	if (typeof channelId !== 'string' || typeof connId !== 'string') {
 		return fail(c, 400, 'Requête invalide');
 	}
-	const session = await sfu(c.env, 'POST', '/sessions/new');
-	const sessionId = session.data.sessionId;
-	if (session.status >= 300 || typeof sessionId !== 'string') {
+	// Deux sessions : publier et recevoir sur la même connexion fait collisionner les extensions RTP dans Chrome.
+	const [publish, receive] = await Promise.all([sfu(c.env, 'POST', '/sessions/new'), sfu(c.env, 'POST', '/sessions/new')]);
+	const sessionId = publish.data.sessionId;
+	const recvSessionId = receive.data.sessionId;
+	if (typeof sessionId !== 'string' || typeof recvSessionId !== 'string') {
 		return c.json({ error: 'Serveur vocal indisponible' }, 502);
 	}
-	const joined = await stub(c).voiceJoin(c.get('actor'), connId, channelId, sessionId);
+	const joined = await stub(c).voiceJoin(c.get('actor'), connId, channelId, sessionId, recvSessionId);
 	if (!joined.ok) {
 		return fail(c, joined.status, joined.error);
 	}
-	return c.json({ sessionId, iceServers: await iceServers(c.env, c.get('actor').id), participants: joined.value });
+	return c.json({ sessionId, recvSessionId, iceServers: await iceServers(c.env, c.get('actor').id), participants: joined.value });
 });
 
 app.post('/w/:wid/voice/leave', async (c) => {
@@ -710,7 +721,7 @@ app.post('/w/:wid/voice/tracks', async (c) => {
 	const local = tracks.every((t) => t.location === 'local');
 	const remote = tracks.every((t) => t.location === 'remote');
 	if (local) {
-		const valid = isDescription(body.sessionDescription) && tracks.every((t) => typeof t.mid === 'string' && (VOICE_TRACKS as readonly string[]).includes(t.trackName));
+		const valid = isDescription(body.sessionDescription) && tracks.every((t) => typeof t.mid === 'string' && VOICE_TRACK_RE.test(t.trackName));
 		if (!valid || !(await stub(c).voiceOwns(actor, connId, sessionId))) {
 			return fail(c, 403, 'Publication refusée');
 		}
@@ -719,6 +730,7 @@ app.post('/w/:wid/voice/tracks', async (c) => {
 			tracks: tracks.map(({ location, mid, trackName }) => ({ location, mid, trackName })),
 		});
 		const results = (reply.data.tracks as Array<{ trackName: string; errorCode?: string }> | undefined) ?? [];
+		logSfuErrors(c, 'publish', reply);
 		const published = results.filter((t) => !t.errorCode).map((t) => t.trackName);
 		if (reply.status < 300 && published.length) {
 			await stub(c).voicePublished(actor, connId, sessionId, published);
@@ -727,13 +739,14 @@ app.post('/w/:wid/voice/tracks', async (c) => {
 	}
 	if (remote) {
 		const remoteIds = tracks.map((t) => t.sessionId);
-		const valid = remoteIds.every((id) => typeof id === 'string') && tracks.every((t) => (VOICE_TRACKS as readonly string[]).includes(t.trackName));
+		const valid = remoteIds.every((id) => typeof id === 'string') && tracks.every((t) => VOICE_TRACK_RE.test(t.trackName));
 		if (!valid || !(await stub(c).voiceCanPull(actor, connId, sessionId, remoteIds as string[]))) {
 			return fail(c, 403, 'Abonnement refusé');
 		}
 		const reply = await sfu(c.env, 'POST', `/sessions/${sessionId}/tracks/new`, {
 			tracks: tracks.map(({ location, sessionId: remoteSession, trackName }) => ({ location, sessionId: remoteSession, trackName })),
 		});
+		logSfuErrors(c, 'pull', reply);
 		return sfuReply(c, reply);
 	}
 	return fail(c, 400, 'Pistes locales et distantes mélangées');
@@ -747,11 +760,20 @@ app.put('/w/:wid/voice/renegotiate', async (c) => {
 	if (!(await stub(c).voiceOwns(c.get('actor'), connId, sessionId))) {
 		return fail(c, 403, 'Session inconnue');
 	}
-	return sfuReply(c, await sfu(c.env, 'PUT', `/sessions/${sessionId}/renegotiate`, { sessionDescription }));
+	const reply = await sfu(c.env, 'PUT', `/sessions/${sessionId}/renegotiate`, { sessionDescription });
+	logSfuErrors(c, 'renegotiate', reply);
+	return sfuReply(c, reply);
 });
 
 app.put('/w/:wid/voice/tracks/close', async (c) => {
-	const body = await readJson<{ connId: string; sessionId: string; sessionDescription: SessionDescription; tracks: Array<{ mid: string }>; force: boolean }>(c);
+	const body = await readJson<{
+		connId: string;
+		sessionId: string;
+		sessionDescription: SessionDescription;
+		tracks: Array<{ mid: string }>;
+		force: boolean;
+		trackNames: string[];
+	}>(c);
 	const { connId, sessionId, tracks } = body;
 	if (typeof connId !== 'string' || typeof sessionId !== 'string' || !Array.isArray(tracks) || !tracks.every((t) => typeof t.mid === 'string')) {
 		return fail(c, 400, 'Requête invalide');
@@ -759,14 +781,23 @@ app.put('/w/:wid/voice/tracks/close', async (c) => {
 	if (!(await stub(c).voiceOwns(c.get('actor'), connId, sessionId))) {
 		return fail(c, 403, 'Session inconnue');
 	}
-	return sfuReply(
-		c,
-		await sfu(c.env, 'PUT', `/sessions/${sessionId}/tracks/close`, {
-			tracks: tracks.map(({ mid }) => ({ mid })),
-			...(isDescription(body.sessionDescription) ? { sessionDescription: body.sessionDescription } : {}),
-			force: body.force === true,
-		}),
-	);
+	const reply = await sfu(c.env, 'PUT', `/sessions/${sessionId}/tracks/close`, {
+		tracks: tracks.map(({ mid }) => ({ mid })),
+		...(isDescription(body.sessionDescription) ? { sessionDescription: body.sessionDescription } : {}),
+		force: body.force === true,
+	});
+	const names = Array.isArray(body.trackNames) ? body.trackNames.filter((n) => typeof n === 'string' && VOICE_TRACK_RE.test(n)) : [];
+	if (reply.status < 300 && names.length) {
+		await stub(c).voiceUnpublished(c.get('actor'), connId, sessionId, names);
+	}
+	return sfuReply(c, reply);
+});
+
+// Diagnostic envoyé par le navigateur quand le média échoue : seule trace côté serveur d'un souci WebRTC.
+app.post('/w/:wid/voice/diag', async (c) => {
+	const body = await readJson<Record<string, unknown>>(c);
+	console.log(JSON.stringify({ level: 'warn', message: 'voice diag', user: c.get('actor').id, detail: JSON.stringify(body).slice(0, 4000) }));
+	return c.json({ ok: true });
 });
 
 app.get('/w/:wid/ws', async (c) => {

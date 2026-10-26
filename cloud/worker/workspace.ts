@@ -30,6 +30,7 @@ export interface Actor {
 interface Voice {
 	channelId: string;
 	sessionId: string;
+	recvSessionId: string;
 	tracks: string[];
 	muted: boolean;
 	deafened: boolean;
@@ -399,9 +400,6 @@ export class Workspace extends DurableObject<Env> {
 		if (!channel) {
 			return err(404, 'Salon introuvable');
 		}
-		if (channel.kind !== 'text') {
-			return err(400, 'Salon vocal : pas de messages écrits');
-		}
 		if (channel.read_only && !isStaff(actor)) {
 			return err(403, 'Salon en lecture seule');
 		}
@@ -579,7 +577,7 @@ export class Workspace extends DurableObject<Env> {
 		await this.deleteObjects(keys);
 	}
 
-	voiceJoin(actor: Actor, connId: string, channelId: string, sessionId: string): Result<VoiceParticipant[]> {
+	voiceJoin(actor: Actor, connId: string, channelId: string, sessionId: string, recvSessionId: string): Result<VoiceParticipant[]> {
 		const ws = this.socketFor(actor.id, connId);
 		if (!ws) {
 			return err(404, 'Connexion temps réel introuvable, recharge la page');
@@ -604,7 +602,7 @@ export class Workspace extends DurableObject<Env> {
 		}
 		const conn = this.conn(ws)!;
 		const previous = conn.voice?.channelId;
-		this.setVoice(ws, conn, { channelId, sessionId, tracks: [], muted: false, deafened: false, video: false, screen: false });
+		this.setVoice(ws, conn, { channelId, sessionId, recvSessionId, tracks: [], muted: false, deafened: false, video: false, screen: false });
 		if (previous && previous !== channelId) {
 			this.broadcastVoice(previous);
 		}
@@ -623,7 +621,8 @@ export class Workspace extends DurableObject<Env> {
 
 	voiceOwns(actor: Actor, connId: string, sessionId: string): boolean {
 		const ws = this.socketFor(actor.id, connId);
-		return Boolean(ws && this.conn(ws)?.voice?.sessionId === sessionId);
+		const voice = ws && this.conn(ws)?.voice;
+		return Boolean(voice && (voice.sessionId === sessionId || voice.recvSessionId === sessionId));
 	}
 
 	voicePublished(actor: Actor, connId: string, sessionId: string, trackNames: string[]): void {
@@ -636,15 +635,25 @@ export class Workspace extends DurableObject<Env> {
 		this.broadcastVoice(conn.voice.channelId);
 	}
 
+	voiceUnpublished(actor: Actor, connId: string, sessionId: string, trackNames: string[]): void {
+		const ws = this.socketFor(actor.id, connId);
+		const conn = ws && this.conn(ws);
+		if (!ws || !conn?.voice || conn.voice.sessionId !== sessionId) {
+			return;
+		}
+		this.setVoice(ws, conn, { ...conn.voice, tracks: conn.voice.tracks.filter((name) => !trackNames.includes(name)) });
+		this.broadcastVoice(conn.voice.channelId);
+	}
+
 	// Abonnement autorisé seulement aux sessions du même salon vocal.
 	voiceCanPull(actor: Actor, connId: string, sessionId: string, remoteSessionIds: string[]): boolean {
 		const ws = this.socketFor(actor.id, connId);
 		const voice = ws && this.conn(ws)?.voice;
-		if (!voice || voice.sessionId !== sessionId) {
+		if (!voice || voice.recvSessionId !== sessionId) {
 			return false;
 		}
 		const allowed = new Set(this.participants(voice.channelId).map((p) => p.sessionId));
-		return remoteSessionIds.every((id) => id !== sessionId && allowed.has(id));
+		return remoteSessionIds.every((id) => id !== voice.sessionId && allowed.has(id));
 	}
 
 	// Sockets ouverts avant la v2 : pièce jointe { id, name, role } sans connId.

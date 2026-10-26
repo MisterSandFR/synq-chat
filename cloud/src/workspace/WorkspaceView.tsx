@@ -55,6 +55,12 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const [replyTo, setReplyTo] = useState<Message | null>(null);
 	const [jump, setJump] = useState<{ channelId: string; id: number } | null>(null);
 	const [highlight, setHighlight] = useState<number | null>(null);
+	const [voiceChat, setVoiceChatState] = useState(() => readPref('voice_chat') !== '0' && window.innerWidth > 860);
+
+	const setVoiceChat = (open: boolean) => {
+		setVoiceChatState(open);
+		writePref('voice_chat', open ? '1' : '0');
+	};
 
 	const setPanel = (next: Panel) => {
 		setPanelState(next);
@@ -67,6 +73,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const role = state.info?.role ?? 'member';
 	const activeData = active ? state.messages[active.id] : undefined;
 	const lastActiveId = activeData?.items.at(-1)?.id;
+	const chatVisible = active?.kind === 'text' || (active?.kind === 'voice' && voiceChat);
 
 	const openChannel = useCallback(
 		(id: string) => {
@@ -90,10 +97,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	useEffect(() => setReplyTo(null), [channelId]);
 
 	useEffect(() => {
-		if (active?.kind === 'text' && !state.messages[active.id] && state.status === 'live' && jump?.channelId !== active.id) {
+		if (active && chatVisible && !state.messages[active.id] && state.status === 'live' && jump?.channelId !== active.id) {
 			void loadMessages(active.id);
 		}
-	}, [active, state.messages, state.status, loadMessages, jump]);
+	}, [active, chatVisible, state.messages, state.status, loadMessages, jump]);
 
 	useEffect(() => {
 		if (!jump || jump.channelId !== channelId || state.status !== 'live') {
@@ -120,11 +127,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	}, [highlight]);
 
 	useEffect(() => {
-		if (active?.kind === 'text' && focused && state.status === 'live' && !activeData?.hasNewer) {
+		if (active && chatVisible && focused && state.status === 'live' && !activeData?.hasNewer) {
 			send({ t: 'read', channelId: active.id });
 			dispatch({ type: 'read', channelId: active.id });
 		}
-	}, [active, focused, lastActiveId, state.status, activeData?.hasNewer, send, dispatch]);
+	}, [active, chatVisible, focused, lastActiveId, state.status, activeData?.hasNewer, send, dispatch]);
 
 	useEffect(() => {
 		const unread = Object.values(state.unread).reduce((sum, n) => sum + n, 0);
@@ -184,6 +191,61 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 		dispatch({ type: 'message', message });
 	};
 
+	const messagePane = active && (
+			<>
+				<MessageList
+					key={`messages-${active.id}`}
+					workspaceId={workspaceId}
+					channel={active}
+					data={activeData}
+					lookup={lookup}
+					role={role}
+					highlightId={highlight}
+					onLoadOlder={() => activeData?.items[0] && void loadMessages(active.id, 'older', activeData.items[0].id)}
+					onLoadNewer={() => {
+						const last = activeData?.items.at(-1);
+						if (last) {
+							void loadMessages(active.id, 'newer', last.id);
+						}
+					}}
+					onJumpLatest={() => void loadMessages(active.id)}
+					onJumpTo={(id) => setJump({ channelId: active.id, id })}
+					onReply={setReplyTo}
+					onEdit={async (id, body) => {
+						await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
+					}}
+					onDelete={async (id) => {
+						await api('DELETE', `/w/${workspaceId}/messages/${id}`);
+					}}
+				/>
+				<div className='typing' aria-live='polite'>
+					{typingNames.length > 0 && (
+						<>
+							<span className='typing-dots' aria-hidden>
+								<span />
+								<span />
+								<span />
+							</span>
+							{typingNames.length === 1 && `${typingNames[0]} écrit`}
+							{typingNames.length === 2 && `${typingNames[0]} et ${typingNames[1]} écrivent`}
+							{typingNames.length > 2 && 'Plusieurs personnes écrivent'}
+						</>
+					)}
+				</div>
+				<Composer
+					key={`composer-${active.id}`}
+					workspaceId={workspaceId}
+					channel={active}
+					canPost={!active.readOnly || role !== 'member'}
+					lookup={lookup}
+					replyTo={replyTo}
+					onCancelReply={() => setReplyTo(null)}
+					onSend={sendMessage}
+					onTyping={() => send({ t: 'typing', channelId: active.id })}
+				/>
+			</>
+	);
+
 	return (
 		<div className={`app themed${navOpen ? ' nav-open' : ''}`} style={{ '--accent': state.info?.accent ?? '#6A4BFF' } as CSSProperties}>
 			<Sidebar
@@ -226,6 +288,12 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					<button type='button' className='icon-btn only-mobile' aria-pressed={panel === 'members'} aria-label='Membres' onClick={() => setPanel(panel === 'members' ? null : 'members')}>
 						<Icon name='users' />
 					</button>
+					{active?.kind === 'voice' && (
+						<button type='button' className='icon-btn' aria-pressed={voiceChat} aria-label='Chat du salon vocal' title='Chat du salon vocal' onClick={() => setVoiceChat(!voiceChat)}>
+							<Icon name='chat' />
+							{!voiceChat && (state.unread[active.id] ?? 0) > 0 && <span className='dot' style={{ marginLeft: -6, marginTop: -14 }} />}
+						</button>
+					)}
 					<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
 						<Icon name='drive' />
 					</button>
@@ -241,60 +309,16 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 						{!active ? (
 							<div className='spinner' aria-busy />
 						) : active.kind === 'voice' ? (
-							<CallView channel={active} participants={state.voice[active.id] ?? []} members={members} myId={myId} voice={voice} otherChannelName={otherVoice} />
+							<div className='call-layout'>
+								<CallView channel={active} participants={state.voice[active.id] ?? []} members={members} myId={myId} voice={voice} otherChannelName={otherVoice} />
+								{voiceChat && (
+									<aside className='call-chat' aria-label={`Chat de ${active.name}`}>
+										{messagePane}
+									</aside>
+								)}
+							</div>
 						) : (
-							<>
-								<MessageList
-									key={`messages-${active.id}`}
-									workspaceId={workspaceId}
-									channel={active}
-									data={activeData}
-									lookup={lookup}
-									role={role}
-									highlightId={highlight}
-									onLoadOlder={() => activeData?.items[0] && void loadMessages(active.id, 'older', activeData.items[0].id)}
-									onLoadNewer={() => {
-										const last = activeData?.items.at(-1);
-										if (last) {
-											void loadMessages(active.id, 'newer', last.id);
-										}
-									}}
-									onJumpLatest={() => void loadMessages(active.id)}
-									onJumpTo={(id) => setJump({ channelId: active.id, id })}
-									onReply={setReplyTo}
-									onEdit={async (id, body) => {
-										await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
-									}}
-									onDelete={async (id) => {
-										await api('DELETE', `/w/${workspaceId}/messages/${id}`);
-									}}
-								/>
-								<div className='typing' aria-live='polite'>
-									{typingNames.length > 0 && (
-										<>
-											<span className='typing-dots' aria-hidden>
-												<span />
-												<span />
-												<span />
-											</span>
-											{typingNames.length === 1 && `${typingNames[0]} écrit`}
-											{typingNames.length === 2 && `${typingNames[0]} et ${typingNames[1]} écrivent`}
-											{typingNames.length > 2 && 'Plusieurs personnes écrivent'}
-										</>
-									)}
-								</div>
-								<Composer
-									key={`composer-${active.id}`}
-									workspaceId={workspaceId}
-									channel={active}
-									canPost={!active.readOnly || role !== 'member'}
-									lookup={lookup}
-									replyTo={replyTo}
-									onCancelReply={() => setReplyTo(null)}
-									onSend={sendMessage}
-									onTyping={() => send({ t: 'typing', channelId: active.id })}
-								/>
-							</>
+							messagePane
 						)}
 					</div>
 					{panel === 'members' && state.info && <MembersPanel members={state.info.members} online={state.online} voice={state.voice} myId={myId} onClose={() => setPanel(null)} />}

@@ -1,7 +1,7 @@
 import type { VoiceFlags, VoiceParticipant } from '../../../shared/types';
 import { api, ApiError } from '../../api';
 
-type TrackName = 'mic' | 'cam' | 'screen' | 'screen-audio';
+type Kind = 'mic' | 'cam' | 'screen' | 'screen-audio';
 
 export interface RemoteMedia {
 	audio?: MediaStream;
@@ -12,7 +12,7 @@ export interface RemoteMedia {
 
 export interface VoiceSnapshot {
 	channelId: string;
-	status: 'connecting' | 'connected' | 'error';
+	status: 'connecting' | 'connected' | 'reconnecting' | 'error';
 	error: string | null;
 	muted: boolean;
 	deafened: boolean;
@@ -32,15 +32,35 @@ type Options = {
 	myId: string;
 	onChange: (snapshot: VoiceSnapshot) => void;
 	sendFlags: (flags: VoiceFlags) => void;
+	onFailed: () => void;
 };
 
 type SessionDescription = { type: RTCSdpType; sdp: string };
-type TrackResult = { mid?: string; trackName?: string; errorCode?: string };
+type TrackResult = { mid?: string; trackName?: string; errorCode?: string; errorDescription?: string };
 type TracksReply = { sessionDescription?: SessionDescription; requiresImmediateRenegotiation?: boolean; tracks?: TrackResult[] };
+type Wanted = { sessionId: string; userId: string; trackName: string };
 
-const SLOT: Record<TrackName, keyof RemoteMedia> = { mic: 'audio', cam: 'cam', screen: 'screen', 'screen-audio': 'screenAudio' };
+// Une connexion par sens : publier et recevoir sur la même fait collisionner les extensions RTP.
+type Link = { role: 'publish' | 'receive'; pc: RTCPeerConnection; sessionId: string; queue: Promise<unknown>; watchdog?: ReturnType<typeof setTimeout> };
 
 const SPEAKING_LEVEL = 0.035;
+// Chrome met 15 à 30 s à déclarer l'échec ICE : on reconnecte plus tôt.
+const CONNECT_TIMEOUT = 8000;
+const RETRY_DELAYS = [700, 1500, 3000, 6000];
+const RETRY_EVERY = 10_000;
+// Publication pas encore prête côté SFU, ou panne passagère : on réessaie.
+const RETRYABLE = new Set([
+	'not_found_track_error',
+	'empty_track_error',
+	'retryable_transient_error',
+	'temporarily_unavailable_error',
+	'transport_unavailable_error',
+	'internal_error',
+]);
+
+const kindOf = (name: string): Kind => (name.startsWith('screen-audio') ? 'screen-audio' : (name.split('-')[0] as Kind));
+
+const SLOT: Record<Kind, keyof RemoteMedia> = { mic: 'audio', cam: 'cam', screen: 'screen', 'screen-audio': 'screenAudio' };
 
 // Pas de trickle ICE côté SFU : on attend les candidats, borné pour ne pas bloquer.
 function gathered(pc: RTCPeerConnection): Promise<void> {
@@ -59,6 +79,23 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
 	});
 }
 
+// Le SFU exige un transport établi avant toute renégociation qui suit la première.
+function connected(pc: RTCPeerConnection, timeout = 10_000): Promise<void> {
+	if (!pc.remoteDescription || pc.connectionState === 'connected') {
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => {
+		const done = () => {
+			if (pc.connectionState === 'connected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+				pc.removeEventListener('connectionstatechange', done);
+				resolve();
+			}
+		};
+		pc.addEventListener('connectionstatechange', done);
+		setTimeout(resolve, timeout);
+	});
+}
+
 export function mediaError(error: unknown, device: string): string {
 	const name = error instanceof DOMException ? error.name : '';
 	if (name === 'NotAllowedError') {
@@ -74,17 +111,22 @@ export function mediaError(error: unknown, device: string): string {
 }
 
 export class VoiceClient {
-	private pc: RTCPeerConnection | null = null;
-	private sessionId = '';
-	private queue: Promise<unknown> = Promise.resolve();
-	private readonly transceivers: Partial<Record<TrackName, RTCRtpTransceiver>> = {};
-	private readonly local: Partial<Record<TrackName, MediaStreamTrack>> = {};
-	private readonly pulled = new Map<string, { mid: string; userId: string; trackName: TrackName }>();
-	private readonly byMid = new Map<string, { userId: string; trackName: TrackName }>();
+	private publisher: Link | null = null;
+	private receiver: Link | null = null;
+	private seq = 0;
+	private readonly published: Partial<Record<Kind, { transceiver: RTCRtpTransceiver; name: string }>> = {};
+	private readonly local: Partial<Record<Kind, MediaStreamTrack>> = {};
+	private readonly pulled = new Map<string, { mid: string; userId: string; trackName: string }>();
+	private readonly byMid = new Map<string, { userId: string; trackName: string }>();
+	private readonly attempts = new Map<string, number>();
+	private wanted = new Map<string, Wanted>();
 	private audio: AudioContext | null = null;
 	private readonly meters = new Map<string, { analyser: AnalyserNode; source: MediaStreamAudioSourceNode; data: Uint8Array<ArrayBuffer> }>();
 	private meterTimer: ReturnType<typeof setInterval> | undefined;
+	private readonly disconnectTimers = new Map<Link, ReturnType<typeof setTimeout>>();
+	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private disposed = false;
+	private failed = false;
 	private mutedBeforeDeafen = false;
 	private state: VoiceSnapshot;
 
@@ -117,9 +159,9 @@ export class VoiceClient {
 		this.opts.onChange(this.state);
 	}
 
-	private run<T>(task: () => Promise<T>): Promise<T> {
-		const next = this.queue.then(task, task);
-		this.queue = next.catch(() => undefined);
+	private run<T>(link: Link, task: () => Promise<T>): Promise<T> {
+		const next = link.queue.then(task, task);
+		link.queue = next.catch(() => undefined);
 		return next;
 	}
 
@@ -127,24 +169,29 @@ export class VoiceClient {
 		return `/w/${this.opts.workspaceId}/voice/${suffix}`;
 	}
 
+	private diag(kind: string, detail: Record<string, unknown>): void {
+		void api('POST', this.path('diag'), { kind, ua: navigator.userAgent, ...detail }).catch(() => undefined);
+	}
+
+	private link(role: Link['role'], sessionId: string, iceServers: RTCIceServer[]): Link {
+		const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
+		const link: Link = { role, pc, sessionId, queue: Promise.resolve() };
+		pc.onconnectionstatechange = () => this.onConnectionState(link);
+		return link;
+	}
+
 	async join(): Promise<VoiceParticipant[]> {
-		const joined = await api<{ sessionId: string; iceServers: RTCIceServer[]; participants: VoiceParticipant[] }>('POST', this.path('join'), {
+		const joined = await api<{ sessionId: string; recvSessionId: string; iceServers: RTCIceServer[]; participants: VoiceParticipant[] }>('POST', this.path('join'), {
 			channelId: this.opts.channelId,
 			connId: this.opts.connId,
 		});
-		this.sessionId = joined.sessionId;
-		const pc = new RTCPeerConnection({ iceServers: joined.iceServers, bundlePolicy: 'max-bundle' });
-		this.pc = pc;
-		pc.ontrack = (event) => this.onTrack(event);
-		pc.onconnectionstatechange = () => {
-			if (pc.connectionState === 'failed') {
-				this.update({ status: 'error', error: 'Connexion vocale perdue. Quitte puis rejoins le salon.' });
-			} else if (pc.connectionState === 'connected' && this.state.status !== 'connected') {
-				this.update({ status: 'connected', error: null });
-			}
-		};
+		this.publisher = this.link('publish', joined.sessionId, joined.iceServers);
+		this.receiver = this.link('receive', joined.recvSessionId, joined.iceServers);
+		this.receiver.pc.ontrack = (event) => this.onTrack(event);
 		this.audio = new AudioContext();
 		this.meterTimer = setInterval(() => this.measure(), 150);
+		this.update({ status: 'connected' });
+		this.sync(joined.participants);
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
 			const track = stream.getAudioTracks()[0]!;
@@ -156,31 +203,127 @@ export class VoiceClient {
 			this.update({ micAvailable: false, muted: true, error: mediaError(error, 'micro') });
 			this.opts.sendFlags({ muted: true });
 		}
-		this.update({ status: 'connected' });
-		this.sync(joined.participants);
 		return joined.participants;
 	}
 
-	private publish(name: TrackName, track: MediaStreamTrack): Promise<void> {
-		return this.run(async () => {
-			const pc = this.pc;
-			if (!pc) {
-				return;
+	private onConnectionState(link: Link): void {
+		if (this.disposed) {
+			return;
+		}
+		const { pc } = link;
+		clearTimeout(this.disconnectTimers.get(link));
+		if (pc.connectionState === 'connected') {
+			const other = link === this.publisher ? this.receiver : this.publisher;
+			if (!other?.pc.remoteDescription || other.pc.connectionState === 'connected') {
+				this.update({ status: 'connected' });
 			}
-			const existing = this.transceivers[name];
+		} else if (pc.connectionState === 'disconnected') {
+			// Coupure brève tolérée : le navigateur retrouve souvent le chemin seul.
+			this.update({ status: 'reconnecting' });
+			this.disconnectTimers.set(
+				link,
+				setTimeout(() => pc.connectionState === 'disconnected' && void this.fail(link, 'disconnected'), 6000),
+			);
+		} else if (pc.connectionState === 'failed') {
+			void this.fail(link, 'failed');
+		}
+	}
+
+	private armWatchdog(link: Link): void {
+		if (link.watchdog || link.pc.connectionState === 'connected') {
+			return;
+		}
+		link.watchdog = setTimeout(() => {
+			if (!this.disposed && link.pc.connectionState !== 'connected') {
+				void this.fail(link, 'timeout');
+			}
+		}, CONNECT_TIMEOUT);
+	}
+
+	private async fail(link: Link, reason: string): Promise<void> {
+		if (this.disposed || this.failed) {
+			return;
+		}
+		this.failed = true;
+		let pair: Record<string, unknown> | null = null;
+		try {
+			const stats = await link.pc.getStats();
+			stats.forEach((report) => {
+				if (report.type === 'candidate-pair' && (report.nominated || report.selected)) {
+					const local = stats.get(report.localCandidateId);
+					const remote = stats.get(report.remoteCandidateId);
+					pair = { state: report.state, local: local?.candidateType, protocol: local?.protocol, relay: local?.relayProtocol, remote: remote?.candidateType };
+				}
+			});
+		} catch {
+			// Stats indisponibles après fermeture.
+		}
+		this.diag('pc_failed', { role: link.role, reason, ice: link.pc.iceConnectionState, gathering: link.pc.iceGatheringState, pair });
+		this.update({ status: 'reconnecting', error: null });
+		this.opts.onFailed();
+	}
+
+	private publish(kind: Kind, track: MediaStreamTrack): Promise<void> {
+		const link = this.publisher;
+		if (!link) {
+			return Promise.resolve();
+		}
+		return this.run(link, async () => {
+			const { pc } = link;
+			const existing = this.published[kind];
 			if (existing) {
-				await existing.sender.replaceTrack(track);
+				await existing.transceiver.sender.replaceTrack(track);
 				return;
 			}
+			await connected(pc);
+			const name = kind === 'mic' ? 'mic' : `${kind}-${++this.seq}`;
 			const transceiver = pc.addTransceiver(track, { direction: 'sendonly' });
-			this.transceivers[name] = transceiver;
 			await pc.setLocalDescription(await pc.createOffer());
 			await gathered(pc);
 			const reply = await api<TracksReply>('POST', this.path('tracks'), {
 				connId: this.opts.connId,
-				sessionId: this.sessionId,
+				sessionId: link.sessionId,
 				sessionDescription: pc.localDescription,
 				tracks: [{ location: 'local', mid: transceiver.mid, trackName: name }],
+			});
+			if (reply.sessionDescription) {
+				await pc.setRemoteDescription(reply.sessionDescription);
+				this.armWatchdog(link);
+			}
+			const failed = reply.tracks?.find((t) => t.errorCode);
+			if (failed) {
+				this.diag('publish_error', { name, code: failed.errorCode, description: failed.errorDescription });
+				throw new Error('Publication refusée par le serveur vocal');
+			}
+			this.published[kind] = { transceiver, name };
+		});
+	}
+
+	// Une piste sans paquets 30 s est supprimée par le SFU : on la ferme proprement plutôt que de la vider.
+	private unpublish(kind: Kind): Promise<void> {
+		const link = this.publisher;
+		if (!link) {
+			return Promise.resolve();
+		}
+		return this.run(link, async () => {
+			const { pc } = link;
+			const entry = this.published[kind];
+			if (!entry) {
+				return;
+			}
+			delete this.published[kind];
+			await connected(pc);
+			const mid = entry.transceiver.mid;
+			entry.transceiver.stop();
+			await pc.setLocalDescription(await pc.createOffer());
+			await gathered(pc);
+			const reply = await api<TracksReply>('PUT', this.path('tracks/close'), {
+				connId: this.opts.connId,
+				sessionId: link.sessionId,
+				sessionDescription: pc.localDescription,
+				tracks: [{ mid }],
+				trackNames: [entry.name],
+				force: false,
 			});
 			if (reply.sessionDescription) {
 				await pc.setRemoteDescription(reply.sessionDescription);
@@ -189,57 +332,93 @@ export class VoiceClient {
 	}
 
 	sync(participants: VoiceParticipant[]): void {
-		if (!this.pc || this.disposed) {
+		if (!this.receiver || this.disposed) {
 			return;
 		}
-		const wanted = new Map<string, { sessionId: string; userId: string; trackName: TrackName }>();
+		const wanted = new Map<string, Wanted>();
 		for (const p of participants) {
 			if (p.userId === this.opts.myId) {
 				continue;
 			}
-			for (const name of p.tracks as TrackName[]) {
+			for (const name of p.tracks) {
 				wanted.set(`${p.sessionId}:${name}`, { sessionId: p.sessionId, userId: p.userId, trackName: name });
 			}
 		}
-		const fresh = [...wanted].filter(([key]) => !this.pulled.has(key)).map(([, value]) => value);
+		this.wanted = wanted;
 		const gone = [...this.pulled.keys()].filter((key) => !wanted.has(key));
+		const link = this.receiver;
 		if (gone.length) {
-			void this.run(() => this.dropRemote(gone));
+			void this.run(link, () => this.dropRemote(link, gone));
 		}
-		if (fresh.length) {
-			void this.run(() => this.pull(fresh)).catch((error) => this.update({ error: error instanceof Error ? error.message : 'Abonnement impossible' }));
-		}
+		this.schedulePull();
 	}
 
-	private async pull(batch: Array<{ sessionId: string; userId: string; trackName: TrackName }>): Promise<void> {
-		const pc = this.pc;
-		const todo = batch.filter((item) => !this.pulled.has(`${item.sessionId}:${item.trackName}`));
-		if (!pc || todo.length === 0) {
+	private schedulePull(): void {
+		const link = this.receiver;
+		if (!link || this.disposed) {
 			return;
 		}
+		void this.run(link, () => this.pull(link)).catch((error) => {
+			this.diag('pull_exception', { message: error instanceof Error ? error.message : String(error) });
+		});
+	}
+
+	private async pull(link: Link): Promise<void> {
+		const todo = [...this.wanted].filter(([key]) => !this.pulled.has(key));
+		if (this.disposed || todo.length === 0) {
+			return;
+		}
+		const { pc } = link;
+		await connected(pc);
 		const reply = await api<TracksReply>('POST', this.path('tracks'), {
 			connId: this.opts.connId,
-			sessionId: this.sessionId,
-			tracks: todo.map(({ sessionId, trackName }) => ({ location: 'remote', sessionId, trackName })),
+			sessionId: link.sessionId,
+			tracks: todo.map(([, item]) => ({ location: 'remote', sessionId: item.sessionId, trackName: item.trackName })),
 		});
+		const retry: string[] = [];
 		(reply.tracks ?? []).forEach((result, i) => {
-			const item = todo[i];
-			if (!item || result.errorCode || !result.mid) {
+			const entry = todo[i];
+			if (!entry) {
 				return;
 			}
+			const [key, item] = entry;
+			if (result.errorCode || !result.mid) {
+				const attempt = (this.attempts.get(key) ?? 0) + 1;
+				this.attempts.set(key, attempt);
+				// Signalé une seule fois, puis on continue d'essayer tant que la piste est attendue.
+				if (attempt === RETRY_DELAYS.length + 1) {
+					this.diag('pull_error', { trackName: item.trackName, code: result.errorCode, description: result.errorDescription, attempt });
+				}
+				if (!result.errorCode || RETRYABLE.has(result.errorCode)) {
+					retry.push(key);
+				}
+				return;
+			}
+			this.attempts.delete(key);
 			this.byMid.set(result.mid, { userId: item.userId, trackName: item.trackName });
-			this.pulled.set(`${item.sessionId}:${item.trackName}`, { mid: result.mid, userId: item.userId, trackName: item.trackName });
+			this.pulled.set(key, { mid: result.mid, userId: item.userId, trackName: item.trackName });
 		});
 		if (reply.requiresImmediateRenegotiation && reply.sessionDescription) {
 			await pc.setRemoteDescription(reply.sessionDescription);
 			await pc.setLocalDescription(await pc.createAnswer());
 			await gathered(pc);
-			await api('PUT', this.path('renegotiate'), { connId: this.opts.connId, sessionId: this.sessionId, sessionDescription: pc.localDescription });
+			await api('PUT', this.path('renegotiate'), { connId: this.opts.connId, sessionId: link.sessionId, sessionDescription: pc.localDescription });
+			this.armWatchdog(link);
+		}
+		if (retry.length && !this.retryTimer) {
+			const attempt = Math.min(...retry.map((key) => this.attempts.get(key) ?? 1));
+			this.retryTimer = setTimeout(() => {
+				this.retryTimer = undefined;
+				this.schedulePull();
+			}, RETRY_DELAYS[attempt - 1] ?? RETRY_EVERY);
 		}
 	}
 
-	private async dropRemote(keys: string[]): Promise<void> {
-		const entries = keys.map((key) => [key, this.pulled.get(key)] as const).filter((e): e is [string, { mid: string; userId: string; trackName: TrackName }] => Boolean(e[1]));
+	private async dropRemote(link: Link, keys: string[]): Promise<void> {
+		const entries = keys.flatMap((key) => {
+			const entry = this.pulled.get(key);
+			return entry ? [[key, entry] as const] : [];
+		});
 		if (entries.length === 0) {
 			return;
 		}
@@ -247,11 +426,12 @@ export class VoiceClient {
 		for (const [key, entry] of entries) {
 			this.pulled.delete(key);
 			this.byMid.delete(entry.mid);
-			const slot = SLOT[entry.trackName];
+			this.attempts.delete(key);
+			const slot = SLOT[kindOf(entry.trackName)];
 			if (remotes[entry.userId]) {
 				remotes[entry.userId] = { ...remotes[entry.userId], [slot]: undefined };
 			}
-			if (entry.trackName === 'mic') {
+			if (kindOf(entry.trackName) === 'mic') {
 				this.unmeter(entry.userId);
 			}
 		}
@@ -263,7 +443,7 @@ export class VoiceClient {
 		this.update({ remotes });
 		await api('PUT', this.path('tracks/close'), {
 			connId: this.opts.connId,
-			sessionId: this.sessionId,
+			sessionId: link.sessionId,
 			tracks: entries.map(([, entry]) => ({ mid: entry.mid })),
 			force: true,
 		}).catch(() => undefined);
@@ -274,10 +454,10 @@ export class VoiceClient {
 		if (!info) {
 			return;
 		}
+		const kind = kindOf(info.trackName);
 		const stream = new MediaStream([event.track]);
-		const slot = SLOT[info.trackName];
-		this.update({ remotes: { ...this.state.remotes, [info.userId]: { ...this.state.remotes[info.userId], [slot]: stream } } });
-		if (info.trackName === 'mic') {
+		this.update({ remotes: { ...this.state.remotes, [info.userId]: { ...this.state.remotes[info.userId], [SLOT[kind]]: stream } } });
+		if (kind === 'mic') {
 			this.meter(info.userId, stream);
 		}
 	}
@@ -296,6 +476,7 @@ export class VoiceClient {
 				return;
 			}
 		}
+		// Micro coupé : la piste continue d'envoyer du silence, le SFU la garde.
 		if (this.local.mic) {
 			this.local.mic.enabled = !muted;
 		}
@@ -324,23 +505,31 @@ export class VoiceClient {
 
 	async setVideo(on: boolean): Promise<void> {
 		if (on) {
+			let stream: MediaStream;
 			try {
-				const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
-				const track = stream.getVideoTracks()[0]!;
-				this.local.cam = track;
-				await this.publish('cam', track);
-				this.update({ video: true, localCam: stream, error: null });
-				this.opts.sendFlags({ video: true });
+				stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
 			} catch (error) {
 				this.update({ error: mediaError(error, 'caméra') });
+				return;
+			}
+			const track = stream.getVideoTracks()[0]!;
+			this.local.cam = track;
+			this.update({ video: true, localCam: stream, error: null });
+			try {
+				await this.publish('cam', track);
+				this.opts.sendFlags({ video: true });
+			} catch (error) {
+				track.stop();
+				delete this.local.cam;
+				this.update({ video: false, localCam: null, error: error instanceof Error ? error.message : 'Caméra indisponible' });
 			}
 			return;
 		}
 		this.local.cam?.stop();
 		delete this.local.cam;
-		await this.transceivers.cam?.sender.replaceTrack(null);
 		this.update({ video: false, localCam: null });
 		this.opts.sendFlags({ video: false });
+		await this.unpublish('cam').catch(() => undefined);
 	}
 
 	async setScreen(on: boolean): Promise<void> {
@@ -358,23 +547,32 @@ export class VoiceClient {
 			video.contentHint = 'detail';
 			video.addEventListener('ended', () => void this.setScreen(false));
 			this.local.screen = video;
-			await this.publish('screen', video);
-			const sound = stream.getAudioTracks()[0];
-			if (sound) {
-				this.local['screen-audio'] = sound;
-				await this.publish('screen-audio', sound);
+			this.update({ screen: true, localScreen: stream, error: null });
+			try {
+				await this.publish('screen', video);
+				const sound = stream.getAudioTracks()[0];
+				if (sound) {
+					this.local['screen-audio'] = sound;
+					await this.publish('screen-audio', sound);
+				}
+				this.opts.sendFlags({ screen: true });
+			} catch (error) {
+				stream.getTracks().forEach((t) => t.stop());
+				this.update({ screen: false, localScreen: null, error: error instanceof Error ? error.message : 'Partage indisponible' });
 			}
-			this.update({ screen: true, localScreen: stream });
-			this.opts.sendFlags({ screen: true });
 			return;
 		}
-		for (const name of ['screen', 'screen-audio'] as const) {
-			this.local[name]?.stop();
-			delete this.local[name];
-			await this.transceivers[name]?.sender.replaceTrack(null);
+		if (!this.state.screen) {
+			return;
+		}
+		for (const kind of ['screen', 'screen-audio'] as const) {
+			this.local[kind]?.stop();
+			delete this.local[kind];
 		}
 		this.update({ screen: false, localScreen: null });
 		this.opts.sendFlags({ screen: false });
+		await this.unpublish('screen').catch(() => undefined);
+		await this.unpublish('screen-audio').catch(() => undefined);
 	}
 
 	private meter(userId: string, stream: MediaStream): void {
@@ -428,11 +626,17 @@ export class VoiceClient {
 		}
 		this.disposed = true;
 		clearInterval(this.meterTimer);
+		clearTimeout(this.retryTimer);
+		this.disconnectTimers.forEach((timer) => clearTimeout(timer));
+		clearTimeout(this.publisher?.watchdog);
+		clearTimeout(this.receiver?.watchdog);
 		for (const track of Object.values(this.local)) {
 			track?.stop();
 		}
-		this.pc?.close();
-		this.pc = null;
+		this.publisher?.pc.close();
+		this.receiver?.pc.close();
+		this.publisher = null;
+		this.receiver = null;
 		void this.audio?.close().catch(() => undefined);
 	}
 

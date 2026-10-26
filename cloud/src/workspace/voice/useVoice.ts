@@ -21,6 +21,8 @@ export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, send }:
 	const [notice, setNotice] = useState<string | null>(null);
 	const [joining, setJoining] = useState<string | null>(null);
 	const connRef = useRef(connId);
+	const failures = useRef<number[]>([]);
+	const joinRef = useRef<(channelId: string) => Promise<void>>(async () => undefined);
 
 	const stop = useCallback(() => {
 		clientRef.current?.dispose();
@@ -47,6 +49,18 @@ export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, send }:
 				myId,
 				onChange: setSnapshot,
 				sendFlags: (flags) => send({ t: 'voice_update', ...flags }),
+				onFailed: () => {
+					const now = Date.now();
+					failures.current = [...failures.current.filter((at) => now - at < 60_000), now];
+					if (failures.current.length > 3) {
+						client.dispose();
+						clientRef.current = null;
+						setSnapshot(null);
+						setNotice('Connexion vocale impossible. Vérifie ta connexion puis rejoins le salon.');
+						return;
+					}
+					setTimeout(() => clientRef.current === client && void joinRef.current(channelId), 800);
+				},
 			});
 			clientRef.current = client;
 			setSnapshot(client.snapshot);
@@ -65,6 +79,8 @@ export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, send }:
 		},
 		[connId, joining, workspaceId, myId, send],
 	);
+
+	joinRef.current = join;
 
 	const leave = useCallback(async () => {
 		const client = clientRef.current;

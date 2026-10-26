@@ -1839,6 +1839,48 @@ kbd {
 	filter: brightness(1.08);
 }
 
+.call-layout {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+}
+
+.call-layout .call {
+	flex: 1;
+	min-width: 0;
+}
+
+.call-chat {
+	width: 380px;
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border-left: 1px solid var(--line);
+	background: var(--bg);
+}
+
+.call-chat .composer {
+	padding: 4px 12px 12px;
+}
+
+.call-chat .msg {
+	padding-left: 14px;
+	padding-right: 14px;
+}
+
+@media (max-width: 860px) {
+	.call-chat {
+		position: fixed;
+		top: 60px;
+		right: 0;
+		bottom: 0;
+		z-index: 20;
+		width: min(400px, 100vw);
+		box-shadow: var(--shadow-pop);
+	}
+}
+
 /* Recherche */
 
 .palette {

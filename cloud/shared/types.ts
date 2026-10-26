@@ -168,7 +168,8 @@ export type ClientEvent =
 	| { t: 'read'; channelId: string }
 	| ({ t: 'voice_update' } & VoiceFlags);
 
-export const VOICE_TRACKS = ['mic', 'cam', 'screen', 'screen-audio'] as const;
+// Suffixe numérique : chaque réactivation caméra ou écran publie une piste neuve.
+export const VOICE_TRACK_RE = /^(mic|cam|screen|screen-audio)(-\d{1,6})?$/;
 
 export const ACCENTS = ['#6A4BFF', '#2563EB', '#0F8A6A', '#C84B1F', '#C0266D', '#1C1D21'] as const;
 

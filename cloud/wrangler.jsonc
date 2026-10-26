@@ -12,8 +12,9 @@
 		"TURN_KEY_ID": "1b4bddf025d9f7bffad55b8076c286d7"
 	},
 	"assets": {
+		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
-		"run_worker_first": ["/api/*"]
+		"run_worker_first": ["/api/*", "/assets/*"]
 	},
 	"durable_objects": {
 		"bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }]
