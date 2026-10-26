@@ -1,0 +1,238 @@
+import { useCallback, useEffect, useReducer, useRef } from 'react';
+
+import type { Channel, ClientEvent, Message, MessagePage, ServerEvent, WorkspaceDetail } from '../../shared/types';
+import { api } from '../api';
+
+export interface ChannelMessages {
+	items: Message[];
+	hasMore: boolean;
+	loading: boolean;
+}
+
+export interface WorkspaceState {
+	info: WorkspaceDetail | null;
+	channels: Channel[] | null;
+	unread: Record<string, number>;
+	online: Set<string>;
+	messages: Record<string, ChannelMessages>;
+	typing: Record<string, Record<string, number>>;
+	status: 'connecting' | 'live' | 'offline';
+	closed: string | null;
+}
+
+type Action =
+	| { type: 'info'; info: WorkspaceDetail }
+	| { type: 'event'; event: ServerEvent; activeChannelId: string | null; myId: string; focused: boolean }
+	| { type: 'status'; status: WorkspaceState['status'] }
+	| { type: 'closed'; reason: string }
+	| { type: 'loading'; channelId: string }
+	| { type: 'page'; channelId: string; page: MessagePage; older: boolean }
+	| { type: 'message'; message: Message }
+	| { type: 'read'; channelId: string }
+	| { type: 'typing_expire'; now: number };
+
+const TYPING_TTL = 4000;
+
+const initial: WorkspaceState = {
+	info: null,
+	channels: null,
+	unread: {},
+	online: new Set(),
+	messages: {},
+	typing: {},
+	status: 'connecting',
+	closed: null,
+};
+
+const sortChannels = (channels: Channel[]) =>
+	[...channels].sort((a, b) => a.category.localeCompare(b.category) || a.position - b.position || a.name.localeCompare(b.name));
+
+function withMessage(state: WorkspaceState, message: Message, mode: 'add' | 'update'): WorkspaceState {
+	const current = state.messages[message.channelId];
+	if (!current) {
+		return state;
+	}
+	const index = current.items.findIndex((m) => m.id === message.id);
+	if (index >= 0) {
+		const items = [...current.items];
+		items[index] = message;
+		return { ...state, messages: { ...state.messages, [message.channelId]: { ...current, items } } };
+	}
+	if (mode === 'update') {
+		return state;
+	}
+	return { ...state, messages: { ...state.messages, [message.channelId]: { ...current, items: [...current.items, message] } } };
+}
+
+function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' }>): WorkspaceState {
+	const { event } = action;
+	switch (event.t) {
+		case 'hello':
+			// Reconnexion : historique rechargé à la demande pour combler les trous.
+			return { ...state, channels: sortChannels(event.channels), unread: event.unread, online: new Set(event.online), messages: {}, status: 'live' };
+		case 'message': {
+			const next = withMessage(state, event.message, 'add');
+			const { channelId, userId } = event.message;
+			const seen = channelId === action.activeChannelId && action.focused;
+			const typing = state.typing[channelId]?.[userId] ? { ...state.typing, [channelId]: { ...state.typing[channelId], [userId]: 0 } } : state.typing;
+			if (userId === action.myId || seen) {
+				return { ...next, typing };
+			}
+			return { ...next, typing, unread: { ...state.unread, [channelId]: (state.unread[channelId] ?? 0) + 1 } };
+		}
+		case 'message_updated':
+			return withMessage(state, event.message, 'update');
+		case 'message_deleted': {
+			const current = state.messages[event.channelId];
+			if (!current) {
+				return state;
+			}
+			return { ...state, messages: { ...state.messages, [event.channelId]: { ...current, items: current.items.filter((m) => m.id !== event.id) } } };
+		}
+		case 'channel_upsert':
+			return { ...state, channels: sortChannels([...(state.channels ?? []).filter((c) => c.id !== event.channel.id), event.channel]) };
+		case 'channel_deleted': {
+			const { [event.id]: _messages, ...messages } = state.messages;
+			const { [event.id]: _unread, ...unread } = state.unread;
+			return { ...state, channels: (state.channels ?? []).filter((c) => c.id !== event.id), messages, unread };
+		}
+		case 'presence': {
+			const online = new Set(state.online);
+			if (event.online) {
+				online.add(event.userId);
+			} else {
+				online.delete(event.userId);
+			}
+			return { ...state, online };
+		}
+		case 'typing':
+			if (event.userId === action.myId) {
+				return state;
+			}
+			return { ...state, typing: { ...state.typing, [event.channelId]: { ...state.typing[event.channelId], [event.userId]: Date.now() + TYPING_TTL } } };
+		case 'workspace_deleted':
+			return { ...state, closed: 'Cet espace a été supprimé.' };
+		case 'members_changed':
+			return state;
+	}
+}
+
+function reducer(state: WorkspaceState, action: Action): WorkspaceState {
+	switch (action.type) {
+		case 'info':
+			return { ...state, info: action.info };
+		case 'event':
+			return onEvent(state, action);
+		case 'status':
+			return state.status === action.status ? state : { ...state, status: action.status };
+		case 'closed':
+			return { ...state, closed: action.reason };
+		case 'loading': {
+			const current = state.messages[action.channelId] ?? { items: [], hasMore: true, loading: false };
+			return { ...state, messages: { ...state.messages, [action.channelId]: { ...current, loading: true } } };
+		}
+		case 'page': {
+			const current = state.messages[action.channelId];
+			const known = new Set(action.page.messages.map((m) => m.id));
+			const rest = (current?.items ?? []).filter((m) => !known.has(m.id));
+			// Page récente : garder les messages arrivés par WebSocket pendant le chargement.
+			const newest = action.page.messages.at(-1)?.id ?? 0;
+			const items = action.older ? [...action.page.messages, ...rest] : [...action.page.messages, ...rest.filter((m) => m.id > newest)];
+			return { ...state, messages: { ...state.messages, [action.channelId]: { items, hasMore: action.page.hasMore, loading: false } } };
+		}
+		case 'message':
+			return withMessage(state, action.message, 'add');
+		case 'read':
+			return state.unread[action.channelId] ? { ...state, unread: { ...state.unread, [action.channelId]: 0 } } : state;
+		case 'typing_expire': {
+			let changed = false;
+			const typing: WorkspaceState['typing'] = {};
+			for (const [channelId, users] of Object.entries(state.typing)) {
+				const alive = Object.fromEntries(Object.entries(users).filter(([, until]) => until > action.now));
+				changed ||= Object.keys(alive).length !== Object.keys(users).length;
+				typing[channelId] = alive;
+			}
+			return changed ? { ...state, typing } : state;
+		}
+	}
+}
+
+const isFocused = () => document.visibilityState === 'visible' && document.hasFocus();
+
+export function useWorkspace(workspaceId: string, myId: string, activeChannelId: string | null) {
+	const [state, dispatch] = useReducer(reducer, initial);
+	const activeRef = useRef(activeChannelId);
+	activeRef.current = activeChannelId;
+	const socketRef = useRef<WebSocket | null>(null);
+
+	const reloadInfo = useCallback(async () => {
+		dispatch({ type: 'info', info: await api<WorkspaceDetail>('GET', `/w/${workspaceId}/info`) });
+	}, [workspaceId]);
+
+	useEffect(() => {
+		void reloadInfo();
+	}, [reloadInfo]);
+
+	useEffect(() => {
+		let stopped = false;
+		let retry = 0;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const connect = () => {
+			dispatch({ type: 'status', status: 'connecting' });
+			const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/w/${workspaceId}/ws`);
+			socketRef.current = ws;
+			ws.onopen = () => {
+				retry = 0;
+			};
+			ws.onmessage = (message) => {
+				if (message.data === 'pong') {
+					return;
+				}
+				const event = JSON.parse(message.data as string) as ServerEvent;
+				if (event.t === 'members_changed') {
+					void reloadInfo();
+				}
+				dispatch({ type: 'event', event, activeChannelId: activeRef.current, myId, focused: isFocused() });
+			};
+			ws.onclose = (close) => {
+				if (stopped) {
+					return;
+				}
+				if (close.code === 4001 || close.code === 4002) {
+					dispatch({ type: 'closed', reason: close.code === 4001 ? 'Tu as été retiré de cet espace.' : 'Cet espace a été supprimé.' });
+					return;
+				}
+				dispatch({ type: 'status', status: 'offline' });
+				timer = setTimeout(connect, Math.min(15_000, 500 * 2 ** retry++));
+			};
+		};
+		connect();
+		const ping = setInterval(() => socketRef.current?.readyState === WebSocket.OPEN && socketRef.current.send('ping'), 25_000);
+		const expire = setInterval(() => dispatch({ type: 'typing_expire', now: Date.now() }), 1000);
+		return () => {
+			stopped = true;
+			clearTimeout(timer);
+			clearInterval(ping);
+			clearInterval(expire);
+			socketRef.current?.close(1000);
+		};
+	}, [workspaceId, myId, reloadInfo]);
+
+	const send = useCallback((event: ClientEvent) => {
+		const ws = socketRef.current;
+		if (ws?.readyState === WebSocket.OPEN) {
+			ws.send(JSON.stringify(event));
+		}
+	}, []);
+
+	const loadMessages = useCallback(
+		async (channelId: string, before?: number) => {
+			dispatch({ type: 'loading', channelId });
+			const page = await api<MessagePage>('GET', `/w/${workspaceId}/channels/${channelId}/messages${before ? `?before=${before}` : ''}`);
+			dispatch({ type: 'page', channelId, page, older: Boolean(before) });
+		},
+		[workspaceId],
+	);
+
+	return { state, dispatch, send, loadMessages, reloadInfo };
+}

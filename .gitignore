@@ -76,3 +76,4 @@ development/tempo-data/
 etat-*.md
 .claude/tasks/
 .claude/settings.local.json
+/.playwright-mcp/
