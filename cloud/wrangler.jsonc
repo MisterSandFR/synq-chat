@@ -1,6 +1,7 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
 	"name": "synq-chat",
+	"account_id": "eb78173c28099c9a619c22919e7dc9d7",
 	"main": "./worker/index.ts",
 	"compatibility_date": "2026-10-19",
 	"observability": { "enabled": true },
@@ -16,7 +17,7 @@
 		"bindings": [{ "name": "WORKSPACE", "class_name": "Workspace" }]
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace"] }],
-	"d1_databases": [{ "binding": "DB", "database_name": "synq-chat", "migrations_dir": "migrations" }],
+	"d1_databases": [{ "binding": "DB", "database_name": "synq-chat", "database_id": "7a9814e6-ec0c-4fec-b527-196452e11206", "migrations_dir": "migrations" }],
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "synq-chat-files" }],
 	"ratelimits": [
 		{ "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } }
