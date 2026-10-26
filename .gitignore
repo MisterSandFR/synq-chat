@@ -59,3 +59,20 @@ registration.yaml
 
 storybook-static
 development/tempo-data/
+
+# docs internes, gardées en local
+/AUTO-PUBLISH-SUMMARY.md
+/DEPLOYMENT-GUIDE.md
+/DEPLOYMENT-SUMMARY.md
+/DEPLOYMENT-VOICE-FEATURES.md
+/DOCKER-BUILD-FIX.md
+/DOCKER-PRODUCTION.md
+/PRODUCTION-DEPLOYMENT.md
+/README-INFRA.md
+/README.md.backup
+/docs/
+/plan*.md
+*-plan.md
+etat-*.md
+.claude/tasks/
+.claude/settings.local.json
