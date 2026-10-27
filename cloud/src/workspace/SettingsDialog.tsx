@@ -5,9 +5,10 @@ import { ACCENTS, type Channel, type ChannelKind, type ChannelOverrides, type Gr
 import { api, errorText } from '../api';
 import { navigate } from '../router';
 import { Avatar, Dialog, Icon, useDismiss } from '../ui';
+import { CommandsTab } from './commands/CommandsSettings';
 import { memberColor, memberGrades } from './grades';
 
-type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites';
+type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands';
 
 type Props = {
 	open: boolean;
@@ -48,6 +49,7 @@ export function SettingsDialog({ open, onClose, info, channels, myId, onChanged 
 		['grades', 'Grades', has(info.perms, P.MANAGE_GRADES)],
 		['members', 'Membres', true],
 		['invites', 'Invitations', has(info.perms, P.CREATE_INVITES)],
+		['commands', 'Commandes', has(info.perms, P.MANAGE_COMMANDS)],
 	];
 	const visible = tabs.filter(([, , allowed]) => allowed);
 	const current = visible.some(([key]) => key === tab) ? tab : 'space';
@@ -66,6 +68,7 @@ export function SettingsDialog({ open, onClose, info, channels, myId, onChanged 
 			{current === 'grades' && <GradesTab info={info} onChanged={onChanged} />}
 			{current === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
 			{current === 'invites' && <InvitesTab workspaceId={info.id} />}
+			{current === 'commands' && <CommandsTab workspaceId={info.id} />}
 		</Dialog>
 	);
 }

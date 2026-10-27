@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { appName } from '../../shared/commands';
 import { mentionedUsers, type Channel, type Grade, type Message } from '../../shared/types';
 import { fileUrl } from '../api';
 import { Avatar, Icon, fileIcon, formatSize } from '../ui';
 import { memberColor, memberLabel } from './grades';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import type { ChannelMessages } from './useWorkspace';
+import { appAuthor } from './commands/useSlash';
 
 const GROUP_GAP = 5 * 60 * 1000;
 const IMAGES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']);
@@ -115,7 +117,7 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 				const prev = items[i - 1];
 				const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(message.createdAt).toDateString();
 				const grouped = !newDay && !message.replyTo && prev?.userId === message.userId && message.createdAt - prev.createdAt < GROUP_GAP;
-				const author = lookup.members.get(message.userId);
+				const author = lookup.members.get(message.userId) ?? appAuthor(message.userId);
 				const mine = message.userId === lookup.myId;
 				const mentionsMe = mentionedUsers(message.body).includes(lookup.myId);
 				const cls = ['msg', grouped && 'msg-grouped', message.replyTo && 'msg-reply', mentionsMe && 'msg-mention', highlightId === message.id && 'msg-highlight']
@@ -158,6 +160,7 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 											{author?.name ?? 'Ancien membre'}
 										</span>
 										{memberLabel(author, grades) && <span className='tag'>{memberLabel(author, grades)}</span>}
+										{appName(message.userId) && <span className='tag'>App</span>}
 										<time dateTime={new Date(message.createdAt).toISOString()} title={fullDate.format(message.createdAt)}>
 											{time.format(message.createdAt)}
 										</time>

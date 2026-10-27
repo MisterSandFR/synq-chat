@@ -120,6 +120,8 @@ const PATHS = {
 	up: 'M12 19V5M5 12l7-7 7 7',
 	down: 'M12 5v14M5 12l7 7 7-7',
 	shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
+	slash: 'M4 4h16v16H4zM14 8l-4 8',
+	'eye-off': 'M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4.5 9.5 6a17 17 0 0 1-3.2 3.7M6.3 7.8A16.6 16.6 0 0 0 2.5 12c1 1.5 4.5 6 9.5 6a9.6 9.6 0 0 0 4.4-1.1M9.9 10a3 3 0 0 0 4.2 4.2',
 } as const;
 
 export type IconName = keyof typeof PATHS;

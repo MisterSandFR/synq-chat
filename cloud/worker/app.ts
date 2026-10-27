@@ -20,6 +20,7 @@ import { DUMMY_HASH, hashPassword, randomToken, sha256, verifyPassword } from '.
 import { cleanName, denyUnless, fail, readJson, stub, unwrap, workspaceStub, type Ctx, type AppEnv } from './http';
 import { authorizeUrl, completeLogin } from './recube';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
+import { commandRoutes } from './routes/commands';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -809,6 +810,7 @@ app.patch('/w/:wid/drive/files/:id', async (c) => {
 
 app.delete('/w/:wid/drive/files/:id', async (c) => unwrap(c, await stub(c).driveDeleteFile(c.get('actor'), c.req.param('id'))));
 
+app.route('/', commandRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
