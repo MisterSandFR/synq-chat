@@ -7,6 +7,7 @@ export interface ParsedAttachment {
 	name: string;
 	type: string;
 	content: Uint8Array;
+	cid?: string;
 }
 
 export interface ParsedMail {
@@ -20,6 +21,7 @@ export interface ParsedMail {
 	cc: MailAddress[];
 	date: number | null;
 	text: string;
+	html: string;
 	attachments: ParsedAttachment[];
 }
 
@@ -238,7 +240,10 @@ export function parseAddresses(value: string): MailAddress[] {
 	});
 }
 
-export const formatAddresses = (list: MailAddress[]) => list.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(', ');
+// Nom cité s'il contient un séparateur, sinon la relecture le coupe.
+const displayName = (name: string) => (/[,;<>"]/.test(name) ? `"${name.replace(/["\\]/g, '')}"` : name);
+
+export const formatAddresses = (list: MailAddress[]) => list.map((a) => (a.name ? `${displayName(a.name)} <${a.address}>` : a.address)).join(', ');
 
 const ids = (value = '') => [...value.matchAll(/<([^<>\s]+)>/g)].map((m) => `<${m[1]}>`);
 
@@ -266,7 +271,13 @@ function walk(raw: string, out: Collected, depth: number): void {
 	} else if (inline && type === 'text/html' && !out.html) {
 		out.html = decodeText(content, contentType.params.charset);
 	} else {
-		out.attachments.push({ name: name || `piece-jointe-${out.attachments.length + 1}`, type: type.replace(/[^\w.+/-]/g, '') || 'application/octet-stream', content });
+		const cid = (headers.get('content-id') ?? '').trim().replace(/^<|>$/g, '').slice(0, 200);
+		out.attachments.push({
+			name: name || `piece-jointe-${out.attachments.length + 1}`,
+			type: type.replace(/[^\w.+/-]/g, '') || 'application/octet-stream',
+			content,
+			...(cid ? { cid } : {}),
+		});
 	}
 }
 
@@ -289,6 +300,7 @@ export function parseMail(raw: Uint8Array): ParsedMail {
 		cc: parseAddresses(headers.get('cc') ?? ''),
 		date: Number.isNaN(date) ? null : date,
 		text: (out.text || htmlToText(out.html)).trim(),
+		html: out.html,
 		attachments: out.attachments,
 	};
 }

@@ -11,7 +11,7 @@ export type AppEnv = {
 
 export type Ctx = Context<AppEnv>;
 
-export const fail = (c: Ctx, status: 400 | 401 | 403 | 404 | 409 | 413 | 429, error: string) => c.json({ error }, status);
+export const fail = (c: Ctx, status: 400 | 401 | 403 | 404 | 409 | 413 | 429 | 503, error: string) => c.json({ error }, status);
 
 export const unwrap = <T>(c: Ctx, result: Result<T>) => (result.ok ? c.json(result.value) : fail(c, result.status, result.error));
 

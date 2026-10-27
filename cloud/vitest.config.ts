@@ -6,6 +6,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
 	plugins: [
 		cloudflareTest(async () => ({
+			// Binding AI distant : jamais en test, `ai.run` est simulé.
+			remoteBindings: false,
 			wrangler: { configPath: './wrangler.jsonc' },
 			miniflare: {
 				bindings: {
