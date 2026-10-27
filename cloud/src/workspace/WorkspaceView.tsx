@@ -9,6 +9,8 @@ import { Composer } from './Composer';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
+import { ActivityPanel } from './notifications/ActivityPanel';
+import { openNotification, useBrowserNotifications } from './notifications/browser';
 import { ResizeHandle, useResizable } from './resizable';
 import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
@@ -23,6 +25,7 @@ type Props = {
 	workspaceId: string;
 	channelId: string | null;
 	onMeChanged: () => Promise<unknown>;
+	onBadges?: (badges: Record<string, number>) => void;
 };
 
 type Panel = 'members' | 'drive' | null;
@@ -43,7 +46,7 @@ function useFocused(): boolean {
 	return focused;
 }
 
-export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props) {
+export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadges }: Props) {
 	const myId = me.user.id;
 	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
 	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, forceMuted: state.forceMuted, voiceMoved: state.voiceMoved, send });
@@ -72,6 +75,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 
 	const channels = state.channels;
 	const active = channels?.find((c) => c.id === channelId);
+	// Pages de l'espace hors salon, ouvertes depuis la barre d'apps.
+	const page = channelId === 'activite' ? 'activity' : null;
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
 	const grades = state.info?.grades ?? [];
 	const activePerms = active ? (state.perms[active.id] ?? 0) : 0;
@@ -89,11 +94,23 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 
 	const lookup: Lookup = useMemo(() => ({ members, channels: channels ?? [], myId, openChannel }), [members, channels, myId, openChannel]);
 
+	const openMessage = useCallback(
+		(cid: string, id: number) => {
+			setJump({ channelId: cid, id });
+			openChannel(cid);
+		},
+		[openChannel],
+	);
+
+	useBrowserNotifications(state.lastNotification, lookup, (item) => openNotification(item, openMessage));
+
 	useEffect(() => rememberWorkspace(workspaceId), [workspaceId]);
+
+	useEffect(() => onBadges?.({ activity: state.notificationsUnread }), [onBadges, state.notificationsUnread]);
 
 	useEffect(() => {
 		const first = channels?.find((c) => c.kind === 'text') ?? channels?.[0];
-		if (channels && !active && first) {
+		if (channels && !active && !page && first) {
 			navigate(`/w/${workspaceId}/${first.id}`, true);
 		}
 	}, [channels, active, workspaceId]);
@@ -273,6 +290,12 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					<button type='button' className='icon-btn only-mobile' aria-label='Salons' onClick={() => setNavOpen(!navOpen)}>
 						<Icon name='menu' />
 					</button>
+					{page === 'activity' && (
+						<h1>
+							<Icon name='bell' />
+							<span className='ellipsis'>Activité</span>
+						</h1>
+					)}
 					{active && (
 						<>
 							<h1>
@@ -300,9 +323,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 							{!voiceChat && (state.unread[active.id] ?? 0) > 0 && <span className='dot' style={{ marginLeft: -6, marginTop: -14 }} />}
 						</button>
 					)}
-					<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
-						<Icon name='drive' />
-					</button>
+					{active && (
+						<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
+							<Icon name='drive' />
+						</button>
+					)}
 					<button type='button' className='icon-btn' aria-label='Rechercher' title='Rechercher (Ctrl K)' onClick={() => setSearchOpen(true)}>
 						<Icon name='search' />
 					</button>
@@ -312,7 +337,16 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 
 				<div className='body'>
 					<div className='content'>
-						{!active ? (
+						{page === 'activity' ? (
+							<ActivityPanel
+								workspaceId={workspaceId}
+								channels={channels ?? []}
+								members={members}
+								unread={state.notificationsUnread}
+								version={state.notificationsVersion}
+								onOpenMessage={openMessage}
+							/>
+						) : !active ? (
 							<div className='spinner' aria-busy />
 						) : active.kind === 'voice' ? (
 							<div className='call-layout'>

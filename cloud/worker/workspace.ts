@@ -21,6 +21,8 @@ import {
 	type VoiceFlags,
 	type VoiceParticipant,
 } from '../shared/types';
+import { NOTIFICATIONS_MIGRATION, forgetNotifications, listNotifications, markChannelNotificationsRead, markNotificationsRead, messageRecipients, notificationPrefs, notify, setNotifyLevel, unreadCount } from './notifications';
+import type { NotificationFilter, NotificationItem, NotificationPage, NotifyInput, NotifyLevel } from '../shared/notifications';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -169,6 +171,7 @@ const MIGRATIONS = [
 		PRIMARY KEY (channel_id, grade_id)
 	);
 	INSERT INTO channel_overrides (channel_id, grade_id, allow, deny) SELECT id, 'default', 0, 1408 FROM channels WHERE read_only = 1;`,
+	NOTIFICATIONS_MIGRATION,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
@@ -587,6 +590,7 @@ export class Workspace extends DurableObject<Env> {
 		if (attachment) {
 			this.broadcastIn(channelId, { t: 'drive', channelId });
 		}
+		this.notifyMessage(actor, message, mentionedUsers(text));
 		return ok(message);
 	}
 
@@ -612,6 +616,8 @@ export class Workspace extends DurableObject<Env> {
 		});
 		const message = this.message(id)!;
 		this.broadcastIn(message.channelId, { t: 'message_updated', message });
+		const before = new Set(mentionedUsers(current.body));
+		this.notifyMessage(actor, message, mentionedUsers(text).filter((userId) => !before.has(userId)), true);
 		return ok(message);
 	}
 
@@ -665,6 +671,9 @@ export class Workspace extends DurableObject<Env> {
 		const { max } = this.sql.exec<{ max: number | null }>('SELECT MAX(id) AS max FROM messages WHERE channel_id = ?', channelId).one();
 		if (max !== null) {
 			this.setRead(userId, channelId, max);
+			if (markChannelNotificationsRead(this.sql, userId, channelId, max) > 0) {
+				this.pushUnread(userId);
+			}
 		}
 	}
 
@@ -707,6 +716,7 @@ export class Workspace extends DurableObject<Env> {
 			ws.close(4001, 'Retiré de l’espace');
 		}
 		this.sql.exec('DELETE FROM reads WHERE user_id = ?', userId);
+		forgetNotifications(this.sql, userId);
 		for (const channelId of channels) {
 			this.broadcastVoice(channelId, userId);
 		}
@@ -1103,6 +1113,75 @@ export class Workspace extends DurableObject<Env> {
 		return null;
 	}
 
+	// --- Notifications ---
+
+	notificationsList(actor: Actor, filter: NotificationFilter, before: number | null): NotificationPage {
+		return listNotifications(this.sql, actor.id, this.visibleIds(actor), filter, before);
+	}
+
+	notificationsRead(actor: Actor, ids: number[] | 'all'): { unread: number } {
+		if (markNotificationsRead(this.sql, actor.id, this.visibleIds(actor), ids) > 0) {
+			this.pushUnread(actor.id);
+		}
+		return { unread: unreadCount(this.sql, actor.id, this.visibleIds(actor)) };
+	}
+
+	notificationPrefs(actor: Actor): Record<string, NotifyLevel> {
+		return notificationPrefs(this.sql, actor.id, this.visibleIds(actor));
+	}
+
+	setNotificationPref(actor: Actor, channelId: string, level: NotifyLevel): Result<{ level: NotifyLevel }> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		setNotifyLevel(this.sql, actor.id, channelId, level);
+		return ok({ level });
+	}
+
+	// Entrée commune des sources internes au DO (DM, fils, réactions, calendrier, mail).
+	private pushNotification(input: NotifyInput): NotificationItem | null {
+		const item = notify(this.sql, input);
+		if (!item) {
+			return null;
+		}
+		for (const ws of this.ctx.getWebSockets(input.userId)) {
+			const conn = this.conn(ws);
+			if (conn && (!item.channelId || this.can(conn.actor, item.channelId, P.VIEW_CHANNEL))) {
+				this.send(ws, { t: 'notification', notification: item, unread: unreadCount(this.sql, input.userId, this.visibleIds(conn.actor)) });
+			}
+		}
+		return item;
+	}
+
+	private pushUnread(userId: string): void {
+		for (const ws of this.ctx.getWebSockets(userId)) {
+			const conn = this.conn(ws);
+			if (conn) {
+				this.send(ws, { t: 'notifications_unread', unread: unreadCount(this.sql, userId, this.visibleIds(conn.actor)) });
+			}
+		}
+	}
+
+	// Une édition ne notifie que les nouvelles mentions.
+	private notifyMessage(actor: Actor, message: Message, mentioned: string[], mentionsOnly = false): void {
+		const channel = this.channelRow(message.channelId);
+		if (!channel) {
+			return;
+		}
+		const where = channel.kind === 'text' ? `#${channel.name}` : channel.name;
+		const titles: Record<string, string> = {
+			mention: `${actor.name} t’a mentionné dans ${where}`,
+			reply: `${actor.name} a répondu à ton message dans ${where}`,
+			message: `${actor.name} dans ${where}`,
+		};
+		const recipients = mentionsOnly
+			? mentioned.filter((userId) => userId !== actor.id).map((userId) => ({ userId, kind: 'mention' as const }))
+			: messageRecipients(this.sql, { channelId: message.channelId, authorId: actor.id, mentioned, replyAuthor: message.replyTo?.userId ?? null });
+		for (const { userId, kind } of recipients) {
+			this.pushNotification({ userId, kind, channelId: message.channelId, messageId: message.id, actorId: actor.id, title: titles[kind] ?? where, body: message.body || message.attachment?.name || '' });
+		}
+	}
+
 	private insertFile(channelId: string, folderId: string | null, attachment: Attachment, userId: string, messageId: number | null): DriveFile {
 		const row = this.sql
 			.exec<FileRow>(
@@ -1175,6 +1254,7 @@ export class Workspace extends DurableObject<Env> {
 		this.ctx.acceptWebSocket(server, [actor.id]);
 		server.serializeAttachment(conn);
 		this.send(server, { t: 'hello', connId: conn.connId, online: this.onlineIds(), ...this.access(actor) });
+		this.send(server, { t: 'notifications_unread', unread: unreadCount(this.sql, actor.id, this.visibleIds(actor)) });
 		if (!wasOnline) {
 			this.broadcast({ t: 'presence', userId: actor.id, online: true }, server);
 		}

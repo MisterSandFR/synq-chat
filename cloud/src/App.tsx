@@ -14,6 +14,7 @@ export type Notice = { tone: 'error' | 'ok'; text: string } | null;
 export function App() {
 	const [me, setMe] = useState<Me | null | undefined>(undefined);
 	const [notice, setNotice] = useState<Notice>(() => takeSsoNotice());
+	const [badges, setBadges] = useState<Record<string, number>>({});
 	const path = usePath();
 
 	const refresh = useCallback(async (): Promise<Me | null> => {
@@ -63,11 +64,15 @@ export function App() {
 	const inWorkspace = Boolean(workspace && me.workspaces.some((w) => w.id === workspace[1]));
 	const last = lastWorkspace();
 	const currentId = inWorkspace ? workspace![1]! : me.workspaces.some((w) => w.id === last) ? last : (me.workspaces[0]?.id ?? null);
-	const items: RailItem[] = [{ key: 'home', label: 'Accueil', icon: 'home', href: currentId ? `/w/${currentId}` : '/espaces', active: inWorkspace }];
+	const page = inWorkspace ? workspace![2] : undefined;
+	const items: RailItem[] = [{ key: 'home', label: 'Accueil', icon: 'home', href: currentId ? `/w/${currentId}` : '/espaces', active: inWorkspace && page !== 'activite' }];
+	if (currentId) {
+		items.push({ key: 'activity', label: 'Activité', icon: 'bell', href: `/w/${currentId}/activite`, active: page === 'activite', badge: badges.activity });
+	}
 	if (inWorkspace) {
 		return (
 			<Shell me={me} workspaceId={currentId} items={items}>
-				<WorkspaceView key={workspace![1]} me={me} workspaceId={workspace![1]!} channelId={workspace![2] ?? null} onMeChanged={refresh} />
+				<WorkspaceView key={workspace![1]} me={me} workspaceId={workspace![1]!} channelId={workspace![2] ?? null} onMeChanged={refresh} onBadges={setBadges} />
 			</Shell>
 		);
 	}
