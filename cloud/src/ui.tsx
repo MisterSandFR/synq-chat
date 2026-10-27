@@ -119,6 +119,7 @@ const PATHS = {
 	'chevron-left': 'M15 6l-6 6 6 6',
 	up: 'M12 19V5M5 12l7-7 7 7',
 	down: 'M12 5v14M5 12l7 7 7-7',
+	thread: 'M3 4h13v9H8l-5 4zM19 8h2v12l-4-3h-7v-2',
 	shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
 } as const;
 

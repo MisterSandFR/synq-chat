@@ -8,11 +8,12 @@ type Props = {
 	online: Set<string>;
 	voice: Record<string, VoiceParticipant[]>;
 	myId: string;
+	onMessage?: (userId: string) => void;
 	onClose: () => void;
 };
 
 // Membres en ligne rangés sous leur plus haut grade, comme une liste TeamSpeak ; hors ligne à part.
-export function MembersPanel({ members, grades, online, voice, myId, onClose }: Props) {
+export function MembersPanel({ members, grades, online, voice, myId, onMessage, onClose }: Props) {
 	const inVoice = new Set(Object.values(voice).flatMap((list) => list.map((p) => p.userId)));
 	const sorted = [...members].sort((a, b) => a.name.localeCompare(b.name));
 	const groups = new Map<string, { label: string; color?: string; order: number; list: Member[] }>();
@@ -59,6 +60,11 @@ export function MembersPanel({ members, grades, online, voice, myId, onClose }: 
 										<span className='muted' title='En vocal'>
 											<Icon name='speaker' size={16} />
 										</span>
+									)}
+									{onMessage && member.id !== myId && (
+										<button type='button' className='icon-btn icon-btn-sm member-dm' aria-label={`Message direct à ${member.name}`} title='Message direct' onClick={() => onMessage(member.id)}>
+											<Icon name='chat' size={16} />
+										</button>
 									)}
 								</li>
 							))}

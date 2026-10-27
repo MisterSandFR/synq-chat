@@ -1,3 +1,4 @@
+import type { DirectConversation, ThreadSummary } from './dm-threads';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -61,7 +62,7 @@ export interface WorkspaceDetail {
 	members: Member[];
 }
 
-export type ChannelKind = 'text' | 'voice';
+export type ChannelKind = 'text' | 'voice' | 'dm';
 
 export interface Channel {
 	id: string;
@@ -107,6 +108,9 @@ export interface Message {
 	replyTo: MessageRef | null;
 	createdAt: number;
 	editedAt: number | null;
+	// Réponse de fil : id du message racine.
+	threadRoot?: number | null;
+	thread?: ThreadSummary | null;
 }
 
 export interface MessagePage {
@@ -197,7 +201,10 @@ export type ServerEvent =
 	| { t: 'voice_ended'; reason: string }
 	| { t: 'drive'; channelId: string }
 	| { t: 'members_changed' }
-	| { t: 'workspace_deleted' };
+	| { t: 'workspace_deleted' }
+	| { t: 'dm'; conversation: DirectConversation }
+	| { t: 'thread'; channelId: string; rootId: number; message: Message; root: Message }
+	| { t: 'call_ring'; channelId: string; by: string };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

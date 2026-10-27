@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 import { P, has } from '../../shared/permissions';
 import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
@@ -23,14 +23,18 @@ type Props = {
 	onOpenSearch: () => void;
 	onNavigate: () => void;
 	onCreateChannel: (kind: 'text' | 'voice') => void;
+	directs?: ReactNode;
 };
 
-export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel }: Props) {
+export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, directs }: Props) {
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
 	const sections = new Map<string, { kind: 'text' | 'voice'; label: string; items: Channel[] }>();
 	for (const channel of channels) {
+		if (channel.kind === 'dm') {
+			continue;
+		}
 		const label = channel.category || (channel.kind === 'voice' ? 'Vocal' : 'Salons');
 		// Par libellé : sans catégorie et catégorie « Vocal » tombent dans la même section.
 		const key = `${channel.kind}:${label}`;
@@ -109,6 +113,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 						<span className='channel-name'>Ajouter un salon vocal</span>
 					</button>
 				)}
+				{directs}
 			</nav>
 
 			{voice.snapshot && (

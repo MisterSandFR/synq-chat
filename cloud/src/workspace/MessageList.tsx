@@ -5,6 +5,7 @@ import { fileUrl } from '../api';
 import { Avatar, Icon, fileIcon, formatSize } from '../ui';
 import { memberColor, memberLabel } from './grades';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
+import { ThreadLink } from './dm-threads/ThreadLink';
 import type { ChannelMessages } from './useWorkspace';
 
 const GROUP_GAP = 5 * 60 * 1000;
@@ -44,9 +45,10 @@ type Props = {
 	onReply: (message: Message) => void;
 	onEdit: (id: number, body: string) => Promise<void>;
 	onDelete: (id: number) => Promise<void>;
+	onOpenThread?: (rootId: number) => void;
 };
 
-export function MessageList({ workspaceId, channel, data, lookup, canModerate, grades, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete }: Props) {
+export function MessageList({ workspaceId, channel, data, lookup, canModerate, grades, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete, onOpenThread }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const prevHeight = useRef(0);
@@ -104,10 +106,10 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 			{data && !data.hasMore && (
 				<div className='channel-intro'>
 					<span className='channel-intro-icon'>
-						<Icon name={channel.readOnly ? 'megaphone' : 'hash'} size={22} />
+						<Icon name={channel.kind === 'dm' ? 'chat' : channel.readOnly ? 'megaphone' : 'hash'} size={22} />
 					</span>
-					<h2>Bienvenue dans #{channel.name}</h2>
-					<p className='muted'>{channel.topic || 'C’est le début du salon.'}</p>
+					<h2>{channel.kind === 'dm' ? channel.name : `Bienvenue dans #${channel.name}`}</h2>
+					<p className='muted'>{channel.topic || (channel.kind === 'dm' ? 'C’est le début de votre conversation privée.' : 'C’est le début du salon.')}</p>
 				</div>
 			)}
 			{data?.loading && items.length === 0 && <div className='spinner' aria-busy />}
@@ -181,9 +183,15 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 									)
 								)}
 								{message.attachment && <AttachmentView workspaceId={workspaceId} attachment={message.attachment} onLoad={keepBottom} />}
+								{onOpenThread && <ThreadLink message={message} onOpen={onOpenThread} />}
 							</div>
 							{editing !== message.id && (
 								<div className='msg-actions'>
+									{onOpenThread && !message.threadRoot && (
+										<button type='button' className='icon-btn icon-btn-sm' aria-label='Répondre dans un fil' title='Répondre dans un fil' onClick={() => onOpenThread(message.id)}>
+											<Icon name='thread' size={16} />
+										</button>
+									)}
 									<button type='button' className='icon-btn icon-btn-sm' aria-label='Répondre' title='Répondre' onClick={() => onReply(message)}>
 										<Icon name='reply' size={16} />
 									</button>
