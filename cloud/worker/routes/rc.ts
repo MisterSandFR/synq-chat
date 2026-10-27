@@ -1,10 +1,14 @@
 import { Hono } from 'hono';
 
-import { AVATAR_TYPES, RC_LIMITS, USER_STATUSES, type Profile, type ProfileInput, type UserStatus } from '../../shared/rc';
+import { AVATAR_TYPES, RC_LIMITS, USER_STATUSES, type Profile, type ProfileInput, type UserStatus, type Webhook, type WebhookPayload, type WebhookWithUrl } from '../../shared/rc';
 import type { User } from '../../shared/types';
+import { randomToken, sha256 } from '../crypto';
 import { fail, readJson, stub, unwrap, workspaceStub, type AppEnv, type Ctx } from '../http';
 
 export const rcRoutes = new Hono<AppEnv>();
+
+// Monté avant le middleware de session : le secret de l'URL tient lieu d'authentification.
+export const rcPublicRoutes = new Hono<AppEnv>();
 
 const AVATAR_PATH = '/api/avatars/';
 
@@ -183,4 +187,47 @@ rcRoutes.put('/w/:wid/channels/:cid/announcement', async (c) => {
 		return fail(c, 400, 'Requête invalide');
 	}
 	return unwrap(c, await stub(c).setAnnouncement(c.get('actor'), c.req.param('cid'), text));
+});
+
+rcRoutes.post('/w/:wid/messages/:mid/forward', async (c) => {
+	const { channelId, comment } = await readJson<{ channelId: string; comment: string }>(c);
+	if (typeof channelId !== 'string' || (comment !== undefined && typeof comment !== 'string')) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	return unwrap(c, await stub(c).forwardMessage(c.get('actor'), Number(c.req.param('mid')), channelId, comment ?? ''));
+});
+
+const hookUrl = (c: Ctx, hook: Webhook, secret: string): WebhookWithUrl => ({
+	...hook,
+	url: `${new URL(c.req.url).origin}/api/hooks/${c.get('workspaceId')}/${hook.id}/${secret}`,
+});
+
+rcRoutes.get('/w/:wid/channels/:cid/webhooks', async (c) => unwrap(c, await stub(c).webhookList(c.get('actor'), c.req.param('cid'))));
+
+rcRoutes.post('/w/:wid/channels/:cid/webhooks', async (c) => {
+	const { name } = await readJson<{ name: string }>(c);
+	const secret = randomToken(24);
+	const result = await stub(c).createWebhook(c.get('actor'), c.req.param('cid'), name, await sha256(secret));
+	return result.ok ? c.json(hookUrl(c, result.value, secret), 201) : unwrap(c, result);
+});
+
+rcRoutes.post('/w/:wid/webhooks/:id/rotate', async (c) => {
+	const secret = randomToken(24);
+	const result = await stub(c).rotateWebhook(c.get('actor'), c.req.param('id'), await sha256(secret));
+	return result.ok ? c.json(hookUrl(c, result.value, secret)) : unwrap(c, result);
+});
+
+rcRoutes.delete('/w/:wid/webhooks/:id', async (c) => unwrap(c, await stub(c).deleteWebhook(c.get('actor'), c.req.param('id'))));
+
+rcPublicRoutes.post('/hooks/:wid/:id/:secret', async (c) => {
+	const wid = c.req.param('wid');
+	const payload = await readJson<WebhookPayload>(c);
+	if (typeof payload.text !== 'string' || (payload.username !== undefined && typeof payload.username !== 'string')) {
+		return fail(c, 400, 'JSON { text, username? } attendu');
+	}
+	if (!(await c.env.DB.prepare('SELECT 1 FROM workspaces WHERE id = ?').bind(wid).first())) {
+		return fail(c, 404, 'Webhook introuvable');
+	}
+	const result = await workspaceStub(c.env, wid).webhookPost(c.req.param('id'), await sha256(c.req.param('secret')), payload.text, payload.username ?? '');
+	return result.ok ? c.json({ ok: true, id: result.value.id }) : unwrap(c, result);
 });

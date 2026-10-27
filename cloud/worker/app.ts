@@ -25,7 +25,7 @@ import { notificationRoutes } from './routes/notifications';
 import { mediaRoutes } from './routes/media';
 import { categoryRoutes, cleanOverrides } from './routes/categories';
 import { commandRoutes } from './routes/commands';
-import { rcRoutes } from './routes/rc';
+import { rcPublicRoutes, rcRoutes } from './routes/rc';
 import { chatRoutes } from './routes/chat';
 import { dmThreadsRoutes } from './routes/dm-threads';
 import { calendarRoutes, icsRoutes } from './routes/calendar';
@@ -277,6 +277,7 @@ app.get('/auth/recube/callback', async (c) => {
 });
 
 app.route('/', icsRoutes);
+app.route('/', rcPublicRoutes);
 
 // Tout ce qui suit exige une session.
 app.use('*', async (c, next) => {

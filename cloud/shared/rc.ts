@@ -59,3 +59,42 @@ export const AWAY_AFTER = 10 * 60 * 1000;
 const EVERYONE_RE = /(?:^|[^\w@<])@(all|here)\b/g;
 
 export const everyoneMentions = (body: string) => new Set([...body.matchAll(EVERYONE_RE)].map((m) => m[1] as 'all' | 'here'));
+
+export interface ForwardRef {
+	id: number;
+	channelId: string;
+	userId: string;
+	body: string;
+	files: number;
+	createdAt: number;
+}
+
+declare module './types' {
+	interface Message {
+		forward?: ForwardRef;
+	}
+}
+
+export interface Webhook {
+	id: string;
+	channelId: string;
+	name: string;
+	createdBy: string;
+	createdAt: number;
+	lastUsedAt: number | null;
+}
+
+// URL secrète : renvoyée seulement à la création et à la rotation.
+export interface WebhookWithUrl extends Webhook {
+	url: string;
+}
+
+export interface WebhookPayload {
+	text: string;
+	username?: string;
+	avatar?: string;
+}
+
+export const FORWARD_EXCERPT = 500;
+
+export const WEBHOOK_LIMITS = { perChannel: 10, name: 32 } as const;
