@@ -1,0 +1,170 @@
+import { useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+
+import type { Me } from '../../shared/types';
+import { api } from '../api';
+import { navigate } from '../router';
+import { useTheme, type Theme } from '../theme';
+import { Avatar, Icon, useDismiss, type IconName } from '../ui';
+import './shell.css';
+
+export type RailItem = { key: string; label: string; icon: IconName; href: string; active: boolean; badge?: number };
+
+type Props = { me: Me; workspaceId: string | null; items: RailItem[]; children: ReactNode };
+
+const THEMES: Record<Theme, { next: Theme; label: string; icon: IconName }> = {
+	system: { next: 'dark', label: 'système', icon: 'contrast' },
+	dark: { next: 'light', label: 'sombre', icon: 'moon' },
+	light: { next: 'system', label: 'clair', icon: 'sun' },
+};
+
+const go = (href: string) => (event: MouseEvent) => {
+	if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+		event.preventDefault();
+		navigate(href);
+	}
+};
+
+export function Shell({ me, workspaceId, items, children }: Props) {
+	const workspace = me.workspaces.find((w) => w.id === workspaceId);
+	const [theme, setTheme] = useTheme();
+	return (
+		<div className='shell themed' style={{ '--accent': workspace?.accent ?? '#6A4BFF' } as CSSProperties}>
+			<nav className='rail' aria-label='Applications'>
+				<SpaceMenu me={me} workspaceId={workspaceId} />
+				<div className='rail-items'>
+					{items.map((item) => (
+						<a key={item.key} href={item.href} className='rail-item' aria-current={item.active ? 'page' : undefined} onClick={go(item.href)}>
+							<span className='rail-tile'>
+								<Icon name={item.icon} size={20} />
+								{Boolean(item.badge) && <span className='rail-badge'>{item.badge! > 99 ? '99+' : item.badge}</span>}
+							</span>
+							<span className='rail-label'>{item.label}</span>
+						</a>
+					))}
+				</div>
+				<span className='grow' />
+				<button type='button' className='rail-round rail-desktop' aria-label='Créer ou rejoindre un espace' title='Créer ou rejoindre un espace' onClick={() => navigate('/espaces')}>
+					<Icon name='plus' />
+				</button>
+				<button
+					type='button'
+					className='rail-round rail-desktop'
+					aria-label={`Thème ${THEMES[theme].label}, passer au thème ${THEMES[THEMES[theme].next].label}`}
+					title={`Thème ${THEMES[theme].label}`}
+					onClick={() => setTheme(THEMES[theme].next)}
+				>
+					<Icon name={THEMES[theme].icon} />
+				</button>
+				<ProfileMenu me={me} />
+			</nav>
+			<div className='shell-main'>{children}</div>
+		</div>
+	);
+}
+
+function SpaceMenu({ me, workspaceId }: { me: Me; workspaceId: string | null }) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	const current = me.workspaces.find((w) => w.id === workspaceId);
+	return (
+		<div ref={ref} className='rail-anchor rail-desktop'>
+			<button
+				type='button'
+				className='rail-space'
+				style={current ? { background: current.accent } : undefined}
+				aria-label={current ? `Espace ${current.name}, changer d’espace` : 'Choisir un espace'}
+				title={current?.name ?? 'Espaces'}
+				aria-haspopup='menu'
+				aria-expanded={open}
+				onClick={() => setOpen(!open)}
+			>
+				{current ? current.name.charAt(0).toUpperCase() : <Icon name='home' />}
+			</button>
+			{open && (
+				<div className='popover rail-pop' role='menu' style={{ top: 0, width: 280 }}>
+					{me.workspaces.map((w) => (
+						<button
+							key={w.id}
+							type='button'
+							role='menuitem'
+							className='menu-item'
+							onClick={() => {
+								setOpen(false);
+								navigate(`/w/${w.id}`);
+							}}
+						>
+							<span className='avatar avatar-square' style={{ width: 26, height: 26, fontSize: 12, background: w.accent, color: '#fff' }}>
+								{w.name.charAt(0).toUpperCase()}
+							</span>
+							<span className='grow ellipsis'>{w.name}</span>
+							{w.id === workspaceId && <Icon name='check' size={16} />}
+						</button>
+					))}
+					<div className='menu-sep' />
+					<button
+						type='button'
+						role='menuitem'
+						className='menu-item'
+						onClick={() => {
+							setOpen(false);
+							navigate('/espaces');
+						}}
+					>
+						<Icon name='plus' size={16} /> Créer ou rejoindre un espace
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function ProfileMenu({ me }: { me: Me }) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	const realEmail = !me.user.email.endsWith('@recube.invalid');
+	return (
+		<div ref={ref} className='rail-anchor'>
+			<button type='button' className='rail-me' aria-label='Ton profil' title={me.user.name} aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
+				<Avatar name={me.user.name} url={me.user.avatarUrl} size={34} square />
+			</button>
+			{open && (
+				<div className='popover rail-pop rail-pop-up' role='menu' style={{ width: 260 }}>
+					<div className='rail-pop-head'>
+						<Avatar name={me.user.name} url={me.user.avatarUrl} size={36} />
+						<span style={{ minWidth: 0 }}>
+							<strong className='ellipsis' style={{ display: 'block' }}>
+								{me.user.name}
+							</strong>
+							{realEmail && <span className='muted ellipsis' style={{ display: 'block', fontSize: 13 }}>{me.user.email}</span>}
+						</span>
+					</div>
+					<div className='menu-sep' />
+					<button
+						type='button'
+						role='menuitem'
+						className='menu-item'
+						onClick={() => {
+							setOpen(false);
+							navigate('/espaces');
+						}}
+					>
+						<Icon name='settings' size={16} /> Profil et espaces
+					</button>
+					<button
+						type='button'
+						role='menuitem'
+						className='menu-item menu-item-danger'
+						onClick={async () => {
+							await api('POST', '/auth/logout');
+							window.location.href = '/';
+						}}
+					>
+						<Icon name='logout' size={16} /> Se déconnecter
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}

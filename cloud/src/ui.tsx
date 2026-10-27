@@ -21,10 +21,10 @@ export function Avatar({ name, url, size = 36, square, online, className = '' }:
 
 export function Logo({ height = 28 }: { height?: number }) {
 	return (
-		<picture>
-			<source srcSet='/logo.svg' media='(prefers-color-scheme: dark)' />
-			<img src='/logo-ink.svg' alt='Synq' className='auth-logo' style={{ height }} />
-		</picture>
+		<>
+			<img src='/logo-ink.svg' alt='Synq' className='auth-logo logo-light' style={{ height }} />
+			<img src='/logo.svg' alt='Synq' className='auth-logo logo-dark' style={{ height }} />
+		</>
 	);
 }
 
@@ -120,6 +120,12 @@ const PATHS = {
 	up: 'M12 19V5M5 12l7-7 7 7',
 	down: 'M12 5v14M5 12l7 7 7-7',
 	shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
+	bell: 'M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9zM10 20a2 2 0 0 0 4 0',
+	calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+	mail: 'M3 6h18v12H3zM3 7l9 6 9-6',
+	moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',
+	sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+	contrast: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18',
 } as const;
 
 export type IconName = keyof typeof PATHS;

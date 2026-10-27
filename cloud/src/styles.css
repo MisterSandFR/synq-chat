@@ -19,8 +19,9 @@
 	color-scheme: light;
 }
 
+/* Thème forcé par l'utilisateur (data-theme) prioritaire sur le système. */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme='light']) {
 		--bg: #17181c;
 		--surface: #1c1d22;
 		--hover: #24252b;
@@ -37,6 +38,22 @@
 	}
 }
 
+:root[data-theme='dark'] {
+	--bg: #17181c;
+	--surface: #1c1d22;
+	--hover: #24252b;
+	--active: #2a2b32;
+	--line: #2c2d34;
+	--line-strong: #3a3b44;
+	--text: #ececef;
+	--muted: #9c9da7;
+	--soft: #2c2d34;
+	--danger: #ff6b6b;
+	--success: #3ccf7e;
+	--shadow-pop: 0 12px 32px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.3);
+	color-scheme: dark;
+}
+
 /* Dérivés calculés là où --accent est posé (racine ou espace). */
 :root,
 .themed {
@@ -45,11 +62,17 @@
 }
 
 @media (prefers-color-scheme: dark) {
-	:root,
-	.themed {
+	:root:not([data-theme='light']),
+	:root:not([data-theme='light']) .themed {
 		--accent-soft: color-mix(in srgb, var(--accent) 24%, transparent);
 		--accent-ink: color-mix(in srgb, var(--accent) 55%, white);
 	}
+}
+
+:root[data-theme='dark'],
+:root[data-theme='dark'] .themed {
+	--accent-soft: color-mix(in srgb, var(--accent) 24%, transparent);
+	--accent-ink: color-mix(in srgb, var(--accent) 55%, white);
 }
 
 *,
@@ -772,6 +795,27 @@ kbd {
 	display: flex;
 	flex-direction: column;
 	padding: 40px clamp(24px, 6vw, 88px);
+}
+
+.logo-dark {
+	display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) .logo-light {
+		display: none;
+	}
+	:root:not([data-theme='light']) .logo-dark {
+		display: inline;
+	}
+}
+
+:root[data-theme='dark'] .logo-light {
+	display: none;
+}
+
+:root[data-theme='dark'] .logo-dark {
+	display: inline;
 }
 
 .auth-logo {
