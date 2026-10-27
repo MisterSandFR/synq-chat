@@ -21,6 +21,8 @@ import {
 	type VoiceFlags,
 	type VoiceParticipant,
 } from '../shared/types';
+import { RC_LIMITS, everyoneMentions, type Announcement, type SavedMessage } from '../shared/rc';
+import { EVERYONE, insertMentions, readAnnouncement, savedRows, writeAnnouncement, writeSaved } from './rc';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -169,6 +171,25 @@ const MIGRATIONS = [
 		PRIMARY KEY (channel_id, grade_id)
 	);
 	INSERT INTO channel_overrides (channel_id, grade_id, allow, deny) SELECT id, 'default', 0, 1408 FROM channels WHERE read_only = 1;`,
+	`CREATE TABLE saved (
+		user_id TEXT NOT NULL,
+		message_id INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (user_id, message_id)
+	);
+	CREATE INDEX saved_message ON saved (message_id);
+	CREATE TABLE announcements (
+		channel_id TEXT PRIMARY KEY,
+		text TEXT NOT NULL,
+		updated_by TEXT NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TRIGGER saved_ad AFTER DELETE ON messages BEGIN
+		DELETE FROM saved WHERE message_id = old.id;
+	END;
+	CREATE TRIGGER announcements_ad AFTER DELETE ON channels BEGIN
+		DELETE FROM announcements WHERE channel_id = old.id;
+	END;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
@@ -576,6 +597,7 @@ export class Workspace extends DurableObject<Env> {
 				)
 				.one();
 			this.saveMentions(row.id, text);
+			this.saveEveryone(actor, channelId, row.id, text);
 			if (attachment) {
 				this.insertFile(channelId, null, attachment, actor.id, row.id);
 			}
@@ -609,6 +631,7 @@ export class Workspace extends DurableObject<Env> {
 			this.sql.exec('UPDATE messages SET body = ?, edited_at = ? WHERE id = ?', text, Date.now(), id);
 			this.sql.exec('DELETE FROM mentions WHERE message_id = ?', id);
 			this.saveMentions(id, text);
+			this.saveEveryone(actor, current.channelId, id, text);
 		});
 		const message = this.message(id)!;
 		this.broadcastIn(message.channelId, { t: 'message_updated', message });
@@ -671,10 +694,10 @@ export class Workspace extends DurableObject<Env> {
 	private unread(actor: Actor, visible: Set<string>): { unread: Record<string, number>; mentions: Record<string, number> } {
 		const rows = this.sql
 			.exec<{ channel_id: string; n: number; mentions: number }>(
-				`SELECT m.channel_id AS channel_id, COUNT(*) AS n, COUNT(x.user_id) AS mentions
+				`SELECT m.channel_id AS channel_id, COUNT(DISTINCT m.id) AS n, COUNT(DISTINCT x.message_id) AS mentions
 				FROM messages m
 				LEFT JOIN reads r ON r.channel_id = m.channel_id AND r.user_id = ?1
-				LEFT JOIN mentions x ON x.message_id = m.id AND x.user_id = ?1
+				LEFT JOIN mentions x ON x.message_id = m.id AND x.user_id IN (?1, '${EVERYONE}')
 				WHERE m.id > COALESCE(r.last_read_id, 0) AND m.user_id != ?1
 				GROUP BY m.channel_id`,
 				actor.id,
@@ -1182,6 +1205,59 @@ export class Workspace extends DurableObject<Env> {
 
 	async webSocketError(ws: WebSocket): Promise<void> {
 		this.dropConnection(ws);
+	}
+
+	// Parité Rocket.Chat : messages enregistrés, annonces de salon, mentions @all et @here.
+
+	setSaved(actor: Actor, id: number, saved: boolean): Result<{ saved: boolean }> {
+		const message = Number.isInteger(id) ? this.message(id) : null;
+		if (!message || !this.can(actor, message.channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Message introuvable');
+		}
+		return writeSaved(this.sql, actor.id, id, saved);
+	}
+
+	savedMessages(actor: Actor): SavedMessage[] {
+		return savedRows(this.sql, actor.id).flatMap((row) => {
+			const message = this.message(row.message_id);
+			return message && this.can(actor, message.channelId, P.VIEW_CHANNEL) ? [{ message, savedAt: row.created_at }] : [];
+		});
+	}
+
+	announcement(actor: Actor, channelId: string): Result<Announcement> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		return ok(readAnnouncement(this.sql, channelId));
+	}
+
+	setAnnouncement(actor: Actor, channelId: string, raw: string): Result<Announcement> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
+		}
+		const text = raw.trim();
+		if (text.length > RC_LIMITS.announcement) {
+			return err(400, `Annonce trop longue (${RC_LIMITS.announcement} caractères max)`);
+		}
+		const announcement = writeAnnouncement(this.sql, channelId, text, actor.id);
+		this.broadcastIn(channelId, { t: 'announcement', ...announcement });
+		return ok(announcement);
+	}
+
+	// Sans la permission, @all et @here restent du texte.
+	private saveEveryone(actor: Actor, channelId: string, messageId: number, body: string): void {
+		const kinds = everyoneMentions(body);
+		if (!kinds.size || !this.can(actor, channelId, P.MENTION_EVERYONE)) {
+			return;
+		}
+		const online = this.ctx.getWebSockets().flatMap((ws) => {
+			const conn = this.conn(ws);
+			return conn && conn.actor.id !== actor.id && this.can(conn.actor, channelId, P.VIEW_CHANNEL) ? [conn.actor.id] : [];
+		});
+		insertMentions(this.sql, messageId, kinds.has('all') ? [EVERYONE] : [...new Set(online)]);
 	}
 
 	private dropConnection(ws: WebSocket): void {

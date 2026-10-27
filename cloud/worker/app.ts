@@ -20,6 +20,7 @@ import { DUMMY_HASH, hashPassword, randomToken, sha256, verifyPassword } from '.
 import { cleanName, denyUnless, fail, readJson, stub, unwrap, workspaceStub, type Ctx, type AppEnv } from './http';
 import { authorizeUrl, completeLogin } from './recube';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
+import { rcRoutes } from './routes/rc';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -235,7 +236,10 @@ app.get('/auth/recube/callback', async (c) => {
 	}
 
 	if (linked) {
-		await c.env.DB.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(avatar, linked.user_id).run();
+		// Avatar envoyé par l'utilisateur prioritaire sur celui de Recube.
+		await c.env.DB.prepare("UPDATE users SET avatar_url = CASE WHEN avatar_url LIKE '/api/avatars/%' THEN avatar_url ELSE ? END WHERE id = ?")
+			.bind(avatar, linked.user_id)
+			.run();
 		await openSession(c, linked.user_id);
 		return c.redirect('/');
 	}
@@ -809,6 +813,7 @@ app.patch('/w/:wid/drive/files/:id', async (c) => {
 
 app.delete('/w/:wid/drive/files/:id', async (c) => unwrap(c, await stub(c).driveDeleteFile(c.get('actor'), c.req.param('id'))));
 
+app.route('/', rcRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

@@ -120,6 +120,9 @@ const PATHS = {
 	up: 'M12 19V5M5 12l7-7 7 7',
 	down: 'M12 5v14M5 12l7 7 7-7',
 	shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
+	bookmark: 'M6 3h12v18l-6-4-6 4z',
+	user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
+	clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',
 } as const;
 
 export type IconName = keyof typeof PATHS;

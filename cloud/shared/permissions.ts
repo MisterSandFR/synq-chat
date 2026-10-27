@@ -17,11 +17,12 @@ export const P = {
 	VOICE_SCREEN: 1 << 15,
 	VOICE_MODERATE: 1 << 16,
 	BYPASS_LIMIT: 1 << 17,
+	MENTION_EVERYONE: 1 << 18,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 18) - 1;
+export const ALL_PERMS = (1 << 19) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
@@ -53,6 +54,7 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'VOICE_SCREEN', label: 'Partage d’écran', hint: 'Partager son écran.', group: 'Vocal', channel: true },
 	{ key: 'VOICE_MODERATE', label: 'Modérer le vocal', hint: 'Couper le micro ou expulser un grade inférieur.', group: 'Vocal', channel: true },
 	{ key: 'BYPASS_LIMIT', label: 'Ignorer la limite de places', hint: 'Entrer dans un salon vocal complet.', group: 'Vocal', channel: true },
+	{ key: 'MENTION_EVERYONE', label: 'Mentionner @all et @here', hint: 'Notifier tout le salon ou ses membres en ligne.', group: 'Messages', channel: true },
 ];
 
 export type Override = { allow: number; deny: number };

@@ -1,4 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+
+import { PRESENCE_LABEL, type Presence } from '../../shared/rc';
 
 import { P, has } from '../../shared/permissions';
 import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
@@ -23,9 +25,12 @@ type Props = {
 	onOpenSearch: () => void;
 	onNavigate: () => void;
 	onCreateChannel: (kind: 'text' | 'voice') => void;
+	presence?: Presence;
+	presenceText?: string;
+	meMenu?: (close: () => void) => ReactNode;
 };
 
-export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel }: Props) {
+export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu }: Props) {
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
@@ -130,7 +135,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 				</div>
 			)}
 
-			<MeBar me={me} status={state.status} />
+			<MeBar me={me} status={state.status} presence={presence} presenceText={presenceText} menu={meMenu} />
 
 			<ResizeHandle resize={width} label='Redimensionner la barre latérale' />
 		</aside>
@@ -275,14 +280,17 @@ function WorkspaceSwitcher({ me, workspaceId, name, accent }: { me: Me; workspac
 	);
 }
 
-function MeBar({ me, status }: { me: Me; status: WorkspaceState['status'] }) {
+type MeBarProps = { me: Me; status: WorkspaceState['status']; presence?: Presence; presenceText?: string; menu?: (close: () => void) => ReactNode };
+
+function MeBar({ me, status, presence, presenceText, menu }: MeBarProps) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	useDismiss(ref, open, () => setOpen(false));
-	const label = status === 'live' ? 'En ligne' : status === 'connecting' ? 'Connexion…' : 'Hors ligne';
+	const live = presenceText || (presence ? PRESENCE_LABEL[presence] : 'En ligne');
+	const label = status === 'live' ? live : status === 'connecting' ? 'Connexion…' : 'Hors ligne';
 	return (
 		<div className='me-bar' ref={ref} style={{ position: 'relative' }}>
-			<Avatar name={me.user.name} url={me.user.avatarUrl} size={32} online={status === 'live'} />
+			<Avatar name={me.user.name} url={me.user.avatarUrl} size={32} online={status === 'live'} className={presence ? `presence-${presence}` : ''} />
 			<span className='me-bar-name grow'>
 				<span className='ellipsis'>{me.user.name}</span>
 				<span>{label}</span>
@@ -292,6 +300,7 @@ function MeBar({ me, status }: { me: Me; status: WorkspaceState['status'] }) {
 			</button>
 			{open && (
 				<div className='popover' role='menu' style={{ bottom: 'calc(100% + 4px)', right: 8 }}>
+					{menu?.(() => setOpen(false))}
 					<button
 						type='button'
 						role='menuitem'

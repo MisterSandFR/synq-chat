@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import { mentionedUsers, type Channel, type ClientEvent, type Message, type MessagePage, type ServerEvent, type VoiceParticipant, type WorkspaceDetail } from '../../shared/types';
+import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 
 export interface ChannelMessages {
@@ -24,6 +25,7 @@ export interface WorkspaceState {
 	drive: Record<string, number>;
 	voiceEnded: { reason: string; at: number } | null;
 	forceMuted: { by: string; at: number } | null;
+	announcements: Record<string, string>;
 	status: 'connecting' | 'live' | 'offline';
 	closed: string | null;
 }
@@ -57,6 +59,7 @@ const initial: WorkspaceState = {
 	drive: {},
 	voiceEnded: null,
 	forceMuted: null,
+	announcements: {},
 	status: 'connecting',
 	closed: null,
 };
@@ -108,7 +111,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			if (userId === action.myId || (channelId === action.activeChannelId && action.focused)) {
 				return { ...next, typing };
 			}
-			const mentioned = mentionedUsers(event.message.body).includes(action.myId);
+			// @all ou @here sans la permission : compteur corrigé au prochain hello.
+			const mentioned = mentionedUsers(event.message.body).includes(action.myId) || everyoneMentions(event.message.body).size > 0;
 			return {
 				...next,
 				typing,
@@ -168,6 +172,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, drive: { ...state.drive, [event.channelId]: (state.drive[event.channelId] ?? 0) + 1 } };
 		case 'workspace_deleted':
 			return { ...state, closed: 'Cet espace a été supprimé.' };
+		case 'announcement':
+			return { ...state, announcements: { ...state.announcements, [event.channelId]: event.text } };
 		case 'members_changed':
 			return state;
 	}

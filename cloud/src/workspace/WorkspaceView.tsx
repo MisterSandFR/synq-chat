@@ -17,6 +17,12 @@ import { Sidebar } from './Sidebar';
 import { useWorkspace } from './useWorkspace';
 import { CallView, RemoteAudio } from './voice/CallView';
 import { useVoice } from './voice/useVoice';
+import { AnnouncementBanner } from './rc/AnnouncementBanner';
+import { ProfileCard } from './rc/ProfileCard';
+import { ProfileDialog } from './rc/ProfileDialog';
+import { SavedPanel } from './rc/SavedPanel';
+import { StatusDialog, StatusMenuItems } from './rc/status';
+import { presenceOf, useRc } from './rc/useRc';
 
 type Props = {
 	me: Me;
@@ -25,7 +31,7 @@ type Props = {
 	onMeChanged: () => Promise<unknown>;
 };
 
-type Panel = 'members' | 'drive' | null;
+type Panel = 'members' | 'drive' | 'saved' | null;
 
 function useFocused(): boolean {
 	const [focused, setFocused] = useState(() => document.hasFocus());
@@ -58,6 +64,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const [replyTo, setReplyTo] = useState<Message | null>(null);
 	const [jump, setJump] = useState<{ channelId: string; id: number } | null>(null);
 	const [highlight, setHighlight] = useState<number | null>(null);
+	const rc = useRc(workspaceId, myId, state.info);
+	const [card, setCard] = useState<{ userId: string; rect: DOMRect } | null>(null);
+	const [rcDialog, setRcDialog] = useState<'status' | 'profile' | null>(null);
+	const [announcing, setAnnouncing] = useState(false);
+	const myProfile = rc.profiles.get(myId);
 	const [voiceChat, setVoiceChatState] = useState(() => readPref('voice_chat') !== '0' && window.innerWidth > 860);
 
 	const setVoiceChat = (open: boolean) => {
@@ -99,6 +110,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	}, [channels, active, workspaceId]);
 
 	useEffect(() => setReplyTo(null), [channelId]);
+
+	useEffect(() => setAnnouncing(false), [channelId]);
 
 	useEffect(() => {
 		if (active && chatVisible && !state.messages[active.id] && state.status === 'live' && jump?.channelId !== active.id) {
@@ -197,6 +210,17 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 
 	const messagePane = active && (
 			<>
+				{active.kind === 'text' && (
+					<AnnouncementBanner
+						key={`announce-${active.id}`}
+						workspaceId={workspaceId}
+						channelId={active.id}
+						live={state.announcements[active.id]}
+						canEdit={has(state.info?.perms ?? 0, P.MANAGE_CHANNELS)}
+						editing={announcing}
+						onEditing={setAnnouncing}
+					/>
+				)}
 				<MessageList
 					key={`messages-${active.id}`}
 					workspaceId={workspaceId}
@@ -216,6 +240,22 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					onJumpLatest={() => void loadMessages(active.id)}
 					onJumpTo={(id) => setJump({ channelId: active.id, id })}
 					onReply={setReplyTo}
+					onAuthor={(userId, anchor) => setCard({ userId, rect: anchor.getBoundingClientRect() })}
+					extraActions={(message) => {
+						const saved = rc.savedIds.has(message.id);
+						return (
+							<button
+								type='button'
+								className={`icon-btn icon-btn-sm${saved ? ' is-saved' : ''}`}
+								aria-pressed={saved}
+								aria-label={saved ? 'Retirer des enregistrés' : 'Enregistrer'}
+								title={saved ? 'Retirer des enregistrés' : 'Enregistrer'}
+								onClick={() => void rc.toggleSaved(message).catch(() => undefined)}
+							>
+								<Icon name='bookmark' size={16} />
+							</button>
+						);
+					}}
 					onEdit={async (id, body) => {
 						await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
 					}}
@@ -266,6 +306,25 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 				onOpenSearch={() => setSearchOpen(true)}
 				onNavigate={() => setNavOpen(false)}
 				onCreateChannel={setCreateKind}
+				presence={myProfile && presenceOf(myProfile, true)}
+				presenceText={myProfile?.statusText}
+				meMenu={(close) => (
+					<StatusMenuItems
+						current={myProfile?.status}
+						onPick={(status) => {
+							close();
+							void rc.updateProfile({ status }).catch(() => undefined);
+						}}
+						onCustom={() => {
+							close();
+							setRcDialog('status');
+						}}
+						onProfile={() => {
+							close();
+							setRcDialog('profile');
+						}}
+					/>
+				)}
 			/>
 
 			<main className='main'>
@@ -300,6 +359,14 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 							{!voiceChat && (state.unread[active.id] ?? 0) > 0 && <span className='dot' style={{ marginLeft: -6, marginTop: -14 }} />}
 						</button>
 					)}
+					{active?.kind === 'text' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) && (
+						<button type='button' className='icon-btn hide-mobile' aria-pressed={announcing} aria-label='Annonce du salon' title='Annonce du salon' onClick={() => setAnnouncing(!announcing)}>
+							<Icon name='megaphone' />
+						</button>
+					)}
+					<button type='button' className='icon-btn' aria-pressed={panel === 'saved'} aria-label='Messages enregistrés' title='Messages enregistrés' onClick={() => setPanel(panel === 'saved' ? null : 'saved')}>
+						<Icon name='bookmark' />
+					</button>
 					<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
 						<Icon name='drive' />
 					</button>
@@ -342,12 +409,43 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					{panel === 'drive' && active && (
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}
+					{panel === 'saved' && (
+						<SavedPanel
+							saved={rc.saved}
+							lookup={lookup}
+							onOpen={(cid, id) => {
+								setJump({ channelId: cid, id });
+								openChannel(cid);
+							}}
+							onRemove={(message) => void rc.toggleSaved(message).catch(() => undefined)}
+							onClose={() => setPanel(null)}
+						/>
+					)}
 				</div>
 			</main>
 
 			{navOpen && <button type='button' className='scrim' aria-label='Fermer le menu' onClick={() => setNavOpen(false)} />}
 
 			<RemoteAudio voice={voice} />
+
+			{card && (
+				<ProfileCard
+					key={card.userId}
+					member={members.get(card.userId)}
+					profile={rc.profiles.get(card.userId)}
+					online={state.online.has(card.userId)}
+					grades={grades}
+					myId={myId}
+					rect={card.rect}
+					onClose={() => setCard(null)}
+					onEdit={() => {
+						setCard(null);
+						setRcDialog('profile');
+					}}
+				/>
+			)}
+			<StatusDialog open={rcDialog === 'status'} onClose={() => setRcDialog(null)} profile={myProfile} onSave={rc.updateProfile} />
+			<ProfileDialog open={rcDialog === 'profile'} onClose={() => setRcDialog(null)} me={me} profile={myProfile} onSave={rc.updateProfile} onAvatarChanged={onMeChanged} />
 
 			{state.info && channels && (
 				<>
