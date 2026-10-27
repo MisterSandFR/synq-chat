@@ -1,70 +1,15 @@
-import { useCallback, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useRef, useState } from 'react';
 
 import { P, has } from '../../shared/permissions';
 import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
 import { api } from '../api';
-import { navigate, readPref, writePref } from '../router';
+import { navigate } from '../router';
 import { Avatar, Icon, useDismiss } from '../ui';
 import { memberColor } from './grades';
+import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
 import type { VoiceControls } from './voice/useVoice';
 import type { WorkspaceState } from './useWorkspace';
-
-const MIN_WIDTH = 220;
-const MAX_WIDTH = 520;
-const DEFAULT_WIDTH = 280;
-
-export function useSidebarWidth() {
-	const [width, setWidth] = useState(() => {
-		const saved = Number(readPref('sidebar_width'));
-		return saved >= MIN_WIDTH && saved <= MAX_WIDTH ? saved : DEFAULT_WIDTH;
-	});
-	const [dragging, setDragging] = useState(false);
-
-	const onPointerDown = useCallback(
-		(event: ReactPointerEvent<HTMLDivElement>) => {
-			event.preventDefault();
-			const startX = event.clientX;
-			const startWidth = width;
-			let latest = startWidth;
-			setDragging(true);
-			const move = (e: PointerEvent) => {
-				latest = Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + e.clientX - startX)));
-				setWidth(latest);
-			};
-			const up = () => {
-				setDragging(false);
-				writePref('sidebar_width', String(latest));
-				window.removeEventListener('pointermove', move);
-				window.removeEventListener('pointerup', up);
-				document.body.style.cursor = '';
-				document.body.style.userSelect = '';
-			};
-			document.body.style.cursor = 'col-resize';
-			document.body.style.userSelect = 'none';
-			window.addEventListener('pointermove', move);
-			window.addEventListener('pointerup', up);
-		},
-		[width],
-	);
-
-	const onKeyDown = (event: ReactKeyboardEvent) => {
-		const step = event.shiftKey ? 40 : 10;
-		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-			event.preventDefault();
-			const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width + (event.key === 'ArrowRight' ? step : -step)));
-			setWidth(next);
-			writePref('sidebar_width', String(next));
-		}
-	};
-
-	const reset = () => {
-		setWidth(DEFAULT_WIDTH);
-		writePref('sidebar_width', String(DEFAULT_WIDTH));
-	};
-
-	return { width, dragging, onPointerDown, onKeyDown, reset };
-}
 
 type Props = {
 	me: Me;
@@ -73,7 +18,7 @@ type Props = {
 	channelId: string | null;
 	members: Map<string, Member>;
 	voice: VoiceControls;
-	width: ReturnType<typeof useSidebarWidth>;
+	width: Resizable;
 	onOpenSettings: () => void;
 	onOpenSearch: () => void;
 	onNavigate: () => void;
@@ -86,8 +31,9 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 	const channels = state.channels ?? [];
 	const sections = new Map<string, { kind: 'text' | 'voice'; label: string; items: Channel[] }>();
 	for (const channel of channels) {
-		const key = `${channel.kind}:${channel.category}`;
 		const label = channel.category || (channel.kind === 'voice' ? 'Vocal' : 'Salons');
+		// Par libellé : sans catégorie et catégorie « Vocal » tombent dans la même section.
+		const key = `${channel.kind}:${label}`;
 		const section = sections.get(key) ?? { kind: channel.kind, label, items: [] };
 		section.items.push(channel);
 		sections.set(key, section);
@@ -186,21 +132,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 
 			<MeBar me={me} status={state.status} />
 
-			<div
-				className='sidebar-resize'
-				role='separator'
-				aria-orientation='vertical'
-				aria-label='Redimensionner la barre latérale'
-				aria-valuemin={MIN_WIDTH}
-				aria-valuemax={MAX_WIDTH}
-				aria-valuenow={width.width}
-				tabIndex={0}
-				data-active={width.dragging}
-				onPointerDown={width.onPointerDown}
-				onKeyDown={width.onKeyDown}
-				onDoubleClick={width.reset}
-				title='Glisser pour redimensionner, double-clic pour réinitialiser'
-			/>
+			<ResizeHandle resize={width} label='Redimensionner la barre latérale' />
 		</aside>
 	);
 }

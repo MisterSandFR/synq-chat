@@ -9,10 +9,11 @@ import { Composer } from './Composer';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
+import { ResizeHandle, useResizable } from './resizable';
 import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
 import { CreateChannelDialog, SettingsDialog } from './SettingsDialog';
-import { Sidebar, useSidebarWidth } from './Sidebar';
+import { Sidebar } from './Sidebar';
 import { useWorkspace } from './useWorkspace';
 import { CallView, RemoteAudio } from './voice/CallView';
 import { useVoice } from './voice/useVoice';
@@ -46,7 +47,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const myId = me.user.id;
 	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
 	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, forceMuted: state.forceMuted, send });
-	const width = useSidebarWidth();
+	const width = useResizable({ pref: 'sidebar_width', min: 220, max: 520, initial: 280, edge: 'end' });
+	const chatWidth = useResizable({ pref: 'voice_chat_width', min: 300, max: 720, initial: 380, edge: 'start' });
 	const focused = useFocused();
 	const [navOpen, setNavOpen] = useState(false);
 	const [panel, setPanelState] = useState<Panel>(() => (readPref('panel') as Panel) || null);
@@ -326,7 +328,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 									otherChannelName={otherVoice}
 								/>
 								{voiceChat && (
-									<aside className='call-chat' aria-label={`Chat de ${active.name}`}>
+									<aside className='call-chat' style={{ width: chatWidth.width }} aria-label={`Chat de ${active.name}`}>
+										<ResizeHandle resize={chatWidth} label='Redimensionner le chat' />
 										{messagePane}
 									</aside>
 								)}
