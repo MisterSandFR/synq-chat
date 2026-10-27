@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 
+import type { NotificationItem } from '../../shared/notifications';
 import { mentionedUsers, type Channel, type ClientEvent, type Message, type MessagePage, type ServerEvent, type VoiceParticipant, type WorkspaceDetail } from '../../shared/types';
 import { api } from '../api';
 
@@ -26,6 +27,10 @@ export interface WorkspaceState {
 	forceMuted: { by: string; at: number } | null;
 	status: 'connecting' | 'live' | 'offline';
 	closed: string | null;
+	notificationsUnread: number;
+	// Incrémenté à chaque évènement de notification : le panneau Activité se recharge.
+	notificationsVersion: number;
+	lastNotification: NotificationItem | null;
 }
 
 export type PageMode = 'latest' | 'older' | 'newer' | 'around';
@@ -59,6 +64,9 @@ const initial: WorkspaceState = {
 	forceMuted: null,
 	status: 'connecting',
 	closed: null,
+	notificationsUnread: 0,
+	notificationsVersion: 0,
+	lastNotification: null,
 };
 
 const sortChannels = (channels: Channel[]) =>
@@ -168,6 +176,10 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, drive: { ...state.drive, [event.channelId]: (state.drive[event.channelId] ?? 0) + 1 } };
 		case 'workspace_deleted':
 			return { ...state, closed: 'Cet espace a été supprimé.' };
+		case 'notification':
+			return { ...state, notificationsUnread: event.unread, notificationsVersion: state.notificationsVersion + 1, lastNotification: event.notification };
+		case 'notifications_unread':
+			return { ...state, notificationsUnread: event.unread, notificationsVersion: state.notificationsVersion + 1 };
 		case 'members_changed':
 			return state;
 	}

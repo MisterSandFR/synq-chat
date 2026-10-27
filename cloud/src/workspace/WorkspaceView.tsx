@@ -9,6 +9,7 @@ import { Composer } from './Composer';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
+import { openNotification, useBrowserNotifications } from './notifications/browser';
 import { ResizeHandle, useResizable } from './resizable';
 import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
@@ -88,6 +89,16 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	);
 
 	const lookup: Lookup = useMemo(() => ({ members, channels: channels ?? [], myId, openChannel }), [members, channels, myId, openChannel]);
+
+	const openMessage = useCallback(
+		(cid: string, id: number) => {
+			setJump({ channelId: cid, id });
+			openChannel(cid);
+		},
+		[openChannel],
+	);
+
+	useBrowserNotifications(state.lastNotification, lookup, (item) => openNotification(item, openMessage));
 
 	useEffect(() => rememberWorkspace(workspaceId), [workspaceId]);
 
