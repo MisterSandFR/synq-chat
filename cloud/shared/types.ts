@@ -1,4 +1,5 @@
 import type { NotificationItem } from './notifications';
+import type { PinInfo, Reaction } from './chat';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -207,7 +208,9 @@ export type ServerEvent =
 	| { t: 'notification'; notification: NotificationItem; unread: number }
 	| { t: 'notifications_unread'; unread: number }
 	| { t: 'commands_changed' }
-	| { t: 'announcement'; channelId: string; text: string; updatedBy: string | null; updatedAt: number | null };
+	| { t: 'announcement'; channelId: string; text: string; updatedBy: string | null; updatedAt: number | null }
+	| { t: 'reactions'; channelId: string; messageId: number; reactions: Reaction[] }
+	| { t: 'pinned'; channelId: string; messageId: number; pinned: PinInfo | null };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

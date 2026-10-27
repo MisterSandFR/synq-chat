@@ -1,0 +1,394 @@
+/* Markdown */
+
+.md-pre {
+	margin: 4px 0;
+	padding: 8px 10px;
+	overflow-x: auto;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	background: var(--soft);
+	font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	font-size: 0.86em;
+	line-height: 1.5;
+	white-space: pre;
+}
+
+.msg-body .md-pre code {
+	padding: 0;
+	border-radius: 0;
+	background: none;
+	font-size: inherit;
+}
+
+.md-quote {
+	margin: 2px 0;
+	padding-left: 10px;
+	border-left: 3px solid var(--line);
+	color: var(--muted);
+}
+
+.md-list {
+	margin: 2px 0;
+	padding-left: 22px;
+}
+
+.msg-body del {
+	color: var(--muted);
+}
+
+.emoji,
+.emoji-cell,
+.emoji-tab,
+.emoji-glyph,
+.emoji-foot-glyph,
+.reaction-emoji,
+.quick-reaction {
+	font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+}
+
+.msg-body-jumbo {
+	font-size: 2.1em;
+	line-height: 1.25;
+}
+
+.msg-body-jumbo .msg-edited {
+	font-size: 12px;
+}
+
+/* Réactions */
+
+.reactions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 6px;
+}
+
+.reaction {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 26px;
+	padding: 0 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+	color: var(--text);
+	font-size: 12px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.reaction:hover:not(:disabled) {
+	background: var(--hover);
+}
+
+.reaction:disabled {
+	cursor: default;
+}
+
+.reaction-mine,
+.reaction-mine:hover:not(:disabled) {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.reaction-emoji {
+	font-size: 15px;
+	line-height: 1;
+}
+
+.reaction-add {
+	color: var(--muted);
+	opacity: 0;
+}
+
+.msg:hover .reaction-add,
+.reaction-add:focus-visible {
+	opacity: 1;
+}
+
+@media (hover: none) {
+	.reaction-add {
+		opacity: 1;
+	}
+}
+
+/* Sélecteur d'emojis */
+
+.emoji-picker {
+	position: fixed;
+	z-index: 80;
+	display: flex;
+	flex-direction: column;
+	width: 340px;
+	max-width: calc(100vw - 16px);
+	height: 380px;
+	max-height: calc(100vh - 16px);
+	padding: 0;
+	overflow: hidden;
+}
+
+.emoji-search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 8px;
+	padding: 0 10px;
+	height: 34px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	background: var(--surface);
+	color: var(--muted);
+}
+
+.emoji-search:focus-within {
+	border-color: var(--accent);
+}
+
+.emoji-search input {
+	flex: 1;
+	min-width: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+	font-size: 14px;
+}
+
+.emoji-tabs {
+	display: flex;
+	gap: 2px;
+	padding: 0 6px 6px;
+	overflow-x: auto;
+	border-bottom: 1px solid var(--line);
+}
+
+.emoji-tab {
+	flex: none;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: transparent;
+	color: var(--muted);
+	font-size: 17px;
+}
+
+.emoji-tab:hover {
+	background: var(--hover);
+}
+
+.emoji-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0 6px 8px;
+}
+
+.emoji-heading {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	padding: 8px 4px 4px;
+	background: var(--bg);
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.emoji-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+}
+
+.emoji-cell {
+	display: grid;
+	place-items: center;
+	height: 36px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: transparent;
+	font-size: 22px;
+	line-height: 1;
+}
+
+.emoji-cell:hover,
+.emoji-cell:focus-visible {
+	outline: none;
+	background: var(--hover);
+}
+
+.emoji-empty {
+	padding: 32px 8px;
+	text-align: center;
+	color: var(--muted);
+	font-size: 13px;
+}
+
+.emoji-foot {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 40px;
+	padding: 0 12px;
+	border-top: 1px solid var(--line);
+	font-size: 13px;
+}
+
+.emoji-foot-glyph {
+	font-size: 22px;
+}
+
+.suggest .emoji-glyph {
+	width: 24px;
+	text-align: center;
+	font-size: 18px;
+}
+
+/* Barre de mise en forme */
+
+.format-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	padding: 6px 8px 0;
+}
+
+.format-sep {
+	width: 1px;
+	height: 18px;
+	margin: 0 4px;
+	background: var(--line);
+}
+
+.fmt-toggle span {
+	font-size: 14px;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+/* Menu contextuel */
+
+.context-menu {
+	position: fixed;
+	z-index: 80;
+	min-width: 220px;
+	max-width: calc(100vw - 16px);
+}
+
+.context-menu .menu-item:disabled {
+	cursor: default;
+	opacity: 0.45;
+	background: transparent;
+}
+
+.quick-reactions {
+	display: flex;
+	gap: 2px;
+	margin-bottom: 6px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--line);
+}
+
+.quick-reaction {
+	flex: 1;
+	display: grid;
+	place-items: center;
+	height: 36px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 18px;
+}
+
+.quick-reaction:hover {
+	background: var(--hover);
+}
+
+/* Épingles */
+
+.msg-pinned {
+	background: var(--accent-soft);
+}
+
+.msg-pinned-by {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	margin-bottom: 2px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.pins-empty {
+	display: grid;
+	justify-items: center;
+	gap: 6px;
+	padding: 40px 16px;
+	text-align: center;
+	font-size: 14px;
+}
+
+.pins-empty svg {
+	color: var(--muted);
+}
+
+.pin-card {
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+}
+
+.pin-card + .pin-card {
+	margin-top: 8px;
+}
+
+.pin-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.pin-head strong {
+	min-width: 0;
+	font-weight: 600;
+}
+
+.pin-head time {
+	flex: 1;
+	color: var(--muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.pin-body {
+	max-height: 160px;
+	margin-top: 6px;
+	overflow: hidden;
+	font-size: 14px;
+}
+
+.pin-jump {
+	margin-top: 6px;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--accent);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.pin-jump:hover {
+	text-decoration: underline;
+}

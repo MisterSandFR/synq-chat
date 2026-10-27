@@ -2,14 +2,20 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import { createPortal } from 'react-dom';
 
 import { Icon, useDismiss, type IconName } from '../ui';
+import './chat/chat.css';
 
 export type ContextMenuItem = { label: string; icon?: IconName; danger?: boolean; disabled?: boolean; onSelect: () => void } | 'sep';
 
-type Opened = { x: number; y: number; items: ContextMenuItem[] };
+// `header` : contenu libre au-dessus des actions (réactions rapides).
+type Opened = { x: number; y: number; items: ContextMenuItem[]; header?: ReactNode };
 
 const LONG_PRESS = 500;
 
-export function ContextMenu({ x, y, items, onClose }: Opened & { onClose: () => void }) {
+// Séparateurs en tête, en fin ou doublés retirés.
+const tidy = (items: ContextMenuItem[]) =>
+	items.filter((item, i, all) => item !== 'sep' || (i > 0 && i < all.length - 1 && all[i - 1] !== 'sep' && all.slice(i + 1).some((next) => next !== 'sep')));
+
+export function ContextMenu({ x, y, items, header, onClose }: Opened & { onClose: () => void }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const [pos, setPos] = useState({ left: x, top: y });
 	useDismiss(ref, true, onClose);
@@ -53,13 +59,14 @@ export function ContextMenu({ x, y, items, onClose }: Opened & { onClose: () => 
 	};
 
 	return createPortal(
-		<div ref={ref} className='popover ctx-menu' role='menu' style={{ position: 'fixed', left: pos.left, top: pos.top }} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
-			{items.map((item, index) =>
+		<div ref={ref} className='popover ctx-menu context-menu' role='menu' style={{ position: 'fixed', left: pos.left, top: pos.top }} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
+			{header}
+			{tidy(items).map((item, index) =>
 				item === 'sep' ? (
 					<div key={`sep-${index}`} className='menu-sep' role='separator' />
 				) : (
 					<button
-						key={item.label}
+						key={index}
 						type='button'
 						role='menuitem'
 						className={`menu-item${item.danger ? ' menu-item-danger' : ''}`}

@@ -1,8 +1,12 @@
 import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 
+import { searchEmojis } from '../../shared/emoji';
 import { LIMITS, type Channel, type Message } from '../../shared/types';
 import { errorText } from '../api';
 import { Avatar, Icon } from '../ui';
+import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
+import { FormatBar } from './chat/FormatBar';
+import { applyFormat, type FormatKind } from './chat/format';
 import { EphemeralNotes, SlashHint, SlashMenu } from './commands/SlashMenu';
 import { useSlash } from './commands/useSlash';
 import { useOfferedFiles } from './media/bus';
@@ -23,10 +27,11 @@ type Props = {
 	onTyping: () => void;
 };
 
-type Suggestion = { key: string; label: string; insert: string; avatar?: { name: string; url: string | null } };
+type Suggestion = { key: string; label: string; insert: string; avatar?: { name: string; url: string | null }; glyph?: string };
 
 const TYPING_EVERY = 3000;
 const TRIGGER_RE = /(^|\s)([@#])([\p{L}\p{N}_ -]{0,32})$/u;
+const EMOJI_TRIGGER_RE = /(^|\s)(:)([a-z0-9_+-]{2,32})$/;
 
 export function Composer({ workspaceId, channel, canPost, canAttach, lookup, replyTo, onCancelReply, onSend, onTyping }: Props) {
 	const [text, setText] = useState('');
@@ -36,6 +41,8 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const [caret, setCaret] = useState(0);
 	const [selected, setSelected] = useState(0);
 	const [dismissed, setDismissed] = useState<string | null>(null);
+	const [formatOpen, setFormatOpen] = useState(false);
+	const [picker, setPicker] = useState<DOMRect | null>(null);
 	const lastTyping = useRef(0);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const textarea = useRef<HTMLTextAreaElement>(null);
@@ -50,17 +57,21 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	});
 
 	const trigger = useMemo(() => {
-		const match = text.slice(0, caret).match(TRIGGER_RE);
+		const before = text.slice(0, caret);
+		const match = before.match(TRIGGER_RE) ?? before.match(EMOJI_TRIGGER_RE);
 		if (!match) {
 			return null;
 		}
-		const [whole, lead, sigil, query] = match as unknown as [string, string, '@' | '#', string];
+		const [whole, lead, sigil, query] = match as unknown as [string, string, '@' | '#' | ':', string];
 		return { sigil, query: query.toLowerCase(), start: caret - whole.length + lead.length };
 	}, [text, caret]);
 
 	const suggestions: Suggestion[] = useMemo(() => {
 		if (!trigger || dismissed === `${trigger.start}`) {
 			return [];
+		}
+		if (trigger.sigil === ':') {
+			return searchEmojis(trigger.query, 8).map((e) => ({ key: e.name, label: `:${e.name}:`, insert: `${e.char} `, glyph: e.char }));
 		}
 		if (trigger.sigil === '@') {
 			return [...lookup.members.values()]
@@ -82,6 +93,9 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		if (!trigger) {
 			return;
 		}
+		if (suggestion.glyph) {
+			rememberEmoji(suggestion.glyph);
+		}
 		const next = text.slice(0, trigger.start) + suggestion.insert + text.slice(caret);
 		const position = trigger.start + suggestion.insert.length;
 		setText(next);
@@ -90,6 +104,32 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 			textarea.current?.focus();
 			textarea.current?.setSelectionRange(position, position);
 		});
+	};
+
+	const replaceText = (next: string, start: number, end = start) => {
+		setText(next);
+		setCaret(end);
+		requestAnimationFrame(() => {
+			const el = textarea.current;
+			if (el) {
+				el.focus();
+				el.setSelectionRange(start, end);
+				el.style.height = 'auto';
+				el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+			}
+		});
+	};
+
+	const format = (kind: FormatKind) => {
+		const el = textarea.current;
+		const result = applyFormat(text, el?.selectionStart ?? caret, el?.selectionEnd ?? caret, kind);
+		replaceText(result.value, result.start, result.end);
+	};
+
+	const insertEmoji = (char: string) => {
+		const el = textarea.current;
+		const start = el?.selectionStart ?? caret;
+		replaceText(text.slice(0, start) + char + text.slice(el?.selectionEnd ?? caret), start + char.length);
 	};
 
 	const attach = (files: File[]) => {
@@ -145,6 +185,14 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 				return;
 			}
 		}
+		const key = e.key.toLowerCase();
+		const shortcut: FormatKind | null =
+			(e.ctrlKey || e.metaKey) && !e.altKey ? (key === 'b' ? 'bold' : key === 'i' ? 'italic' : e.shiftKey && key === 'x' ? 'strike' : null) : null;
+		if (shortcut) {
+			e.preventDefault();
+			format(shortcut);
+			return;
+		}
 		if (e.key === 'Escape' && replyTo) {
 			onCancelReply();
 		} else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -187,7 +235,13 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 								accept(s);
 							}}
 						>
-							{s.avatar ? <Avatar name={s.avatar.name} url={s.avatar.url} size={24} /> : <Icon name='hash' size={16} />}
+							{s.avatar ? (
+								<Avatar name={s.avatar.name} url={s.avatar.url} size={24} />
+							) : s.glyph ? (
+								<span className='emoji-glyph'>{s.glyph}</span>
+							) : (
+								<Icon name='hash' size={16} />
+							)}
 							<span className='ellipsis'>{s.label}</span>
 						</button>
 					))}
@@ -207,6 +261,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 					</div>
 				)}
 				{uploads.items.length > 0 && <PendingFiles items={uploads.items} onRemove={uploads.remove} />}
+				{formatOpen && <FormatBar onFormat={format} />}
 				<label className='sr-only' htmlFor='composer'>
 					Message pour #{channel.name}
 				</label>
@@ -234,6 +289,19 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 					}}
 				/>
 				<div className='composer-tools'>
+					<button type='button' className='icon-btn fmt-toggle' aria-pressed={formatOpen} aria-label='Mise en forme' title='Mise en forme' onClick={() => setFormatOpen(!formatOpen)}>
+						<span aria-hidden>Aa</span>
+					</button>
+					<button
+						type='button'
+						className='icon-btn'
+						aria-label='Emoji'
+						title='Emoji'
+						onPointerDown={(e) => picker && e.stopPropagation()}
+						onClick={(e) => setPicker(picker ? null : e.currentTarget.getBoundingClientRect())}
+					>
+						<Icon name='smile' />
+					</button>
 					{canAttach && (
 						<button type='button' className='icon-btn' aria-label='Joindre un fichier' title='Joindre un fichier' onClick={() => fileInput.current?.click()}>
 							<Icon name='paperclip' />
@@ -253,6 +321,16 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 							}
 						}}
 					/>
+					{picker && (
+						<EmojiPicker
+							anchor={picker}
+							onClose={() => setPicker(null)}
+							onPick={(char) => {
+								insertEmoji(char);
+								setPicker(null);
+							}}
+						/>
+					)}
 					<span className='grow' />
 					{error || uploads.notice ? (
 						<span className='composer-hint' role='alert' style={{ color: 'var(--danger)', display: 'inline' }}>

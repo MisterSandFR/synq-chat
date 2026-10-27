@@ -20,17 +20,19 @@ export const P = {
 	VOICE_MOVE: 1 << 18,
 	MANAGE_COMMANDS: 1 << 19,
 	MENTION_EVERYONE: 1 << 20,
+	PIN_MESSAGES: 1 << 21,
+	ADD_REACTIONS: 1 << 22,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 21) - 1;
+export const ALL_PERMS = (1 << 23) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
 
 export const DEFAULT_MEMBER_PERMS =
-	P.VIEW_CHANNEL | P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD | P.VOICE_CONNECT | P.VOICE_SPEAK | P.VOICE_VIDEO | P.VOICE_SCREEN;
+	P.VIEW_CHANNEL | P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD | P.VOICE_CONNECT | P.VOICE_SPEAK | P.VOICE_VIDEO | P.VOICE_SCREEN | P.ADD_REACTIONS;
 
 export const READ_ONLY_DENY = P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD;
 
@@ -48,6 +50,8 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'SEND_MESSAGES', label: 'Écrire', hint: 'Envoyer des messages.', group: 'Messages', channel: true },
 	{ key: 'ATTACH_FILES', label: 'Joindre des fichiers', hint: 'Pièces jointes dans les messages.', group: 'Messages', channel: true },
 	{ key: 'MANAGE_MESSAGES', label: 'Modérer les messages', hint: 'Supprimer les messages des autres.', group: 'Messages', channel: true },
+	{ key: 'ADD_REACTIONS', label: 'Réagir', hint: 'Ajouter des réactions aux messages.', group: 'Messages', channel: true },
+	{ key: 'PIN_MESSAGES', label: 'Épingler des messages', hint: 'Épingler et désépingler les messages du salon.', group: 'Messages', channel: true },
 	{ key: 'DRIVE_UPLOAD', label: 'Déposer des fichiers', hint: 'Importer et créer des dossiers dans le drive.', group: 'Fichiers', channel: true },
 	{ key: 'DRIVE_MANAGE', label: 'Gérer le drive', hint: 'Renommer et supprimer les fichiers des autres.', group: 'Fichiers', channel: true },
 	{ key: 'VOICE_CONNECT', label: 'Rejoindre le vocal', hint: 'Entrer dans le salon vocal.', group: 'Vocal', channel: true },
