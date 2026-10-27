@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
 
+import { emojiByName } from '../../shared/emoji';
 import type { Channel, Member } from '../../shared/types';
+import { INLINE_RE, parseBlocks, stripMarkdown } from './chat/markdown';
+import './chat/chat.css';
 
 export type Lookup = {
 	members: Map<string, Member>;
@@ -9,21 +12,23 @@ export type Lookup = {
 	openChannel: (id: string) => void;
 };
 
-const TOKEN_RE = /<@([0-9a-f-]{36})>|<#([0-9a-f-]{36})>|(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])|`([^`\n]+)`|\*\*([^*\n]+)\*\*/g;
-
-export function RichText({ text, lookup }: { text: string; lookup: Lookup }) {
+// Uniquement des éléments React : jamais de HTML brut.
+function inline(text: string, lookup: Lookup, key: string): ReactNode[] {
 	const out: ReactNode[] = [];
 	let last = 0;
-	for (const match of text.matchAll(TOKEN_RE)) {
+	for (const match of text.matchAll(INLINE_RE)) {
 		const index = match.index ?? 0;
 		if (index > last) {
 			out.push(text.slice(last, index));
 		}
-		const [raw, userId, channelId, url, code, bold] = match;
+		const k = `${key}.${index}`;
+		const [raw, userId, channelId, code, label, href, url, bold, strike, star, under, shortcode] = match;
+		const emphasis = star ?? under;
+		const emoji = shortcode ? emojiByName.get(shortcode) : undefined;
 		if (userId) {
 			const member = lookup.members.get(userId);
 			out.push(
-				<span key={index} className={`chip${userId === lookup.myId ? ' chip-me' : ''}`}>
+				<span key={k} className={`chip${userId === lookup.myId ? ' chip-me' : ''}`}>
 					@{member?.name ?? 'inconnu'}
 				</span>,
 			);
@@ -31,25 +36,41 @@ export function RichText({ text, lookup }: { text: string; lookup: Lookup }) {
 			const channel = lookup.channels.find((c) => c.id === channelId);
 			out.push(
 				channel ? (
-					<button key={index} type='button' className='chip' onClick={() => lookup.openChannel(channel.id)}>
+					<button key={k} type='button' className='chip' onClick={() => lookup.openChannel(channel.id)}>
 						#{channel.name}
 					</button>
 				) : (
-					<span key={index} className='chip'>
+					<span key={k} className='chip'>
 						#salon-supprimé
 					</span>
 				),
 			);
+		} else if (code) {
+			out.push(<code key={k}>{code}</code>);
+		} else if (label && href) {
+			out.push(
+				<a key={k} href={href} target='_blank' rel='noopener noreferrer' title={href}>
+					{inline(label, lookup, k)}
+				</a>,
+			);
 		} else if (url) {
 			out.push(
-				<a key={index} href={url} target='_blank' rel='noopener noreferrer'>
+				<a key={k} href={url} target='_blank' rel='noopener noreferrer'>
 					{url}
 				</a>,
 			);
-		} else if (code) {
-			out.push(<code key={index}>{code}</code>);
 		} else if (bold) {
-			out.push(<strong key={index}>{bold}</strong>);
+			out.push(<strong key={k}>{inline(bold, lookup, k)}</strong>);
+		} else if (strike) {
+			out.push(<del key={k}>{inline(strike, lookup, k)}</del>);
+		} else if (emphasis) {
+			out.push(<em key={k}>{inline(emphasis, lookup, k)}</em>);
+		} else if (emoji) {
+			out.push(
+				<span key={k} className='emoji' title={`:${emoji.name}:`}>
+					{emoji.char}
+				</span>,
+			);
 		} else {
 			out.push(raw);
 		}
@@ -58,7 +79,54 @@ export function RichText({ text, lookup }: { text: string; lookup: Lookup }) {
 	if (last < text.length) {
 		out.push(text.slice(last));
 	}
-	return <>{out}</>;
+	return out;
+}
+
+export function RichText({ text, lookup }: { text: string; lookup: Lookup }) {
+	const blocks = parseBlocks(text);
+	const only = blocks[0];
+	if (blocks.length === 1 && only?.kind === 'p') {
+		return <>{inline(only.text, lookup, 'r')}</>;
+	}
+	return (
+		<>
+			{blocks.map((block, i) => {
+				const key = `b${i}`;
+				switch (block.kind) {
+					case 'code':
+						return (
+							<pre key={key} className='md-pre'>
+								<code>{block.text}</code>
+							</pre>
+						);
+					case 'quote':
+						return (
+							<blockquote key={key} className='md-quote'>
+								{inline(block.text, lookup, key)}
+							</blockquote>
+						);
+					case 'list': {
+						const items = block.items.map((item, j) => <li key={j}>{inline(item, lookup, `${key}.${j}`)}</li>);
+						return block.ordered ? (
+							<ol key={key} className='md-list' start={block.start}>
+								{items}
+							</ol>
+						) : (
+							<ul key={key} className='md-list'>
+								{items}
+							</ul>
+						);
+					}
+					default:
+						return (
+							<div key={key} className='md-p'>
+								{inline(block.text, lookup, key)}
+							</div>
+						);
+				}
+			})}
+		</>
+	);
 }
 
 export function toDisplay(body: string, lookup: Pick<Lookup, 'members' | 'channels'>): string {
@@ -84,7 +152,7 @@ export function toTokens(text: string, lookup: Pick<Lookup, 'members' | 'channel
 }
 
 export function excerpt(body: string, lookup: Pick<Lookup, 'members' | 'channels'>, max = 120): string {
-	const flat = toDisplay(body, lookup).replace(/\s+/g, ' ').trim();
+	const flat = stripMarkdown(toDisplay(body, lookup)).replace(/\s+/g, ' ').trim();
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 

@@ -22,6 +22,8 @@ export interface WorkspaceState {
 	messages: Record<string, ChannelMessages>;
 	typing: Record<string, Record<string, number>>;
 	drive: Record<string, number>;
+	// Incrémenté à chaque épinglage, par salon.
+	pins: Record<string, number>;
 	voiceEnded: { reason: string; at: number } | null;
 	forceMuted: { by: string; at: number } | null;
 	status: 'connecting' | 'live' | 'offline';
@@ -55,6 +57,7 @@ const initial: WorkspaceState = {
 	messages: {},
 	typing: {},
 	drive: {},
+	pins: {},
 	voiceEnded: null,
 	forceMuted: null,
 	status: 'connecting',
@@ -82,6 +85,15 @@ function withMessage(state: WorkspaceState, message: Message, mode: 'add' | 'upd
 		return state;
 	}
 	return { ...state, messages: { ...state.messages, [message.channelId]: { ...current, items: [...current.items, message] } } };
+}
+
+function patchMessage(state: WorkspaceState, channelId: string, id: number, patch: Partial<Message>): WorkspaceState {
+	const current = state.messages[channelId];
+	if (!current?.items.some((m) => m.id === id)) {
+		return state;
+	}
+	const items = current.items.map((m) => (m.id === id ? { ...m, ...patch } : m));
+	return { ...state, messages: { ...state.messages, [channelId]: { ...current, items } } };
 }
 
 function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' }>): WorkspaceState {
@@ -166,6 +178,12 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, voiceEnded: { reason: event.reason, at: Date.now() } };
 		case 'drive':
 			return { ...state, drive: { ...state.drive, [event.channelId]: (state.drive[event.channelId] ?? 0) + 1 } };
+		case 'reactions':
+			return patchMessage(state, event.channelId, event.messageId, { reactions: event.reactions });
+		case 'pinned': {
+			const next = patchMessage(state, event.channelId, event.messageId, { pinned: event.pinned });
+			return { ...next, pins: { ...next.pins, [event.channelId]: (next.pins[event.channelId] ?? 0) + 1 } };
+		}
 		case 'workspace_deleted':
 			return { ...state, closed: 'Cet espace a été supprimé.' };
 		case 'members_changed':

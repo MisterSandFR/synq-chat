@@ -9,6 +9,7 @@ import { Composer } from './Composer';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
+import { PinsPanel } from './chat/PinsPanel';
 import { ResizeHandle, useResizable } from './resizable';
 import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
@@ -25,7 +26,7 @@ type Props = {
 	onMeChanged: () => Promise<unknown>;
 };
 
-type Panel = 'members' | 'drive' | null;
+type Panel = 'members' | 'drive' | 'pins' | null;
 
 function useFocused(): boolean {
 	const [focused, setFocused] = useState(() => document.hasFocus());
@@ -204,6 +205,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					data={activeData}
 					lookup={lookup}
 					canModerate={has(activePerms, P.MANAGE_MESSAGES)}
+					canReact={has(activePerms, P.ADD_REACTIONS)}
+					canPin={has(activePerms, P.PIN_MESSAGES) || has(activePerms, P.MANAGE_MESSAGES)}
 					grades={grades}
 					highlightId={highlight}
 					onLoadOlder={() => activeData?.items[0] && void loadMessages(active.id, 'older', activeData.items[0].id)}
@@ -221,6 +224,12 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					}}
 					onDelete={async (id) => {
 						await api('DELETE', `/w/${workspaceId}/messages/${id}`);
+					}}
+					onReact={async (id, emoji, add) => {
+						await api(add ? 'PUT' : 'DELETE', `/w/${workspaceId}/messages/${id}/reactions/${encodeURIComponent(emoji)}`);
+					}}
+					onPin={async (id, pinned) => {
+						await api(pinned ? 'PUT' : 'DELETE', `/w/${workspaceId}/messages/${id}/pin`);
 					}}
 				/>
 				<div className='typing' aria-live='polite'>
@@ -300,6 +309,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 							{!voiceChat && (state.unread[active.id] ?? 0) > 0 && <span className='dot' style={{ marginLeft: -6, marginTop: -14 }} />}
 						</button>
 					)}
+					<button type='button' className='icon-btn' aria-pressed={panel === 'pins'} aria-label='Messages épinglés' title='Messages épinglés' onClick={() => setPanel(panel === 'pins' ? null : 'pins')}>
+						<Icon name='pin' />
+					</button>
 					<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
 						<Icon name='drive' />
 					</button>
@@ -341,6 +353,17 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onClose={() => setPanel(null)} />}
 					{panel === 'drive' && active && (
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
+					)}
+					{panel === 'pins' && active && (
+						<PinsPanel
+							workspaceId={workspaceId}
+							channel={active}
+							version={state.pins[active.id] ?? 0}
+							lookup={lookup}
+							canPin={has(activePerms, P.PIN_MESSAGES) || has(activePerms, P.MANAGE_MESSAGES)}
+							onJump={(id) => setJump({ channelId: active.id, id })}
+							onClose={() => setPanel(null)}
+						/>
 					)}
 				</div>
 			</main>

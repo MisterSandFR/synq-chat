@@ -1,3 +1,4 @@
+import type { PinInfo, Reaction } from './chat';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -197,7 +198,9 @@ export type ServerEvent =
 	| { t: 'voice_ended'; reason: string }
 	| { t: 'drive'; channelId: string }
 	| { t: 'members_changed' }
-	| { t: 'workspace_deleted' };
+	| { t: 'workspace_deleted' }
+	| { t: 'reactions'; channelId: string; messageId: number; reactions: Reaction[] }
+	| { t: 'pinned'; channelId: string; messageId: number; pinned: PinInfo | null };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

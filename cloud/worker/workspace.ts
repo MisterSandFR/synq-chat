@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import type { PinInfo, Reaction } from '../shared/chat';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
@@ -21,6 +22,7 @@ import {
 	type VoiceFlags,
 	type VoiceParticipant,
 } from '../shared/types';
+import { decorate, dropChannelExtras, dropExtras, setPin, toggleReaction } from './chat';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -169,6 +171,20 @@ const MIGRATIONS = [
 		PRIMARY KEY (channel_id, grade_id)
 	);
 	INSERT INTO channel_overrides (channel_id, grade_id, allow, deny) SELECT id, 'default', 0, 1408 FROM channels WHERE read_only = 1;`,
+	`CREATE TABLE reactions (
+		message_id INTEGER NOT NULL,
+		emoji TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (message_id, emoji, user_id)
+	);
+	CREATE TABLE pins (
+		message_id INTEGER PRIMARY KEY,
+		channel_id TEXT NOT NULL,
+		pinned_by TEXT NOT NULL,
+		pinned_at INTEGER NOT NULL
+	);
+	CREATE INDEX pins_channel ON pins (channel_id, pinned_at);`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
@@ -495,6 +511,7 @@ export class Workspace extends DurableObject<Env> {
 		}
 		const keys = this.sql.exec<{ key: string }>('SELECT key FROM files WHERE channel_id = ?', id).toArray().map((row) => row.key);
 		this.ctx.storage.transactionSync(() => {
+			dropChannelExtras(this.sql, id);
 			this.sql.exec('DELETE FROM messages WHERE channel_id = ?', id);
 			this.sql.exec('DELETE FROM reads WHERE channel_id = ?', id);
 			this.sql.exec('DELETE FROM files WHERE channel_id = ?', id);
@@ -528,17 +545,17 @@ export class Workspace extends DurableObject<Env> {
 			const before = older(cursor.around, AROUND);
 			const after = newer(cursor.around, AROUND);
 			return ok({
-				messages: [...before.slice(0, AROUND).reverse(), ...after.slice(0, AROUND)].map(toMessage),
+				messages: decorate(this.sql, [...before.slice(0, AROUND).reverse(), ...after.slice(0, AROUND)].map(toMessage)),
 				hasMore: before.length > AROUND,
 				hasNewer: after.length > AROUND,
 			});
 		}
 		if (cursor.after !== undefined) {
 			const rows = newer(cursor.after + 1, PAGE_SIZE);
-			return ok({ messages: rows.slice(0, PAGE_SIZE).map(toMessage), hasMore: true, hasNewer: rows.length > PAGE_SIZE });
+			return ok({ messages: decorate(this.sql, rows.slice(0, PAGE_SIZE).map(toMessage)), hasMore: true, hasNewer: rows.length > PAGE_SIZE });
 		}
 		const rows = older(cursor.before ?? Number.MAX_SAFE_INTEGER, PAGE_SIZE);
-		return ok({ messages: rows.slice(0, PAGE_SIZE).reverse().map(toMessage), hasMore: rows.length > PAGE_SIZE, hasNewer: false });
+		return ok({ messages: decorate(this.sql, rows.slice(0, PAGE_SIZE).reverse().map(toMessage)), hasMore: rows.length > PAGE_SIZE, hasNewer: false });
 	}
 
 	postMessage(actor: Actor, channelId: string, body: string, attachment: Attachment | null, replyTo: number | null = null): Result<Message> {
@@ -626,6 +643,7 @@ export class Workspace extends DurableObject<Env> {
 		this.ctx.storage.transactionSync(() => {
 			this.sql.exec('DELETE FROM messages WHERE id = ?', id);
 			this.sql.exec('DELETE FROM files WHERE message_id = ?', id);
+			dropExtras(this.sql, id);
 		});
 		this.broadcastIn(current.channelId, { t: 'message_deleted', channelId: current.channelId, id });
 		if (current.attachment) {
@@ -1060,6 +1078,48 @@ export class Workspace extends DurableObject<Env> {
 		return ok(null);
 	}
 
+	// Réactions et épingles
+
+	react(actor: Actor, messageId: number, emoji: string, add: boolean): Result<Reaction[]> {
+		const current = this.message(messageId);
+		if (!current || !this.can(actor, current.channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Message introuvable');
+		}
+		if (add && !this.can(actor, current.channelId, P.ADD_REACTIONS)) {
+			return err(403, 'Tu ne peux pas réagir dans ce salon');
+		}
+		const result = toggleReaction(this.sql, messageId, actor.id, emoji, add);
+		if (result.ok) {
+			this.broadcastIn(current.channelId, { t: 'reactions', channelId: current.channelId, messageId, reactions: result.value });
+		}
+		return result;
+	}
+
+	pins(actor: Actor, channelId: string): Result<Message[]> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		const rows = this.sql
+			.exec<MessageRow>(`${MESSAGE_SELECT} JOIN pins p ON p.message_id = m.id WHERE p.channel_id = ? ORDER BY p.pinned_at DESC, p.message_id DESC`, channelId)
+			.toArray();
+		return ok(decorate(this.sql, rows.map(toMessage)));
+	}
+
+	pin(actor: Actor, messageId: number, pinned: boolean): Result<PinInfo | null> {
+		const current = this.message(messageId);
+		if (!current || !this.can(actor, current.channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Message introuvable');
+		}
+		if (!this.can(actor, current.channelId, P.PIN_MESSAGES) && !this.can(actor, current.channelId, P.MANAGE_MESSAGES)) {
+			return err(403, 'Épinglage non autorisé');
+		}
+		const result = setPin(this.sql, current, actor.id, pinned);
+		if (result.ok) {
+			this.broadcastIn(current.channelId, { t: 'pinned', channelId: current.channelId, messageId, pinned: result.value });
+		}
+		return result;
+	}
+
 	private driveDenied<T>(actor: Actor, channelId: string): Result<T> | null {
 		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
@@ -1107,6 +1167,7 @@ export class Workspace extends DurableObject<Env> {
 				updated.push(file.message_id);
 			} else {
 				this.sql.exec('DELETE FROM messages WHERE id = ?', file.message_id);
+				dropExtras(this.sql, file.message_id);
 				deleted.push({ id: file.message_id, channelId: file.channel_id });
 			}
 		}
@@ -1225,7 +1286,7 @@ export class Workspace extends DurableObject<Env> {
 
 	private message(id: number): Message | null {
 		const row = this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.id = ?`, id).toArray()[0];
-		return row ? toMessage(row) : null;
+		return row ? decorate(this.sql, [toMessage(row)])[0]! : null;
 	}
 
 	private saveMentions(messageId: number, body: string): void {

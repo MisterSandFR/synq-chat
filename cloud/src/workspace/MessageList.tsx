@@ -1,8 +1,13 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
 
+import { QUICK_REACTIONS } from '../../shared/emoji';
 import { mentionedUsers, type Channel, type Grade, type Message } from '../../shared/types';
 import { fileUrl } from '../api';
 import { Avatar, Icon, fileIcon, formatSize } from '../ui';
+import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
+import { emojiOnly } from './chat/markdown';
+import { Reactions } from './chat/Reactions';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { memberColor, memberLabel } from './grades';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import type { ChannelMessages } from './useWorkspace';
@@ -44,9 +49,13 @@ type Props = {
 	onReply: (message: Message) => void;
 	onEdit: (id: number, body: string) => Promise<void>;
 	onDelete: (id: number) => Promise<void>;
+	canReact: boolean;
+	canPin: boolean;
+	onReact: (id: number, emoji: string, add: boolean) => Promise<void>;
+	onPin: (id: number, pinned: boolean) => Promise<void>;
 };
 
-export function MessageList({ workspaceId, channel, data, lookup, canModerate, grades, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete }: Props) {
+export function MessageList({ workspaceId, channel, data, lookup, canModerate, canReact, canPin, grades, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete, onReact, onPin }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const prevHeight = useRef(0);
@@ -55,6 +64,9 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 	const lastId = items.at(-1)?.id;
 	const prevFirst = useRef(firstId);
 	const [editing, setEditing] = useState<number | null>(null);
+	const [picker, setPicker] = useState<{ id: number; anchor: DOMRect } | null>(null);
+	const [menu, setMenu] = useState<{ message: Message; x: number; y: number } | null>(null);
+	const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
 	useLayoutEffect(() => {
 		const el = ref.current;
@@ -98,8 +110,59 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 			ref.current.scrollTop = ref.current.scrollHeight;
 		}
 	};
+	const toggle = (message: Message, emoji: string) => {
+		const add = !message.reactions?.find((r) => r.emoji === emoji)?.users.includes(lookup.myId);
+		if (add) {
+			rememberEmoji(emoji);
+		}
+		void onReact(message.id, emoji, add).catch(() => undefined);
+	};
+
+	const openPicker = (id: number, anchor: DOMRect) => setPicker(picker?.id === id ? null : { id, anchor });
+
+	const onContextMenu = (event: MouseEvent<HTMLElement>, message: Message) => {
+		// Menu natif conservé sur les liens, médias et texte sélectionné.
+		if (editing === message.id || window.getSelection()?.toString() || (event.target as HTMLElement).closest('a, img, video, audio, textarea')) {
+			return;
+		}
+		event.preventDefault();
+		setMenu({ message, x: event.clientX, y: event.clientY });
+	};
+
+	// Appui long sur écran tactile.
+	const onTouchStart = (event: TouchEvent<HTMLElement>, message: Message) => {
+		const touch = event.touches[0];
+		clearTimeout(press.current);
+		if (touch && editing !== message.id) {
+			const { clientX, clientY } = touch;
+			press.current = setTimeout(() => setMenu({ message, x: clientX, y: clientY }), 500);
+		}
+	};
+
+	const cancelPress = () => clearTimeout(press.current);
+
+	const menuItems = (message: Message): ContextMenuItem[] => {
+		const mine = message.userId === lookup.myId;
+		const items: ContextMenuItem[] = [
+			{ label: 'Répondre', icon: 'reply', onSelect: () => onReply(message) },
+			{ label: 'Copier le texte', icon: 'copy', disabled: !message.body, onSelect: () => void navigator.clipboard?.writeText(toDisplay(message.body, lookup)) },
+			{ label: 'Copier le lien', icon: 'link', onSelect: () => void navigator.clipboard?.writeText(`${location.origin}${location.pathname}?m=${message.id}`) },
+		];
+		if (canPin) {
+			items.push({ label: message.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', onSelect: () => void onPin(message.id, !message.pinned).catch(() => undefined) });
+		}
+		items.push('sep');
+		if (mine && message.body) {
+			items.push({ label: 'Modifier', icon: 'pencil', onSelect: () => setEditing(message.id) });
+		}
+		if (mine || canModerate) {
+			items.push({ label: 'Supprimer', icon: 'trash', danger: true, onSelect: () => window.confirm('Supprimer ce message ?') && void onDelete(message.id) });
+		}
+		return items;
+	};
 
 	return (
+		<>
 		<div className='messages' ref={ref} onScroll={onScroll} role='log' aria-live='polite' aria-label={`Messages de #${channel.name}`}>
 			{data && !data.hasMore && (
 				<div className='channel-intro'>
@@ -118,7 +181,7 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 				const author = lookup.members.get(message.userId);
 				const mine = message.userId === lookup.myId;
 				const mentionsMe = mentionedUsers(message.body).includes(lookup.myId);
-				const cls = ['msg', grouped && 'msg-grouped', message.replyTo && 'msg-reply', mentionsMe && 'msg-mention', highlightId === message.id && 'msg-highlight']
+				const cls = ['msg', grouped && 'msg-grouped', message.replyTo && 'msg-reply', mentionsMe && 'msg-mention', highlightId === message.id && 'msg-highlight', message.pinned && 'msg-pinned']
 					.filter(Boolean)
 					.join(' ');
 				return (
@@ -128,7 +191,14 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 								<span>{dayLabel(message.createdAt)}</span>
 							</div>
 						)}
-						<article className={cls} data-id={message.id}>
+						<article
+							className={cls}
+							data-id={message.id}
+							onContextMenu={(e) => onContextMenu(e, message)}
+							onTouchStart={(e) => onTouchStart(e, message)}
+							onTouchEnd={cancelPress}
+							onTouchMove={cancelPress}
+						>
 							<div className='msg-gutter'>
 								{grouped ? (
 									<time className='msg-time-hover' title={fullDate.format(message.createdAt)}>
@@ -152,6 +222,12 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 										)}
 									</button>
 								)}
+								{message.pinned && (
+									<div className='msg-pinned-by'>
+										<Icon name='pin' size={12} />
+										Épinglé par {message.pinned.by === lookup.myId ? 'toi' : (lookup.members.get(message.pinned.by)?.name ?? 'un ancien membre')}
+									</div>
+								)}
 								{!grouped && (
 									<header className='msg-head'>
 										<span className={`msg-author${author ? '' : ' muted'}`} style={{ color: memberColor(author, grades) }}>
@@ -174,16 +250,38 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 									/>
 								) : (
 									message.body && (
-										<p className='msg-body'>
+										<div className={`msg-body${emojiOnly(message.body) ? ' msg-body-jumbo' : ''}`}>
 											<RichText text={message.body} lookup={lookup} />
 											{message.editedAt && <span className='msg-edited'> (modifié)</span>}
-										</p>
+										</div>
 									)
 								)}
 								{message.attachment && <AttachmentView workspaceId={workspaceId} attachment={message.attachment} onLoad={keepBottom} />}
+								{message.reactions && message.reactions.length > 0 && (
+									<Reactions
+										reactions={message.reactions}
+										lookup={lookup}
+										canReact={canReact}
+										pickerOpen={picker?.id === message.id}
+										onToggle={(emoji) => toggle(message, emoji)}
+										onAdd={(anchor) => openPicker(message.id, anchor)}
+									/>
+								)}
 							</div>
 							{editing !== message.id && (
 								<div className='msg-actions'>
+									{canReact && (
+										<button
+											type='button'
+											className='icon-btn icon-btn-sm'
+											aria-label='Ajouter une réaction'
+											title='Ajouter une réaction'
+											onPointerDown={(e) => picker?.id === message.id && e.stopPropagation()}
+											onClick={(e) => openPicker(message.id, e.currentTarget.getBoundingClientRect())}
+										>
+											<Icon name='smile-plus' size={16} />
+										</button>
+									)}
 									<button type='button' className='icon-btn icon-btn-sm' aria-label='Répondre' title='Répondre' onClick={() => onReply(message)}>
 										<Icon name='reply' size={16} />
 									</button>
@@ -203,6 +301,18 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 											<Icon name='trash' size={16} />
 										</button>
 									)}
+									<button
+										type='button'
+										className='icon-btn icon-btn-sm'
+										aria-label='Plus d’actions'
+										title='Plus d’actions'
+										onClick={(e) => {
+											const rect = e.currentTarget.getBoundingClientRect();
+											setMenu({ message, x: rect.right, y: rect.bottom + 4 });
+										}}
+									>
+										<Icon name='more' size={16} />
+									</button>
 								</div>
 							)}
 						</article>
@@ -215,6 +325,59 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 				</button>
 			)}
 		</div>
+		{menu && (
+			<ContextMenu
+				x={menu.x}
+				y={menu.y}
+				items={menuItems(menu.message)}
+				onClose={() => setMenu(null)}
+				header={
+					canReact ? (
+						<div className='quick-reactions'>
+							{QUICK_REACTIONS.map((emoji) => (
+								<button
+									key={emoji}
+									type='button'
+									className='quick-reaction'
+									aria-label={`Réagir avec ${emoji}`}
+									onClick={() => {
+										toggle(menu.message, emoji);
+										setMenu(null);
+									}}
+								>
+									{emoji}
+								</button>
+							))}
+							<button
+								type='button'
+								className='quick-reaction'
+								aria-label='Autres réactions'
+								onClick={() => {
+									setPicker({ id: menu.message.id, anchor: new DOMRect(menu.x, menu.y, 0, 0) });
+									setMenu(null);
+								}}
+							>
+								<Icon name='smile-plus' size={18} />
+							</button>
+						</div>
+					) : undefined
+				}
+			/>
+		)}
+		{picker && (
+			<EmojiPicker
+				anchor={picker.anchor}
+				onClose={() => setPicker(null)}
+				onPick={(emoji) => {
+					const target = items.find((m) => m.id === picker.id);
+					if (target) {
+						toggle(target, emoji);
+					}
+					setPicker(null);
+				}}
+			/>
+		)}
+		</>
 	);
 }
 
