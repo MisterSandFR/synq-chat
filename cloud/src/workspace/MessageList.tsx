@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { appName } from '../../shared/commands';
 import { mentionedUsers, type Channel, type Grade, type Message } from '../../shared/types';
@@ -43,9 +43,28 @@ type Props = {
 	onReply: (message: Message) => void;
 	onEdit: (id: number, body: string) => Promise<void>;
 	onDelete: (id: number) => Promise<void>;
+	onAuthor?: (userId: string, anchor: HTMLElement) => void;
+	extraActions?: (message: Message) => ReactNode;
 };
 
-export function MessageList({ workspaceId, channel, data, lookup, canModerate, grades, highlightId, onLoadOlder, onLoadNewer, onJumpLatest, onJumpTo, onReply, onEdit, onDelete }: Props) {
+export function MessageList({
+	workspaceId,
+	channel,
+	data,
+	lookup,
+	canModerate,
+	grades,
+	highlightId,
+	onLoadOlder,
+	onLoadNewer,
+	onJumpLatest,
+	onJumpTo,
+	onReply,
+	onEdit,
+	onDelete,
+	onAuthor,
+	extraActions,
+}: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
 	const prevHeight = useRef(0);
@@ -153,7 +172,18 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 								)}
 								{!grouped && (
 									<header className='msg-head'>
-										<span className={`msg-author${author ? '' : ' muted'}`} style={{ color: memberColor(author, grades) }}>
+										<span
+											className={`msg-author${author ? '' : ' muted'}`}
+											style={{ color: memberColor(author, grades) }}
+											{...(onAuthor && author
+												? {
+														role: 'button',
+														tabIndex: 0,
+														onClick: (e: React.MouseEvent<HTMLElement>) => onAuthor(author.id, e.currentTarget),
+														onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => e.key === 'Enter' && onAuthor(author.id, e.currentTarget),
+													}
+												: {})}
+										>
 											{author?.name ?? 'Ancien membre'}
 										</span>
 										{memberLabel(author, grades) && <span className='tag'>{memberLabel(author, grades)}</span>}
@@ -187,6 +217,7 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 									<button type='button' className='icon-btn icon-btn-sm' aria-label='Répondre' title='Répondre' onClick={() => onReply(message)}>
 										<Icon name='reply' size={16} />
 									</button>
+									{extraActions?.(message)}
 									{mine && message.body && (
 										<button type='button' className='icon-btn icon-btn-sm' aria-label='Modifier' title='Modifier' onClick={() => setEditing(message.id)}>
 											<Icon name='pencil' size={16} />

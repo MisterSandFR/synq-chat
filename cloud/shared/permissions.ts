@@ -19,11 +19,12 @@ export const P = {
 	BYPASS_LIMIT: 1 << 17,
 	VOICE_MOVE: 1 << 18,
 	MANAGE_COMMANDS: 1 << 19,
+	MENTION_EVERYONE: 1 << 20,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 20) - 1;
+export const ALL_PERMS = (1 << 21) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
@@ -57,6 +58,7 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'VOICE_MOVE', label: 'Déplacer des membres', hint: 'Déplacer les membres de grade inférieur d’un salon vocal à un autre.', group: 'Vocal', channel: true },
 	{ key: 'BYPASS_LIMIT', label: 'Ignorer la limite de places', hint: 'Entrer dans un salon vocal complet.', group: 'Vocal', channel: true },
 	{ key: 'MANAGE_COMMANDS', label: 'Gérer les commandes', hint: 'Créer, modifier et supprimer les commandes slash personnalisées.', group: 'Espace', channel: false },
+	{ key: 'MENTION_EVERYONE', label: 'Mentionner @all et @here', hint: 'Notifier tout le salon ou ses membres en ligne.', group: 'Messages', channel: true },
 ];
 
 export type Override = { allow: number; deny: number };

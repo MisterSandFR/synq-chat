@@ -206,7 +206,8 @@ export type ServerEvent =
 	| { t: 'workspace_deleted' }
 	| { t: 'notification'; notification: NotificationItem; unread: number }
 	| { t: 'notifications_unread'; unread: number }
-	| { t: 'commands_changed' };
+	| { t: 'commands_changed' }
+	| { t: 'announcement'; channelId: string; text: string; updatedBy: string | null; updatedAt: number | null };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

@@ -25,6 +25,7 @@ import { notificationRoutes } from './routes/notifications';
 import { mediaRoutes } from './routes/media';
 import { categoryRoutes, cleanOverrides } from './routes/categories';
 import { commandRoutes } from './routes/commands';
+import { rcRoutes } from './routes/rc';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -241,7 +242,10 @@ app.get('/auth/recube/callback', async (c) => {
 	}
 
 	if (linked) {
-		await c.env.DB.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(avatar, linked.user_id).run();
+		// Avatar envoyé par l'utilisateur prioritaire sur celui de Recube.
+		await c.env.DB.prepare("UPDATE users SET avatar_url = CASE WHEN avatar_url LIKE '/api/avatars/%' THEN avatar_url ELSE ? END WHERE id = ?")
+			.bind(avatar, linked.user_id)
+			.run();
 		await openSession(c, linked.user_id);
 		return c.redirect('/');
 	}
@@ -802,6 +806,7 @@ app.route('/', notificationRoutes);
 app.route('/', mediaRoutes);
 app.route('/', categoryRoutes);
 app.route('/', commandRoutes);
+app.route('/', rcRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

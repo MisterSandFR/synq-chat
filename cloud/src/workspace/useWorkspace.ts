@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import type { NotificationItem } from '../../shared/notifications';
 import { mentionedUsers, type Channel, type ClientEvent, type Message, type MessagePage, type ServerEvent, type VoiceParticipant, type WorkspaceDetail } from '../../shared/types';
+import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
 
@@ -27,6 +28,7 @@ export interface WorkspaceState {
 	voiceEnded: { reason: string; at: number } | null;
 	forceMuted: { by: string; at: number } | null;
 	voiceMoved: { channelId: string; by: string; at: number } | null;
+	announcements: Record<string, string>;
 	status: 'connecting' | 'live' | 'offline';
 	closed: string | null;
 	notificationsUnread: number;
@@ -65,6 +67,7 @@ const initial: WorkspaceState = {
 	voiceEnded: null,
 	forceMuted: null,
 	voiceMoved: null,
+	announcements: {},
 	status: 'connecting',
 	closed: null,
 	notificationsUnread: 0,
@@ -119,7 +122,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			if (userId === action.myId || (channelId === action.activeChannelId && action.focused)) {
 				return { ...next, typing };
 			}
-			const mentioned = mentionedUsers(event.message.body).includes(action.myId);
+			// @all ou @here sans la permission : compteur corrigé au prochain hello.
+			const mentioned = mentionedUsers(event.message.body).includes(action.myId) || everyoneMentions(event.message.body).size > 0;
 			return {
 				...next,
 				typing,
@@ -185,6 +189,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, notificationsUnread: event.unread, notificationsVersion: state.notificationsVersion + 1, lastNotification: event.notification };
 		case 'notifications_unread':
 			return { ...state, notificationsUnread: event.unread, notificationsVersion: state.notificationsVersion + 1 };
+		case 'announcement':
+			return { ...state, announcements: { ...state.announcements, [event.channelId]: event.text } };
 		case 'members_changed':
 		case 'commands_changed':
 			return state;
