@@ -1,6 +1,7 @@
 import app from './app';
 
 export { Workspace } from './workspace';
+export { Mailbox } from './mail/mailbox';
 
 const HASHED = /^\/assets\//;
 

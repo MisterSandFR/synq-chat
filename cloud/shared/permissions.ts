@@ -17,11 +17,14 @@ export const P = {
 	VOICE_SCREEN: 1 << 15,
 	VOICE_MODERATE: 1 << 16,
 	BYPASS_LIMIT: 1 << 17,
+	MAIL_VIEW: 1 << 18,
+	MAIL_REPLY: 1 << 19,
+	MANAGE_MAIL: 1 << 20,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 18) - 1;
+export const ALL_PERMS = (1 << 21) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
@@ -31,7 +34,7 @@ export const DEFAULT_MEMBER_PERMS =
 
 export const READ_ONLY_DENY = P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD;
 
-export type PermGroup = 'Espace' | 'Salons' | 'Messages' | 'Fichiers' | 'Vocal';
+export type PermGroup = 'Espace' | 'Salons' | 'Messages' | 'Fichiers' | 'Vocal' | 'Mail';
 
 // `channel` : réglable par salon dans la matrice.
 export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; group: PermGroup; channel: boolean }> = [
@@ -53,6 +56,9 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'VOICE_SCREEN', label: 'Partage d’écran', hint: 'Partager son écran.', group: 'Vocal', channel: true },
 	{ key: 'VOICE_MODERATE', label: 'Modérer le vocal', hint: 'Couper le micro ou expulser un grade inférieur.', group: 'Vocal', channel: true },
 	{ key: 'BYPASS_LIMIT', label: 'Ignorer la limite de places', hint: 'Entrer dans un salon vocal complet.', group: 'Vocal', channel: true },
+	{ key: 'MAIL_VIEW', label: 'Voir les boîtes mail', hint: 'Lire les boîtes mail partagées à l’espace.', group: 'Mail', channel: false },
+	{ key: 'MAIL_REPLY', label: 'Répondre aux mails', hint: 'Répondre, assigner, changer le statut et annoter.', group: 'Mail', channel: false },
+	{ key: 'MANAGE_MAIL', label: 'Gérer les boîtes mail', hint: 'Partager une boîte à l’espace et la rattacher à des salons.', group: 'Mail', channel: false },
 ];
 
 export type Override = { allow: number; deny: number };

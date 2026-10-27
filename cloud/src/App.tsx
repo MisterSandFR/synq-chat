@@ -5,6 +5,7 @@ import { api, ApiError } from './api';
 import { AuthScreen } from './AuthScreen';
 import { HomeScreen } from './HomeScreen';
 import { InviteScreen } from './InviteScreen';
+import { MailView } from './mail/MailView';
 import { lastWorkspace, navigate, takeReturn, takeSsoNotice, usePath } from './router';
 import { WorkspaceView } from './workspace/WorkspaceView';
 
@@ -54,6 +55,13 @@ export function App() {
 		return <AuthScreen notice={notice} onSignedIn={refresh} />;
 	}
 
+	if (path === '/mail') {
+		return (
+			<div className='mail-page'>
+				<MailView me={me} workspaces={me.workspaces} />
+			</div>
+		);
+	}
 	const invite = path.match(/^\/invite\/([\w-]+)$/);
 	if (invite) {
 		return <InviteScreen code={invite[1]!} onJoined={refresh} />;

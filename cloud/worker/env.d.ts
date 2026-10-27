@@ -3,4 +3,5 @@ interface Env {
 	RECUBE_CLIENT_SECRET: string;
 	REALTIME_APP_SECRET: string;
 	TURN_KEY_SECRET: string;
+	MAIL_KEY: string;
 }

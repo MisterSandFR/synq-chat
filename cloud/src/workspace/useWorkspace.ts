@@ -166,6 +166,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, voiceEnded: { reason: event.reason, at: Date.now() } };
 		case 'drive':
 			return { ...state, drive: { ...state.drive, [event.channelId]: (state.drive[event.channelId] ?? 0) + 1 } };
+		case 'mail_assigned':
+			return state;
 		case 'workspace_deleted':
 			return { ...state, closed: 'Cet espace a été supprimé.' };
 		case 'members_changed':

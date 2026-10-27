@@ -197,7 +197,8 @@ export type ServerEvent =
 	| { t: 'voice_ended'; reason: string }
 	| { t: 'drive'; channelId: string }
 	| { t: 'members_changed' }
-	| { t: 'workspace_deleted' };
+	| { t: 'workspace_deleted' }
+	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }
