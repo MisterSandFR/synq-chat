@@ -32,6 +32,8 @@ import { calendarRoutes, icsRoutes } from './routes/calendar';
 import { mailRoutes } from './routes/mail';
 import { eventCardRoutes } from './routes/event-cards';
 import { voiceRoutes } from './routes/voice';
+import { aiChatRoutes } from './routes/ai-chat';
+import { aiRoutes } from './routes/ai';
 import { guestRoutes } from './routes/guests';
 import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
 import { GUEST_SESSION_TTL } from '../shared/guests';
@@ -856,7 +858,9 @@ app.route('/', calendarRoutes);
 app.route('/', mailRoutes);
 app.route('/', eventCardRoutes);
 app.route('/', guestRoutes);
+app.route('/', aiChatRoutes);
 app.route('/', voiceRoutes);
+app.route('/', aiRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
 	if (c.req.header('Upgrade') !== 'websocket') {
