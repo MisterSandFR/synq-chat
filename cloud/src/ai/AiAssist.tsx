@@ -23,11 +23,13 @@ type Props = {
 	onChange: (next: string) => void;
 	// Texte voisin (fil, mail cité) donné au modèle sans être réécrit.
 	context?: string;
+	// Popovers alignés à droite (panneau latéral).
+	align?: 'end';
 };
 
 type Run = { input: AiRewriteInput; range: [number, number] };
 
-export function AiAssist({ textarea, value, onChange, context }: Props) {
+export function AiAssist({ textarea, value, onChange, context, align }: Props) {
 	const box = useRef<HTMLDivElement>(null);
 	const [open, setOpen] = useState(false);
 	const [custom, setCustom] = useState<string | null>(null);
@@ -94,7 +96,7 @@ export function AiAssist({ textarea, value, onChange, context }: Props) {
 	};
 
 	return (
-		<div className='ai-assist' ref={box}>
+		<div className={`ai-assist${align === 'end' ? ' ai-assist-end' : ''}`} ref={box}>
 			<button type='button' className='icon-btn' aria-label='Assistant IA' title='Assistant IA (Ctrl+J)' aria-expanded={open} onClick={() => (open ? close() : setOpen(true))}>
 				<span aria-hidden className='ai-glyph'>
 					✦

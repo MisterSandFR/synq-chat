@@ -17,6 +17,8 @@ import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText'
 import { ThreadLink } from './dm-threads/ThreadLink';
 import type { ChannelMessages } from './useWorkspace';
 import { appAuthor } from './commands/useSlash';
+import { AiAssist } from '../ai/AiAssist';
+import { useMessageAi } from '../ai/useMessageAi';
 
 const GROUP_GAP = 5 * 60 * 1000;
 
@@ -98,6 +100,7 @@ export function MessageList({
 	const [menu, setMenu] = useState<{ message: Message; x: number; y: number } | null>(null);
 	const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const authorCtx = useContextMenu();
+	const ai = useMessageAi(workspaceId, channel.id, onReply);
 
 	useLayoutEffect(() => {
 		const el = ref.current;
@@ -181,6 +184,10 @@ export function MessageList({
 		];
 		if (canPin) {
 			items.push({ label: message.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', onSelect: () => void onPin(message.id, !message.pinned).catch(() => undefined) });
+		}
+		const aiItems = ai.items(message);
+		if (aiItems.length) {
+			items.push('sep', ...aiItems);
 		}
 		items.push('sep');
 		if (mine && message.body) {
@@ -293,13 +300,15 @@ export function MessageList({
 										}}
 									/>
 								) : (
-									message.body && (
+									message.body &&
+									!ai.hidesBody(message.id) && (
 										<div className={`msg-body${emojiOnly(message.body) ? ' msg-body-jumbo' : ''}`}>
 											<RichText text={message.body} lookup={lookup} />
 											{message.editedAt && <span className='msg-edited'> (modifié)</span>}
 										</div>
 									)
 								)}
+								{editing !== message.id && ai.render(message)}
 								{message.forward && <ForwardCard workspaceId={workspaceId} message={message} lookup={lookup} />}
 								<MessageMedia workspaceId={workspaceId} message={message} onLoad={keepBottom} />
 								{message.eventId && <EventCard workspaceId={workspaceId} eventId={message.eventId} lookup={lookup} />}
@@ -438,6 +447,7 @@ export function MessageList({
 
 function EditBox({ initial, onSave, onCancel }: { initial: string; onSave: (body: string) => Promise<void>; onCancel: () => void }) {
 	const [value, setValue] = useState(initial);
+	const textarea = useRef<HTMLTextAreaElement>(null);
 	return (
 		<div className='edit-box'>
 			<label className='sr-only' htmlFor='edit-message'>
@@ -445,6 +455,7 @@ function EditBox({ initial, onSave, onCancel }: { initial: string; onSave: (body
 			</label>
 			<textarea
 				id='edit-message'
+				ref={textarea}
 				autoFocus
 				value={value}
 				rows={Math.min(8, value.split('\n').length + 1)}
@@ -458,9 +469,12 @@ function EditBox({ initial, onSave, onCancel }: { initial: string; onSave: (body
 					}
 				}}
 			/>
-			<p className='muted' style={{ fontSize: 12 }}>
-				Entrée pour enregistrer, Échap pour annuler
-			</p>
+			<div className='row' style={{ gap: 6 }}>
+				<AiAssist textarea={textarea} value={value} onChange={setValue} />
+				<p className='muted' style={{ fontSize: 12 }}>
+					Entrée pour enregistrer, Échap pour annuler
+				</p>
+			</div>
 		</div>
 	);
 }
