@@ -1,0 +1,78 @@
+.ai-assist {
+	position: relative;
+	display: inline-flex;
+}
+
+.ai-glyph {
+	font-size: 15px;
+	line-height: 1;
+	color: var(--accent);
+}
+
+.ai-menu,
+.ai-preview {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	left: 0;
+	z-index: 30;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	box-shadow: var(--shadow-pop);
+}
+
+.ai-menu {
+	width: 220px;
+	padding: 4px;
+}
+
+.ai-custom {
+	padding: 4px;
+}
+
+.ai-custom input {
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+}
+
+.ai-preview {
+	width: min(440px, calc(100vw - 32px));
+	padding: 10px;
+	display: grid;
+	gap: 10px;
+}
+
+.ai-result {
+	max-height: 240px;
+	overflow: auto;
+	white-space: pre-wrap;
+	font-size: 14px;
+	line-height: 1.5;
+	padding: 8px 10px;
+	border-radius: var(--r-sm);
+	background: var(--accent-soft);
+	color: var(--text);
+}
+
+.ai-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+@media (max-width: 860px) {
+	.ai-menu,
+	.ai-preview {
+		position: fixed;
+		left: 16px;
+		right: 16px;
+		bottom: 88px;
+		width: auto;
+	}
+}

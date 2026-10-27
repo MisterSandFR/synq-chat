@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type Keyboar
 import { parseCommand } from '../../shared/commands';
 import { searchEmojis } from '../../shared/emoji';
 import { LIMITS, type Channel, type Message } from '../../shared/types';
+import { AiAssist } from '../ai/AiAssist';
 import { errorText } from '../api';
 import { Avatar, Icon } from '../ui';
 import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
@@ -322,6 +323,14 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 					<button type='button' className='icon-btn fmt-toggle' aria-pressed={formatOpen} aria-label='Mise en forme' title='Mise en forme' onClick={() => setFormatOpen(!formatOpen)}>
 						<span aria-hidden>Aa</span>
 					</button>
+					<AiAssist
+						textarea={textarea}
+						value={text}
+						onChange={(next) => {
+							setText(next);
+							setCaret(next.length);
+						}}
+					/>
 					<button
 						type='button'
 						className='icon-btn'

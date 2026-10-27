@@ -35,6 +35,7 @@ import { mailRoutes } from './routes/mail';
 import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
 import { voiceRoutes } from './routes/voice';
+import { aiChatRoutes } from './routes/ai-chat';
 import { guestRoutes } from './routes/guests';
 import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
 import { GUEST_SESSION_TTL } from '../shared/guests';
@@ -869,6 +870,7 @@ app.route('/', mailRoutes);
 app.route('/', eventCardRoutes);
 app.route('/', guestRoutes);
 app.route('/', aiRoutes);
+app.route('/', aiChatRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

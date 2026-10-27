@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { AI_CHAT_LIMITS } from '../shared/ai-chat';
 
 import type { Category, Layout } from '../shared/categories';
 import { appUserId, type CommandConfig, type CommandInput, type SlashCommand } from '../shared/commands';
@@ -2365,5 +2366,47 @@ export class Workspace extends DurableObject<Env> {
 		this.broadcastIn(channelId, { t: 'message', message });
 		this.notifyMessage(actor, message, mentionedUsers(text));
 		return ok(message);
+	}
+
+	// --- IA hors mail ---
+	// Lectures pour l'IA : mêmes règles de visibilité que l'affichage, invités compris.
+
+	aiSince(actor: Actor, channelId: string, after: number | null): Result<Message[]> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		const from = after ?? this.sql.exec<{ id: number }>('SELECT last_read_id AS id FROM reads WHERE user_id = ? AND channel_id = ?', actor.id, channelId).toArray()[0]?.id ?? 0;
+		const rows = this.sql
+			.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.channel_id = ? AND m.id > ? AND ${IN_CHANNEL} ORDER BY m.id DESC LIMIT ?`, channelId, from, AI_CHAT_LIMITS.catchup)
+			.toArray();
+		return ok(rows.reverse().map(toMessage));
+	}
+
+	aiMessage(actor: Actor, id: number): Result<Message> {
+		const row = this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.id = ?`, id).toArray()[0];
+		if (!row || !this.can(actor, row.channel_id, P.VIEW_CHANNEL)) {
+			return err(404, 'Message introuvable');
+		}
+		return ok(toMessage(row));
+	}
+
+	// Un mot suffit (OU), meilleurs scores d'abord.
+	aiSearch(actor: Actor, words: string[]): Message[] {
+		const terms = words.slice(0, 8).map((word) => `"${word.replace(/"/g, '""')}"*`);
+		const visible = [...this.visibleIds(actor)];
+		if (terms.length === 0 || visible.length === 0) {
+			return [];
+		}
+		return this.sql
+			.exec<MessageRow>(
+				`${MESSAGE_SELECT} JOIN messages_fts ON messages_fts.rowid = m.id
+				WHERE messages_fts MATCH ? AND m.channel_id IN (${visible.map(() => '?').join(',')})
+				ORDER BY messages_fts.rank LIMIT ?`,
+				terms.join(' OR '),
+				...visible,
+				AI_CHAT_LIMITS.sources,
+			)
+			.toArray()
+			.map(toMessage);
 	}
 }
