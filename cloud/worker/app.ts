@@ -31,6 +31,9 @@ import { dmThreadsRoutes } from './routes/dm-threads';
 import { calendarRoutes, icsRoutes } from './routes/calendar';
 import { mailRoutes } from './routes/mail';
 import { voiceRoutes } from './routes/voice';
+import { guestRoutes } from './routes/guests';
+import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
+import { GUEST_SESSION_TTL } from '../shared/guests';
 
 const SESSION_COOKIE = 'synq_session';
 const OAUTH_COOKIE = 'synq_oauth';
@@ -61,34 +64,34 @@ async function limited(c: Ctx, key: string): Promise<boolean> {
 	return !success;
 }
 
-async function sessionUser(c: Ctx): Promise<User | null> {
+async function sessionUser(c: Ctx): Promise<(User & { guest: number }) | null> {
 	const token = getCookie(c, SESSION_COOKIE);
 	if (!token) {
 		return null;
 	}
 	return c.env.DB.prepare(
-		'SELECT u.id, u.email, u.name, u.avatar_url AS avatarUrl FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?',
+		'SELECT u.id, u.email, u.name, u.avatar_url AS avatarUrl, u.guest FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?',
 	)
 		.bind(await sha256(token), Date.now())
-		.first<User>();
+		.first<User & { guest: number }>();
 }
 
 const callbackUrl = (c: Ctx) => `${new URL(c.req.url).origin}/api/auth/recube/callback`;
 
 const safeAvatar = (url: string | null) => (url?.startsWith('https://') ? url.slice(0, 500) : null);
 
-async function openSession(c: Ctx, userId: string): Promise<void> {
+async function openSession(c: Ctx, userId: string, ttl = SESSION_TTL): Promise<void> {
 	const token = randomToken();
 	const now = Date.now();
 	await c.env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-		.bind(await sha256(token), userId, now + SESSION_TTL, now)
+		.bind(await sha256(token), userId, now + ttl, now)
 		.run();
 	setCookie(c, SESSION_COOKIE, token, {
 		httpOnly: true,
 		secure: true,
 		sameSite: 'Lax',
 		path: '/',
-		maxAge: SESSION_TTL / 1000,
+		maxAge: ttl / 1000,
 	});
 }
 
@@ -174,7 +177,7 @@ app.get('/auth/recube/start', async (c) => {
 	let linkUserId: string | null = null;
 	if (c.req.query('link') === '1') {
 		const user = await sessionUser(c);
-		if (!user) {
+		if (!user || user.guest) {
 			return c.redirect('/?sso_error=session');
 		}
 		linkUserId = user.id;
@@ -278,11 +281,30 @@ app.get('/auth/recube/callback', async (c) => {
 
 app.route('/', icsRoutes);
 
+// Lien magique d'invité : seul le nom est demandé.
+app.get('/guest/:token', async (c) => unwrap(c, await guestLanding(c.env, c.req.param('token'))));
+
+app.post('/guest/:token', async (c) => {
+	if (await limited(c, 'guest')) {
+		return fail(c, 429, 'Trop de tentatives, réessaie dans une minute');
+	}
+	const joined = await acceptGuest(c.env, c.req.param('token'), (await readJson<{ name: string }>(c)).name);
+	if (!joined.ok) {
+		return fail(c, joined.status, joined.error);
+	}
+	await openSession(c, joined.value.userId, GUEST_SESSION_TTL);
+	return c.json({ workspaceId: joined.value.workspaceId, channelId: joined.value.channelId });
+});
+
 // Tout ce qui suit exige une session.
 app.use('*', async (c, next) => {
-	const user = await sessionUser(c);
-	if (!user) {
+	const found = await sessionUser(c);
+	if (!found) {
 		return fail(c, 401, 'Non connecté');
+	}
+	const { guest, ...user } = found;
+	if (guest && !guestAccountAllowed(c.req.path)) {
+		return fail(c, 403, 'Accès invité limité');
 	}
 	c.set('user', user);
 	await next();
@@ -297,13 +319,14 @@ app.get('/me', async (c) => {
 		.all<Omit<WorkspaceSummary, 'owner'> & { owner: number }>();
 	const [identities, account] = await c.env.DB.batch([
 		c.env.DB.prepare('SELECT provider FROM identities WHERE user_id = ?').bind(user.id),
-		c.env.DB.prepare("SELECT password_hash != '' AS has_password FROM users WHERE id = ?").bind(user.id),
+		c.env.DB.prepare("SELECT password_hash != '' AS has_password, guest FROM users WHERE id = ?").bind(user.id),
 	]);
 	return c.json({
 		user,
 		workspaces: results.map((w) => ({ ...w, owner: w.owner === 1 })),
 		identities: (identities!.results as { provider: string }[]).map((row) => row.provider),
 		hasPassword: (account!.results[0] as { has_password: number }).has_password === 1,
+		guest: (account!.results[0] as { guest: number }).guest === 1,
 	} satisfies Me);
 });
 
@@ -383,6 +406,10 @@ app.use('/w/:wid/*', async (c, next) => {
 	if (!actor) {
 		return fail(c, 404, 'Espace introuvable');
 	}
+	const prefix = `/api/w/${workspaceId}`;
+	if (actor.guest && !guestAllowed(c.req.method, c.req.path.startsWith(prefix) ? c.req.path.slice(prefix.length) : '', actor.id)) {
+		return fail(c, 403, 'Accès invité limité');
+	}
 	c.set('workspaceId', workspaceId);
 	c.set('actor', actor);
 	await next();
@@ -396,7 +423,7 @@ app.get('/w/:wid/info', async (c) => {
 	const [workspace, members, links] = await c.env.DB.batch([
 		c.env.DB.prepare('SELECT id, name, accent FROM workspaces WHERE id = ?').bind(workspaceId),
 		c.env.DB.prepare(
-			"SELECT u.id, u.name, u.avatar_url AS avatarUrl, m.role = 'owner' AS owner FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE",
+			"SELECT u.id, u.name, u.avatar_url AS avatarUrl, m.role = 'owner' AS owner, m.role = 'guest' AS guest FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE",
 		).bind(workspaceId),
 		c.env.DB.prepare('SELECT user_id, grade_id FROM member_grades WHERE workspace_id = ?').bind(workspaceId),
 	]);
@@ -405,6 +432,9 @@ app.get('/w/:wid/info', async (c) => {
 		gradesOf.set(link.user_id, [...(gradesOf.get(link.user_id) ?? []), link.grade_id]);
 	}
 	const { id, name, accent } = workspace!.results[0] as { id: string; name: string; accent: string };
+	// Invité : seulement les participants de ses groupes, aucun grade.
+	const contacts = actor.guest ? new Set(await stub(c).guestContacts(actor.id)) : null;
+	const rows = (members!.results as Array<Omit<Member, 'owner' | 'gradeIds' | 'guest'> & { owner: number; guest: number }>).filter((m) => !contacts || contacts.has(m.id) || m.id === actor.id);
 	return c.json({
 		id,
 		name,
@@ -412,11 +442,13 @@ app.get('/w/:wid/info', async (c) => {
 		owner: actor.owner,
 		perms: actor.perms,
 		top: actor.top,
-		grades: await listGrades(c.env.DB, workspaceId),
-		members: (members!.results as Array<Omit<Member, 'owner' | 'gradeIds'> & { owner: number }>).map((m) => ({
+		guest: actor.guest === true,
+		grades: contacts ? [] : await listGrades(c.env.DB, workspaceId),
+		members: rows.map((m) => ({
 			...m,
 			owner: m.owner === 1,
-			gradeIds: gradesOf.get(m.id) ?? [],
+			guest: m.guest === 1,
+			gradeIds: contacts ? [] : (gradesOf.get(m.id) ?? []),
 		})),
 	} satisfies WorkspaceDetail);
 });
@@ -624,6 +656,9 @@ app.put('/w/:wid/members/:uid/grades', async (c) => {
 	if (target.owner || (!actor.owner && targetId !== actor.id && target.top >= actor.top)) {
 		return fail(c, 403, 'Membre de grade égal ou supérieur au tien');
 	}
+	if (target.guest) {
+		return fail(c, 400, 'Un invité ne reçoit pas de grade');
+	}
 	const { gradeIds } = await readJson<{ gradeIds: string[] }>(c);
 	const grades = await listGrades(c.env.DB, workspaceId);
 	const wanted = new Set(Array.isArray(gradeIds) ? gradeIds.filter((id) => id !== DEFAULT_GRADE) : []);
@@ -817,6 +852,7 @@ app.route('/', chatRoutes);
 app.route('/', dmThreadsRoutes);
 app.route('/', calendarRoutes);
 app.route('/', mailRoutes);
+app.route('/', guestRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

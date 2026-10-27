@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { DM_MAX_MEMBERS } from '../../shared/dm-threads';
 import type { Attachment } from '../../shared/types';
+import { guestLeft } from '../guests';
 import { cleanName, fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
 
 export const dmThreadsRoutes = new Hono<AppEnv>();
@@ -11,9 +12,9 @@ const messageId = (c: Ctx) => Number(c.req.param('mid'));
 const userList = (value: unknown): string[] | null =>
 	Array.isArray(value) && value.length <= DM_MAX_MEMBERS && value.every((id) => typeof id === 'string') ? [...new Set(value as string[])] : null;
 
-// Le DO ne connaît pas la liste des membres : vérifiée côté D1.
+// Le DO ne connaît pas la liste des membres : vérifiée côté D1 ; un invité n'entre que par son lien.
 async function allMembers(c: Ctx, ids: string[]): Promise<boolean> {
-	const { results } = await c.env.DB.prepare(`SELECT user_id FROM members WHERE workspace_id = ? AND user_id IN (${ids.map(() => '?').join(', ')})`)
+	const { results } = await c.env.DB.prepare(`SELECT user_id FROM members WHERE workspace_id = ? AND role != 'guest' AND user_id IN (${ids.map(() => '?').join(', ')})`)
 		.bind(c.get('workspaceId'), ...ids)
 		.all<{ user_id: string }>();
 	return results.length === ids.length;
@@ -57,9 +58,13 @@ dmThreadsRoutes.post('/w/:wid/dms/:cid/members', async (c) => {
 	return unwrap(c, await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { add: ids }));
 });
 
-dmThreadsRoutes.delete('/w/:wid/dms/:cid/members/:uid', async (c) =>
-	unwrap(c, await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { remove: c.req.param('uid') })),
-);
+dmThreadsRoutes.delete('/w/:wid/dms/:cid/members/:uid', async (c) => {
+	const result = await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { remove: c.req.param('uid') });
+	if (result.ok) {
+		await guestLeft(c, c.req.param('cid'), c.req.param('uid'));
+	}
+	return unwrap(c, result);
+});
 
 dmThreadsRoutes.get('/w/:wid/threads', async (c) => c.json(await stub(c).followedThreads(c.get('actor'))));
 
