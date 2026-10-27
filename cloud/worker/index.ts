@@ -1,6 +1,7 @@
 import app from './app';
 import { sendReminders } from './calendar';
 import { wakeSnoozed } from './mail/store';
+import { sendScheduled } from './routes/mail';
 
 export { Workspace } from './workspace';
 export { Mailbox } from './mail/mailbox';
@@ -24,5 +25,6 @@ export default {
 	async scheduled(_controller, env, ctx) {
 		ctx.waitUntil(sendReminders(env, Date.now()));
 		ctx.waitUntil(wakeSnoozed(env, Date.now()));
+		ctx.waitUntil(sendScheduled(env, Date.now()));
 	},
 } satisfies ExportedHandler<Env>;

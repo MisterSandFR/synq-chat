@@ -28,6 +28,7 @@ export interface MailboxInput extends MailboxConfig {
 	address: string;
 	// Absent en modification : mot de passe inchangé.
 	password?: string;
+	signature?: string;
 }
 
 export interface MailboxInfo {
@@ -42,6 +43,10 @@ export interface MailboxInfo {
 	syncError: string | null;
 	// Propriétaire seulement ; jamais le mot de passe.
 	config: MailboxConfig | null;
+	// Ajoutée par le serveur à chaque envoi.
+	signature: string;
+	// Fils ouverts non lus par l'utilisateur courant.
+	unread: number;
 }
 
 export interface MailThread {
@@ -57,6 +62,9 @@ export interface MailThread {
 	lastAt: number;
 	pinned: boolean;
 	snoozedUntil: number | null;
+	unread: boolean;
+	// Recherche : extrait du corps, termes trouvés entre SEARCH_MARK.
+	match?: string;
 }
 
 export interface MailAttachment {
@@ -123,10 +131,35 @@ export interface MailDraft {
 	threadId: string | null;
 	to: MailAddress[];
 	cc: MailAddress[];
+	bcc: MailAddress[];
+	forwardOf: string | null;
 	subject: string;
 	text: string;
 	attachments: MailUpload[];
 	updatedAt: number;
+	// Envoi différé par le cron ; erreur du dernier essai.
+	sendAt: number | null;
+	sendError: string | null;
+}
+
+export interface MailTemplate {
+	id: string;
+	name: string;
+	body: string;
+	updatedAt: number;
+}
+
+export interface MailTemplateInput {
+	name: string;
+	body: string;
+}
+
+export interface MailScheduleInput {
+	sendAt: number | null;
+}
+
+export interface MailTranslateInput {
+	lang: 'fr' | 'en';
 }
 
 export interface MailSendInput {
@@ -185,4 +218,13 @@ export const MAIL_LIMITS = {
 	attachments: 20,
 	subjectLength: 300,
 	aiPrompt: 500,
+	signature: 2000,
+	templates: 50,
+	templateName: 80,
+	templateBody: 5000,
+	search: 200,
+	scheduleMax: 366 * 24 * 3600 * 1000,
 } as const;
+
+// Bornes des termes surlignés dans `MailThread.match`.
+export const SEARCH_MARK = ['\u0002', '\u0003'] as const;
