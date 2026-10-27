@@ -23,6 +23,8 @@ export const aiRunner = {
 				{ role: 'user', content: task.prompt },
 			],
 			max_tokens: task.maxTokens ?? 800,
+			// Sans raisonnement : 1 s au lieu de 10 pour une réécriture, qualité équivalente.
+			chat_template_kwargs: { enable_thinking: false },
 		});
 		const text = typeof out?.response === 'string' ? out.response : out?.choices?.[0]?.message?.content;
 		return typeof text === 'string' ? text.replace(/<think>[\s\S]*?<\/think>/g, '').trim() : '';
