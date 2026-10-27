@@ -118,6 +118,7 @@ export interface Message {
 	// Réponse de fil : id du message racine.
 	threadRoot?: number | null;
 	thread?: ThreadSummary | null;
+	eventId?: string | null;
 }
 
 export interface MessagePage {
@@ -220,7 +221,8 @@ export type ServerEvent =
 	| { t: 'thread'; channelId: string; rootId: number; message: Message; root: Message }
 	| { t: 'call_ring'; channelId: string; by: string }
 	| { t: 'calendar_reminder'; reminder: CalendarReminder }
-	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string };
+	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string }
+	| { t: 'event_card'; eventId: string };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

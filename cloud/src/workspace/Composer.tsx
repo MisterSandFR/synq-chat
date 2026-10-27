@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 
+import { parseCommand } from '../../shared/commands';
 import { searchEmojis } from '../../shared/emoji';
 import { LIMITS, type Channel, type Message } from '../../shared/types';
 import { errorText } from '../api';
@@ -8,6 +9,7 @@ import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
 import { FormatBar } from './chat/FormatBar';
 import { applyFormat, type FormatKind } from './chat/format';
 import { EphemeralNotes, SlashHint, SlashMenu } from './commands/SlashMenu';
+import { EventCardDialog } from './events/EventCardDialog';
 import { useSlash } from './commands/useSlash';
 import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
@@ -43,6 +45,8 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const [dismissed, setDismissed] = useState<string | null>(null);
 	const [formatOpen, setFormatOpen] = useState(false);
 	const [picker, setPicker] = useState<DOMRect | null>(null);
+	// Titre proposé au dialogue d'événement ; null = fermé.
+	const [eventDraft, setEventDraft] = useState<string | null>(null);
 	const lastTyping = useRef(0);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const textarea = useRef<HTMLTextAreaElement>(null);
@@ -139,6 +143,12 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 
 	const submit = async () => {
 		if (sending || uploads.blocked || (!text.trim() && !uploads.keys.length)) {
+			return;
+		}
+		const asked = parseCommand(text.trimEnd());
+		if (asked?.name === 'evenement') {
+			setEventDraft(asked.args);
+			setText('');
 			return;
 		}
 		setSending(true);
@@ -308,6 +318,9 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 						</button>
 					)}
 					{canAttach && <RecordButtons onClip={(file) => attach([file])} />}
+					<button type='button' className='icon-btn' aria-label='Événement' title='Créer ou partager un événement' onClick={() => setEventDraft('')}>
+						<Icon name='calendar' />
+					</button>
 					<input
 						ref={fileInput}
 						type='file'
@@ -330,6 +343,9 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 								setPicker(null);
 							}}
 						/>
+					)}
+					{eventDraft !== null && (
+						<EventCardDialog workspaceId={workspaceId} channel={channel} lookup={lookup} initialTitle={eventDraft} onClose={() => setEventDraft(null)} />
 					)}
 					<span className='grow' />
 					{error || uploads.notice ? (

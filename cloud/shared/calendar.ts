@@ -39,6 +39,9 @@ export interface CalendarEvent {
 	myResponse: RsvpResponse | null;
 }
 
+// Carte de chat : l'événement lu en D1, ou annulé s'il a été supprimé.
+export type EventCard = { status: 'active'; event: CalendarEvent } | { status: 'cancelled' };
+
 export interface CalendarOccurrence {
 	eventId: string;
 	startsAt: number;
