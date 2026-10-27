@@ -7,6 +7,7 @@ import { Avatar, Icon } from '../ui';
 import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
 import { emojiOnly } from './chat/markdown';
 import { Reactions } from './chat/Reactions';
+import { ForwardCard } from './rc/ForwardDialog';
 import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { memberColor, memberLabel } from './grades';
 import { MessageMedia } from './media/MessageMedia';
@@ -298,6 +299,7 @@ export function MessageList({
 										</div>
 									)
 								)}
+								{message.forward && <ForwardCard workspaceId={workspaceId} message={message} lookup={lookup} />}
 								<MessageMedia workspaceId={workspaceId} message={message} onLoad={keepBottom} />
 								{message.eventId && <EventCard workspaceId={workspaceId} eventId={message.eventId} lookup={lookup} />}
 								{message.reactions && message.reactions.length > 0 && (

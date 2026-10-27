@@ -44,8 +44,23 @@ import {
 	writeCategoryOverrides,
 } from './categories';
 import { editCommand, findCommand, insertCommand, listCommandConfigs, listCommands, removeCommand, type CommandTarget } from './commands';
-import { RC_LIMITS, everyoneMentions, type Announcement, type SavedMessage } from '../shared/rc';
-import { EVERYONE, insertMentions, readAnnouncement, savedRows, writeAnnouncement, writeSaved } from './rc';
+import { RC_LIMITS, everyoneMentions, type Announcement, type ForwardRef, type SavedMessage, type Webhook } from '../shared/rc';
+import {
+	EVERYONE,
+	cleanHookName,
+	forwardRef,
+	insertMentions,
+	insertWebhook,
+	listWebhooks,
+	matchWebhook,
+	readAnnouncement,
+	removeWebhook,
+	rotateWebhookSecret,
+	savedRows,
+	webhookById,
+	writeAnnouncement,
+	writeSaved,
+} from './rc';
 import { decorate, dropChannelExtras, dropExtras, setPin, toggleReaction } from './chat';
 import {
 	changeDirect,
@@ -112,6 +127,7 @@ type MessageRow = {
 	thread_count?: number;
 	thread_last?: number | null;
 	event_id?: string | null;
+	forward?: string | null;
 };
 
 type FolderRow = { id: string; channel_id: string; parent_id: string | null; name: string; created_by: string; created_at: number };
@@ -306,6 +322,20 @@ const MIGRATIONS = [
 	);`,
 	`ALTER TABLE messages ADD COLUMN event_id TEXT;
 	CREATE INDEX messages_event ON messages (event_id) WHERE event_id IS NOT NULL;`,
+	`ALTER TABLE messages ADD COLUMN forward TEXT;
+	CREATE TABLE webhooks (
+		id TEXT PRIMARY KEY,
+		channel_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		secret_hash TEXT NOT NULL,
+		created_by TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		last_used_at INTEGER
+	);
+	CREATE INDEX webhooks_channel ON webhooks (channel_id);
+	CREATE TRIGGER webhooks_ad AFTER DELETE ON channels BEGIN
+		DELETE FROM webhooks WHERE channel_id = old.id;
+	END;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -351,6 +381,7 @@ const toMessage = (row: MessageRow): Message => ({
 	threadRoot: row.thread_root ?? null,
 	thread: row.thread_count ? { count: row.thread_count, lastAt: row.thread_last ?? row.created_at } : null,
 	...(row.event_id ? { eventId: row.event_id } : {}),
+	...(row.forward ? { forward: JSON.parse(row.forward) as ForwardRef } : {}),
 });
 
 const toFolder = (row: FolderRow): DriveFolder => ({
@@ -2105,5 +2136,112 @@ export class Workspace extends DurableObject<Env> {
 		for (const { channel_id } of this.sql.exec<{ channel_id: string }>('SELECT DISTINCT channel_id FROM messages WHERE event_id = ?', eventId).toArray()) {
 			this.broadcastIn(channel_id, { t: 'event_card', eventId });
 		}
+	}
+
+	// Parité Rocket.Chat : transfert de message et webhooks entrants.
+
+	forwardMessage(actor: Actor, id: number, targetId: string, comment: string): Result<Message> {
+		const source = Number.isInteger(id) ? this.message(id) : null;
+		if (!source || !this.can(actor, source.channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Message introuvable');
+		}
+		if (!this.channelRow(targetId) || !this.can(actor, targetId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!this.can(actor, targetId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		const text = comment.trim();
+		if (text.length > LIMITS.messageLength) {
+			return err(400, `Message trop long (${LIMITS.messageLength} caractères max)`);
+		}
+		const forward = JSON.stringify(forwardRef(source));
+		const newId = this.ctx.storage.transactionSync(() => {
+			const row = this.sql
+				.exec<{ id: number }>('INSERT INTO messages (channel_id, user_id, body, forward, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id', targetId, actor.id, text, forward, Date.now())
+				.one();
+			this.saveMentions(row.id, text);
+			this.saveEveryone(actor, targetId, row.id, text);
+			return row.id;
+		});
+		this.setRead(actor.id, targetId, newId);
+		const message = this.message(newId)!;
+		this.broadcastIn(targetId, { t: 'message', message });
+		this.notifyMessage(actor, message, mentionedUsers(text));
+		return ok(message);
+	}
+
+	webhookList(actor: Actor, channelId: string): Result<Webhook[]> {
+		return this.webhookDenied<Webhook[]>(actor, channelId) ?? ok(listWebhooks(this.sql, channelId));
+	}
+
+	// Haché calculé par le Worker, seul à voir le secret clair.
+	createWebhook(actor: Actor, channelId: string, rawName: unknown, secretHash: string): Result<Webhook> {
+		const denied = this.webhookDenied<Webhook>(actor, channelId);
+		if (denied) {
+			return denied;
+		}
+		const name = cleanHookName(rawName);
+		return name ? insertWebhook(this.sql, channelId, name, secretHash, actor.id) : err(400, 'Nom du webhook requis');
+	}
+
+	rotateWebhook(actor: Actor, id: string, secretHash: string): Result<Webhook> {
+		const hook = webhookById(this.sql, id);
+		if (!hook) {
+			return err(404, 'Webhook introuvable');
+		}
+		const denied = this.webhookDenied<Webhook>(actor, hook.channelId);
+		if (denied) {
+			return denied;
+		}
+		rotateWebhookSecret(this.sql, id, secretHash);
+		return ok(hook);
+	}
+
+	deleteWebhook(actor: Actor, id: string): Result<null> {
+		const hook = webhookById(this.sql, id);
+		if (!hook) {
+			return err(404, 'Webhook introuvable');
+		}
+		const denied = this.webhookDenied<null>(actor, hook.channelId);
+		if (denied) {
+			return denied;
+		}
+		removeWebhook(this.sql, id);
+		return ok(null);
+	}
+
+	// Appel public : l'espace est vérifié par le Worker, le secret ici.
+	webhookPost(id: string, secretHash: string, text: string, username: string): Result<Message> {
+		const hook = matchWebhook(this.sql, id, secretHash);
+		if (!hook || !this.channelRow(hook.channelId)) {
+			return err(404, 'Webhook introuvable');
+		}
+		const body = text.trim();
+		if (!body) {
+			return err(400, 'Message vide');
+		}
+		if (body.length > LIMITS.messageLength) {
+			return err(400, `Message trop long (${LIMITS.messageLength} caractères max)`);
+		}
+		const author = appUserId(cleanHookName(username) || hook.name);
+		const messageId = this.ctx.storage.transactionSync(() => {
+			const row = this.sql
+				.exec<{ id: number }>('INSERT INTO messages (channel_id, user_id, body, created_at) VALUES (?, ?, ?, ?) RETURNING id', hook.channelId, author, body, Date.now())
+				.one();
+			this.saveMentions(row.id, body);
+			return row.id;
+		});
+		const message = this.message(messageId)!;
+		this.broadcastIn(hook.channelId, { t: 'message', message });
+		return ok(message);
+	}
+
+	// DM exclus : un webhook vise un salon de l'espace.
+	private webhookDenied<T>(actor: Actor, channelId: string): Result<T> | null {
+		if (!this.channelRow(channelId) || this.dmMembers(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		return has(actor.perms, P.MANAGE_COMMANDS) ? null : err(403, DENIED);
 	}
 }

@@ -1,4 +1,5 @@
-import { RC_LIMITS, type Announcement } from '../shared/rc';
+import { FORWARD_EXCERPT, RC_LIMITS, WEBHOOK_LIMITS, type Announcement, type ForwardRef, type Webhook } from '../shared/rc';
+import type { Message } from '../shared/types';
 import { err, ok, type Result } from './result';
 
 // Destinataire fictif d'un @all : compte pour chaque lecteur du salon.
@@ -52,4 +53,57 @@ export function writeAnnouncement(sql: SqlStorage, channelId: string, text: stri
 		sql.exec('DELETE FROM announcements WHERE channel_id = ?', channelId);
 	}
 	return readAnnouncement(sql, channelId);
+}
+
+// Transfert d'un transfert sans ajout : on cite l'original.
+export function forwardRef(source: Message): ForwardRef {
+	if (source.forward && !source.body && !source.attachments.length) {
+		return source.forward;
+	}
+	return { id: source.id, channelId: source.channelId, userId: source.userId, body: source.body.slice(0, FORWARD_EXCERPT), files: source.attachments.length, createdAt: source.createdAt };
+}
+
+type WebhookRow = { id: string; channel_id: string; name: string; created_by: string; created_at: number; last_used_at: number | null };
+
+const WEBHOOK_COLUMNS = 'id, channel_id, name, created_by, created_at, last_used_at';
+
+const toWebhook = (row: WebhookRow): Webhook => ({ id: row.id, channelId: row.channel_id, name: row.name, createdBy: row.created_by, createdAt: row.created_at, lastUsedAt: row.last_used_at });
+
+export const cleanHookName = (raw: unknown) => (typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ').slice(0, WEBHOOK_LIMITS.name) : '');
+
+export function listWebhooks(sql: SqlStorage, channelId: string): Webhook[] {
+	return sql.exec<WebhookRow>(`SELECT ${WEBHOOK_COLUMNS} FROM webhooks WHERE channel_id = ? ORDER BY created_at`, channelId).toArray().map(toWebhook);
+}
+
+export function webhookById(sql: SqlStorage, id: string): Webhook | null {
+	const row = sql.exec<WebhookRow>(`SELECT ${WEBHOOK_COLUMNS} FROM webhooks WHERE id = ?`, id).toArray()[0];
+	return row ? toWebhook(row) : null;
+}
+
+export function insertWebhook(sql: SqlStorage, channelId: string, name: string, secretHash: string, userId: string): Result<Webhook> {
+	const { n } = sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM webhooks WHERE channel_id = ?', channelId).one();
+	if (n >= WEBHOOK_LIMITS.perChannel) {
+		return err(400, `Limite de ${WEBHOOK_LIMITS.perChannel} webhooks par salon atteinte`);
+	}
+	const id = crypto.randomUUID();
+	sql.exec('INSERT INTO webhooks (id, channel_id, name, secret_hash, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, channelId, name, secretHash, userId, Date.now());
+	return ok(webhookById(sql, id)!);
+}
+
+export function rotateWebhookSecret(sql: SqlStorage, id: string, secretHash: string): void {
+	sql.exec('UPDATE webhooks SET secret_hash = ? WHERE id = ?', secretHash, id);
+}
+
+export function removeWebhook(sql: SqlStorage, id: string): void {
+	sql.exec('DELETE FROM webhooks WHERE id = ?', id);
+}
+
+// Comparaison sur le haché : le secret clair n'est jamais stocké.
+export function matchWebhook(sql: SqlStorage, id: string, secretHash: string): Webhook | null {
+	const row = sql.exec<WebhookRow>(`SELECT ${WEBHOOK_COLUMNS} FROM webhooks WHERE id = ? AND secret_hash = ?`, id, secretHash).toArray()[0];
+	if (!row) {
+		return null;
+	}
+	sql.exec('UPDATE webhooks SET last_used_at = ? WHERE id = ?', Date.now(), id);
+	return toWebhook(row);
 }

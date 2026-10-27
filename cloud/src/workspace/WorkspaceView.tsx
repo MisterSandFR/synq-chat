@@ -38,6 +38,8 @@ import { useWorkspace } from './useWorkspace';
 import { CallView, RemoteAudio } from './voice/CallView';
 import { useVoice } from './voice/useVoice';
 import { AnnouncementBanner } from './rc/AnnouncementBanner';
+import { DirectoryDialog } from './rc/DirectoryDialog';
+import { ForwardDialog } from './rc/ForwardDialog';
 import { ProfileCard } from './rc/ProfileCard';
 import { ProfileDialog } from './rc/ProfileDialog';
 import { SavedPanel } from './rc/SavedPanel';
@@ -91,6 +93,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const [rcDialog, setRcDialog] = useState<'status' | 'profile' | null>(null);
 	const [announcing, setAnnouncing] = useState(false);
 	const [copied, setCopied] = useState<number | null>(null);
+	const [forwarding, setForwarding] = useState<Message | null>(null);
+	const [directory, setDirectory] = useState(false);
 	const myProfile = rc.profiles.get(myId);
 	const [voiceChat, setVoiceChatState] = useState(() => readPref('voice_chat') !== '0' && window.innerWidth > 860);
 	const [thread, setThread] = useState<{ channelId: string; id: number } | null>(null);
@@ -351,6 +355,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 								>
 									<Icon name={copied === message.id ? 'check' : 'link'} size={16} />
 								</button>
+								<button type='button' className='icon-btn icon-btn-sm' aria-label='Transférer' title='Transférer' onClick={() => setForwarding(message)}>
+									<Icon name='arrow' size={16} />
+								</button>
 								<button
 								type='button'
 								className={`icon-btn icon-btn-sm${saved ? ' is-saved' : ''}`}
@@ -516,6 +523,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							<Icon name='megaphone' />
 						</button>
 					)}
+					<button type='button' className='icon-btn hide-mobile' aria-label='Annuaire' title='Annuaire' onClick={() => setDirectory(true)}>
+						<Icon name='list' />
+					</button>
 					<button type='button' className='icon-btn' aria-pressed={panel === 'saved'} aria-label='Messages enregistrés' title='Messages enregistrés' onClick={() => setPanel(panel === 'saved' ? null : 'saved')}>
 						<Icon name='bookmark' />
 					</button>
@@ -660,6 +670,27 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					}}
 				/>
 			)}
+			<ForwardDialog
+				workspaceId={workspaceId}
+				message={forwarding}
+				targets={channels ?? []}
+				lookup={lookup}
+				onClose={() => setForwarding(null)}
+				onSent={(sent) => {
+					setForwarding(null);
+					setJump({ channelId: sent.channelId, id: sent.id });
+					openChannel(sent.channelId);
+				}}
+			/>
+			<DirectoryDialog
+				open={directory}
+				channels={channels ?? []}
+				members={state.info?.members ?? []}
+				myId={myId}
+				onClose={() => setDirectory(false)}
+				onOpenChannel={openChannel}
+				onMessage={(id) => void startDirect([id]).catch(() => undefined)}
+			/>
 			<StatusDialog open={rcDialog === 'status'} onClose={() => setRcDialog(null)} profile={myProfile} onSave={rc.updateProfile} />
 			<ProfileDialog open={rcDialog === 'profile'} onClose={() => setRcDialog(null)} me={me} profile={myProfile} onSave={rc.updateProfile} onAvatarChanged={onMeChanged} />
 
