@@ -274,7 +274,7 @@ export async function listPeople(db: D1Database, userId: string, workspaceId: st
 			return err(404, 'Espace introuvable');
 		}
 		const { results } = await db
-			.prepare('SELECT u.id, u.name, u.avatar_url AS avatarUrl FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE')
+			.prepare(`SELECT u.id, u.name, u.avatar_url AS avatarUrl FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND m.role != 'guest' ORDER BY u.name COLLATE NOCASE`)
 			.bind(workspaceId)
 			.all<CalendarPerson>();
 		return ok(results);
@@ -282,7 +282,7 @@ export async function listPeople(db: D1Database, userId: string, workspaceId: st
 	// Invités personnels : seulement des gens qui partagent un espace avec soi.
 	const { results } = await db
 		.prepare(
-			'SELECT DISTINCT u.id, u.name, u.avatar_url AS avatarUrl FROM members mine JOIN members m ON m.workspace_id = mine.workspace_id JOIN users u ON u.id = m.user_id WHERE mine.user_id = ? ORDER BY u.name COLLATE NOCASE LIMIT 1000',
+			`SELECT DISTINCT u.id, u.name, u.avatar_url AS avatarUrl FROM members mine JOIN members m ON m.workspace_id = mine.workspace_id JOIN users u ON u.id = m.user_id WHERE mine.user_id = ? AND m.role != 'guest' ORDER BY u.name COLLATE NOCASE LIMIT 1000`,
 		)
 		.bind(userId)
 		.all<CalendarPerson>();
@@ -569,7 +569,7 @@ export async function sendReminders(env: Env, now: number): Promise<number> {
 			continue;
 		}
 		const recipients = new Set([row.created_by, ...(attendees.get(row.id) ?? []).filter((a) => a.response !== 'no').map((a) => a.id)]);
-		const { results: links } = await env.DB.prepare('SELECT workspace_id, user_id FROM members WHERE user_id IN (SELECT value FROM json_each(?))')
+		const { results: links } = await env.DB.prepare("SELECT workspace_id, user_id FROM members WHERE role != 'guest' AND user_id IN (SELECT value FROM json_each(?))")
 			.bind(JSON.stringify([...recipients]))
 			.all<{ workspace_id: string; user_id: string }>();
 		const reminder: CalendarReminder = {

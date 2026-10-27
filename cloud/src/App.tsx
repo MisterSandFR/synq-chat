@@ -6,6 +6,7 @@ import { AuthScreen } from './AuthScreen';
 import { CalendarView } from './calendar/CalendarView';
 import { HomeScreen } from './HomeScreen';
 import { InviteScreen } from './InviteScreen';
+import { GuestScreen } from './workspace/guests/GuestScreen';
 import { MailView } from './mail/MailView';
 import { lastWorkspace, navigate, takeReturn, takeSsoNotice, usePath } from './router';
 import { Shell, type RailItem } from './shell/Shell';
@@ -54,6 +55,11 @@ export function App() {
 	if (me === undefined) {
 		return <div className='spinner' style={{ height: '100vh' }} aria-busy />;
 	}
+	// Lien d'invité : accessible sans compte.
+	const guestLink = path.match(/^\/invite\/guest\/([\w-]+)$/);
+	if (guestLink) {
+		return <GuestScreen token={guestLink[1]!} onJoined={refresh} />;
+	}
 	if (me === null) {
 		return <AuthScreen notice={notice} onSignedIn={refresh} />;
 	}
@@ -78,7 +84,11 @@ export function App() {
 		{ key: 'calendar', label: 'Calendrier', icon: 'calendar', href: '/calendrier', active: path === '/calendrier' },
 		{ key: 'mail', label: 'Mail', icon: 'mail', href: '/mail', active: path === '/mail' },
 	);
-	if (path === '/calendrier' || path === '/mail') {
+	if (me.guest) {
+		// Invité : ni calendrier ni mail.
+		items.splice(0, items.length, ...items.filter((item) => item.key !== 'calendar' && item.key !== 'mail'));
+	}
+	if (!me.guest && (path === '/calendrier' || path === '/mail')) {
 		return (
 			<Shell me={me} workspaceId={currentId} items={items}>
 				{path === '/calendrier' ? <CalendarView me={me} workspaces={me.workspaces} /> : <MailView me={me} workspaces={me.workspaces} />}

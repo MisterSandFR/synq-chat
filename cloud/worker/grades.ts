@@ -20,13 +20,16 @@ function toActors(rows: Row[]): Actor[] {
 	return [...byUser.values()].map((grades) => {
 		const first = grades[0]!;
 		const owner = first.role === 'owner';
+		// Invité : aucun grade effectif, accès limité à ses groupes par le DO.
+		const guest = first.role === 'guest';
 		return {
 			id: first.user_id,
 			name: first.name,
 			owner,
 			grades: grades.map((g) => g.grade_id),
-			perms: basePerms(owner, grades),
-			top: owner ? OWNER_TOP : Math.max(...grades.map((g) => g.position)),
+			perms: guest ? 0 : basePerms(owner, grades),
+			top: owner ? OWNER_TOP : guest ? -1 : Math.max(...grades.map((g) => g.position)),
+			guest,
 		};
 	});
 }

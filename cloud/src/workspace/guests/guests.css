@@ -1,0 +1,86 @@
+.guest-badge {
+	display: inline-flex;
+	align-items: center;
+	margin-left: 6px;
+	padding: 0 6px;
+	height: 18px;
+	border-radius: var(--r-sm);
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 11px;
+	font-weight: 500;
+	vertical-align: middle;
+}
+
+.guest-invites {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.guest-hint {
+	font-size: 12.5px;
+}
+
+.guest-form {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+}
+
+.guest-send {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+}
+
+.guest-link {
+	display: flex;
+	gap: 8px;
+}
+
+.guest-link input {
+	flex: 1;
+	min-width: 0;
+	height: 32px;
+	padding: 0 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	background: var(--surface);
+	color: var(--text);
+	font: inherit;
+	font-size: 12.5px;
+}
+
+.guest-expiry {
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.guest-landing {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 12px;
+	width: 100%;
+	text-align: center;
+}
+
+.guest-landing .field {
+	text-align: left;
+}
+
+.guest-landing-title {
+	font-size: 24px;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+@media (max-width: 860px) {
+	.guest-form {
+		flex-direction: column;
+		align-items: stretch;
+	}
+}

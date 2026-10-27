@@ -336,6 +336,7 @@ const MIGRATIONS = [
 	CREATE TRIGGER webhooks_ad AFTER DELETE ON channels BEGIN
 		DELETE FROM webhooks WHERE channel_id = old.id;
 	END;`,
+	`CREATE TABLE guests (user_id TEXT PRIMARY KEY);`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -496,6 +497,9 @@ export class Workspace extends DurableObject<Env> {
 		const participants = this.dmMembers(channelId);
 		if (participants) {
 			return participants.includes(actor.id) ? DM_PERMS : 0;
+		}
+		if (actor.guest) {
+			return 0;
 		}
 		return channelPerms({ owner: actor.owner, base: actor.perms, grades: actor.grades, id: actor.id }, this.overrides(channelId));
 	}
@@ -941,6 +945,7 @@ export class Workspace extends DurableObject<Env> {
 			ws.close(4001, 'Retiré de l’espace');
 		}
 		this.sql.exec('DELETE FROM reads WHERE user_id = ?', userId);
+		this.sql.exec('DELETE FROM guests WHERE user_id = ?', userId);
 		forgetNotifications(this.sql, userId);
 		for (const channelId of channels) {
 			this.broadcastVoice(channelId, userId);
@@ -1651,7 +1656,7 @@ export class Workspace extends DurableObject<Env> {
 		const recipients = mentionsOnly
 			? mentioned.filter((userId) => userId !== actor.id).map((userId) => ({ userId, kind: 'mention' as const }))
 			: messageRecipients(this.sql, { channelId: message.channelId, authorId: actor.id, mentioned, replyAuthor: message.replyTo?.userId ?? null });
-		for (const { userId, kind } of recipients) {
+		for (const { userId, kind } of recipients.filter((r) => !this.isGuest(r.userId))) {
 			this.pushNotification({ userId, kind, channelId: message.channelId, messageId: message.id, actorId: actor.id, title: titles[kind] ?? where, body: message.body || message.attachments[0]?.name || '' });
 		}
 	}
@@ -1856,7 +1861,7 @@ export class Workspace extends DurableObject<Env> {
 		const conn: Conn = { connId: crypto.randomUUID(), actor, voice: null };
 		this.ctx.acceptWebSocket(server, [actor.id]);
 		server.serializeAttachment(conn);
-		this.send(server, { t: 'hello', connId: conn.connId, online: this.onlineIds(), ...this.access(actor) });
+		this.send(server, { t: 'hello', connId: conn.connId, online: this.onlineFor(actor), ...this.access(actor) });
 		this.send(server, { t: 'notifications_unread', unread: unreadCount(this.sql, actor.id, this.visibleIds(actor)) });
 		if (!wasOnline) {
 			this.broadcast({ t: 'presence', userId: actor.id, online: true }, server);
@@ -2091,7 +2096,8 @@ export class Workspace extends DurableObject<Env> {
 	private broadcast(event: ServerEvent, except?: WebSocket): void {
 		const payload = JSON.stringify(event);
 		for (const ws of this.ctx.getWebSockets()) {
-			if (ws === except || !this.conn(ws)) {
+			const conn = this.conn(ws);
+			if (ws === except || !conn || (conn.actor.guest && !this.guestHears(conn.actor.id, event))) {
 				continue;
 			}
 			try {
@@ -2121,7 +2127,8 @@ export class Workspace extends DurableObject<Env> {
 	private broadcastChannel(channel: Channel): void {
 		for (const ws of this.ctx.getWebSockets()) {
 			const conn = this.conn(ws);
-			if (conn) {
+			// Un invité n'apprend pas l'existence des salons.
+			if (conn && !(conn.actor.guest && !this.can(conn.actor, channel.id, P.VIEW_CHANNEL))) {
 				this.send(
 					ws,
 					this.can(conn.actor, channel.id, P.VIEW_CHANNEL) ? { t: 'channel_upsert', channel, perms: this.permsIn(conn.actor, channel.id) } : { t: 'channel_deleted', id: channel.id },
@@ -2243,5 +2250,71 @@ export class Workspace extends DurableObject<Env> {
 			return err(404, 'Salon introuvable');
 		}
 		return has(actor.perms, P.MANAGE_COMMANDS) ? null : err(403, DENIED);
+	}
+
+	// --- Invités ---
+
+	// Participants des groupes de l'invité, lui compris ; vide s'il n'en a plus.
+	guestContacts(userId: string): string[] {
+		const contacts = new Set<string>();
+		for (const members of (this.dmCache ??= loadDmMembers(this.sql)).values()) {
+			if (members.includes(userId)) {
+				members.forEach((id) => contacts.add(id));
+			}
+		}
+		return [...contacts];
+	}
+
+	// Groupe seulement ; un invité déjà entré doit en faire encore partie.
+	guestConversation(channelId: string, userId: string | null): DirectConversation | null {
+		const conversation = directById(this.sql, channelId);
+		if (!conversation?.group || (userId !== null && !conversation.memberIds.includes(userId))) {
+			return null;
+		}
+		return conversation;
+	}
+
+	guestJoin(channelId: string, userId: string): Result<DirectConversation> {
+		const current = this.guestConversation(channelId, null);
+		if (!current) {
+			return err(404, 'Conversation introuvable');
+		}
+		if (current.memberIds.length >= DM_MAX_MEMBERS) {
+			return err(400, `${DM_MAX_MEMBERS} participants maximum`);
+		}
+		this.ctx.storage.transactionSync(() => {
+			changeDirect(this.sql, channelId, { add: [userId] });
+			this.sql.exec('INSERT OR IGNORE INTO guests (user_id) VALUES (?)', userId);
+		});
+		this.dmCache = null;
+		// Historique lisible, pas compté comme non lu.
+		const { max } = this.sql.exec<{ max: number | null }>('SELECT MAX(id) AS max FROM messages WHERE channel_id = ?', channelId).one();
+		if (max !== null) {
+			this.setRead(userId, channelId, max);
+		}
+		const conversation = directById(this.sql, channelId)!;
+		this.sendTo(conversation.memberIds, { t: 'dm', conversation });
+		this.broadcast({ t: 'members_changed' });
+		return ok(conversation);
+	}
+
+	private isGuest(userId: string): boolean {
+		return this.sql.exec('SELECT 1 FROM guests WHERE user_id = ?', userId).toArray().length > 0;
+	}
+
+	// Évènements d'espace transmis à un invité : liste blanche.
+	private guestHears(userId: string, event: ServerEvent): boolean {
+		if (event.t === 'members_changed' || event.t === 'workspace_deleted') {
+			return true;
+		}
+		return event.t === 'presence' && this.guestContacts(userId).includes(event.userId);
+	}
+
+	private onlineFor(actor: Actor): string[] {
+		if (!actor.guest) {
+			return this.onlineIds();
+		}
+		const contacts = new Set(this.guestContacts(actor.id));
+		return this.onlineIds().filter((id) => contacts.has(id));
 	}
 }

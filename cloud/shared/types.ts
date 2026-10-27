@@ -13,6 +13,8 @@ export interface Actor {
 	perms: number;
 	// Position du plus haut grade ; le propriétaire est au-dessus de tout.
 	top: number;
+	// Invité externe : ne voit que ses groupes.
+	guest?: boolean;
 }
 
 export interface Grade {
@@ -37,6 +39,7 @@ export interface Me {
 	workspaces: WorkspaceSummary[];
 	identities: string[];
 	hasPassword: boolean;
+	guest?: boolean;
 }
 
 export interface WorkspaceSummary {
@@ -52,6 +55,7 @@ export interface Member {
 	avatarUrl: string | null;
 	owner: boolean;
 	gradeIds: string[];
+	guest?: boolean;
 }
 
 export interface WorkspaceDetail {
@@ -61,6 +65,7 @@ export interface WorkspaceDetail {
 	owner: boolean;
 	perms: number;
 	top: number;
+	guest?: boolean;
 	grades: Grade[];
 	members: Member[];
 }

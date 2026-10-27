@@ -4,6 +4,7 @@ import { DM_MAX_MEMBERS, type DirectConversation } from '../../../shared/dm-thre
 import type { Member } from '../../../shared/types';
 import { api, errorText } from '../../api';
 import { Avatar, Dialog } from '../../ui';
+import { GuestBadge, GuestInvites } from '../guests/GuestInvites';
 import './dm-threads.css';
 
 type Props = {
@@ -70,6 +71,7 @@ export function GroupDialog({ open, workspaceId, conversation, members, myId, on
 							<Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={28} online={online.has(id)} />
 							<span className='grow ellipsis'>
 								{member?.name ?? 'Ancien membre'}
+								{member?.guest && <GuestBadge />}
 								{id === myId && <span className='muted'> (toi)</span>}
 							</span>
 							{id !== myId && (
@@ -81,6 +83,7 @@ export function GroupDialog({ open, workspaceId, conversation, members, myId, on
 					);
 				})}
 			</ul>
+			{!members.get(myId)?.guest && <GuestInvites workspaceId={workspaceId} conversationId={conversation.id} full={room <= 0} />}
 			{room > 0 && candidates.length > 0 && (
 				<>
 					<h3 className='dm-group-title'>Ajouter des participants</h3>
