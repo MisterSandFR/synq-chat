@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 import type { MailAiInput, MailAiResult, MailboxInfo, MailDraft, MailSendInput, MailThreadDetail, MailUpload } from '../../shared/mail';
 import { api, errorText, upload } from '../api';
@@ -66,9 +66,13 @@ type Props = {
 	onMaximize: () => void;
 	onClose: (kept: boolean) => void;
 	onSent: (detail: MailThreadDetail) => void;
+	// Reformulation branchée par le parent ; la forme fonction reçoit le texte du message.
+	aiSlot?: ReactNode | ((field: ComposerField) => ReactNode);
 };
 
-export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaximize, onClose, onSent }: Props) {
+export type ComposerField = { value: string; onChange: (text: string) => void; textarea: RefObject<HTMLTextAreaElement | null> };
+
+export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaximize, onClose, onSent, aiSlot }: Props) {
 	const [form, setForm] = useState(() => ({ ...seed, bcc: '' }));
 	const [showCc, setShowCc] = useState(Boolean(seed.cc));
 	const [pending, setPending] = useState<Pending[]>([]);
@@ -336,6 +340,7 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 							<Icon name='paperclip' size={16} />
 						</button>
 						<input ref={fileInput} type='file' multiple hidden onChange={(e) => (attach(e.target.files), (e.target.value = ''))} />
+						{aiSlot && <span className='mail-composer-slot'>{typeof aiSlot === 'function' ? aiSlot({ value: form.text, onChange: (text) => set({ text }), textarea: textArea }) : aiSlot}</span>}
 						{form.threadId && (
 							<span className='mail-composer-ai'>
 								<button type='button' className='btn btn-ghost' disabled={busy !== null} onClick={() => void generate()}>

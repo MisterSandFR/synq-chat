@@ -1064,6 +1064,11 @@
 	max-width: 200px;
 }
 
+.mail-composer-slot {
+	display: inline-flex;
+	align-items: center;
+}
+
 .mail-composer-spacer {
 	flex: 1;
 }
