@@ -76,6 +76,8 @@ import {
 	markThreadRead,
 	unfollow,
 } from './dm-threads';
+import type { AuditKind, AuditPage } from '../shared/audit';
+import { AUDIT_MIGRATION, insertAudit, readAudit, type AuditInput } from './audit';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -337,6 +339,7 @@ const MIGRATIONS = [
 		DELETE FROM webhooks WHERE channel_id = old.id;
 	END;`,
 	`CREATE TABLE guests (user_id TEXT PRIMARY KEY);`,
+	AUDIT_MIGRATION,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -1844,6 +1847,19 @@ export class Workspace extends DurableObject<Env> {
 				this.send(ws, event);
 			}
 		}
+	}
+
+	// --- Journal d'audit ---
+
+	recordAudit(entry: AuditInput): void {
+		insertAudit(this.sql, entry);
+	}
+
+	auditLog(actor: Actor, kind: AuditKind | null, before: number | null): Result<AuditPage> {
+		if (!has(actor.perms, P.MANAGE_WORKSPACE)) {
+			return err(403, DENIED);
+		}
+		return ok(readAudit(this.sql, kind, before));
 	}
 
 	async fetch(request: Request): Promise<Response> {

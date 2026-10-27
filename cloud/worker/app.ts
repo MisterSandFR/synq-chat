@@ -19,6 +19,8 @@ import {
 import { DUMMY_HASH, hashPassword, randomToken, sha256, verifyPassword } from './crypto';
 import { cleanName, denyUnless, fail, readJson, stub, unwrap, workspaceStub, type Ctx, type AppEnv } from './http';
 import { resolveAttachments } from './media';
+import { AUDIT_KINDS, type AuditKind } from '../shared/audit';
+import { auditTrail } from './audit';
 import { authorizeUrl, completeLogin } from './recube';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
 import { notificationRoutes } from './routes/notifications';
@@ -415,6 +417,15 @@ app.use('/w/:wid/*', async (c, next) => {
 	c.set('workspaceId', workspaceId);
 	c.set('actor', actor);
 	await next();
+});
+
+app.use('/w/:wid/*', auditTrail);
+
+app.get('/w/:wid/audit', async (c) => {
+	const kind = c.req.query('kind');
+	const before = Number(c.req.query('before'));
+	const known = AUDIT_KINDS.some((k) => k.id === kind);
+	return unwrap(c, await stub(c).auditLog(c.get('actor'), known ? (kind as AuditKind) : null, Number.isInteger(before) && before > 0 ? before : null));
 });
 
 const refreshActors = async (c: Ctx) => stub(c).refreshActors(await loadActors(c.env.DB, c.get('workspaceId')));

@@ -223,3 +223,16 @@
 		max-height: 200px;
 	}
 }
+
+.audit-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 4px;
+	border-bottom: 1px solid var(--line);
+	font-size: 14px;
+}
+
+.audit-row:last-child {
+	border-bottom: 0;
+}

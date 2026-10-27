@@ -8,11 +8,12 @@ import { Avatar, Dialog, Icon, useDismiss } from '../ui';
 import { ChannelPermissions } from './categories/OverridesEditor';
 import { CommandsTab } from './commands/CommandsSettings';
 import { memberColor, memberGrades, topOf } from './grades';
+import { AuditTab } from './settings/AuditTab';
 import { GradesTab } from './settings/GradesSettings';
 import { Swatches } from './settings/Swatches';
 import { WebhooksTab } from './rc/WebhooksTab';
 
-type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks';
+type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'audit';
 
 type Props = {
 	open: boolean;
@@ -48,6 +49,7 @@ export function SettingsDialog({ open, onClose, info, channels, myId, onChanged 
 		['invites', 'Invitations', has(info.perms, P.CREATE_INVITES)],
 		['commands', 'Commandes', has(info.perms, P.MANAGE_COMMANDS)],
 		['webhooks', 'Webhooks', has(info.perms, P.MANAGE_COMMANDS)],
+		['audit', 'Journal', has(info.perms, P.MANAGE_WORKSPACE)],
 	];
 	const visible = tabs.filter(([, , allowed]) => allowed);
 	const current = visible.some(([key]) => key === tab) ? tab : 'space';
@@ -68,6 +70,7 @@ export function SettingsDialog({ open, onClose, info, channels, myId, onChanged 
 			{current === 'invites' && <InvitesTab workspaceId={info.id} />}
 			{current === 'commands' && <CommandsTab workspaceId={info.id} />}
 			{current === 'webhooks' && <WebhooksTab workspaceId={info.id} />}
+			{current === 'audit' && <AuditTab info={info} channelName={(id) => channels.find((c) => c.id === id)?.name ?? null} />}
 		</Dialog>
 	);
 }
