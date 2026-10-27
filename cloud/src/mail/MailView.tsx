@@ -385,7 +385,7 @@ function BoxDialog({ box, workspaces, onClose, onSaved }: { box: MailboxInfo | n
 		run(async () => {
 			const result = await api<MailTestResult>('POST', '/mail/test', payload());
 			const failures = [result.imap && `IMAP : ${result.imap}`, result.smtp && `SMTP : ${result.smtp}`].filter(Boolean);
-			setStatus(failures.length ? { tone: 'error', text: failures.join(' — ') } : { tone: 'ok', text: 'Connexion IMAP et SMTP réussie.' });
+			setStatus(failures.length ? { tone: 'error', text: failures.join(' ; ') } : { tone: 'ok', text: 'Connexion IMAP et SMTP réussie.' });
 		});
 
 	const remove = () => {
@@ -455,7 +455,11 @@ function BoxDialog({ box, workspaces, onClose, onSaved }: { box: MailboxInfo | n
 						</label>
 					</div>
 					<p className='field-hint'>Mot de passe chiffré côté serveur, jamais réaffiché. Relève toutes les minutes.</p>
-					{status && <p className={`notice notice-${status.tone}`}>{status.text}</p>}
+					{status ? (
+						<p className={`notice notice-${status.tone}`}>{status.text}</p>
+					) : (
+						box?.syncError && <p className='notice notice-error'>Dernière relève : {box.syncError}</p>
+					)}
 					<div className='mail-form-actions'>
 						{box && (
 							<button type='button' className='btn btn-danger' disabled={busy} onClick={remove}>
