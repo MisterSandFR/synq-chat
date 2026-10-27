@@ -1,3 +1,4 @@
+import type { CalendarReminder } from './calendar';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -197,7 +198,8 @@ export type ServerEvent =
 	| { t: 'voice_ended'; reason: string }
 	| { t: 'drive'; channelId: string }
 	| { t: 'members_changed' }
-	| { t: 'workspace_deleted' };
+	| { t: 'workspace_deleted' }
+	| { t: 'calendar_reminder'; reminder: CalendarReminder };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

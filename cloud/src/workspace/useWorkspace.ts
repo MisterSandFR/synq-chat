@@ -168,6 +168,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, drive: { ...state.drive, [event.channelId]: (state.drive[event.channelId] ?? 0) + 1 } };
 		case 'workspace_deleted':
 			return { ...state, closed: 'Cet espace a été supprimé.' };
+		// Rappel affiché par le centre de notifications.
+		case 'calendar_reminder':
 		case 'members_changed':
 			return state;
 	}

@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import type { CalendarReminder } from '../shared/calendar';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
@@ -866,6 +867,17 @@ export class Workspace extends DurableObject<Env> {
 		}
 		this.broadcastVoice(channelId);
 		return ok(null);
+	}
+
+	// Calendrier
+
+	// Rappel poussé par le cron sur les sockets de l'utilisateur dans cet espace.
+	calendarReminder(userId: string, reminder: CalendarReminder): void {
+		for (const ws of this.ctx.getWebSockets(userId)) {
+			if (this.conn(ws)) {
+				this.send(ws, { t: 'calendar_reminder', reminder });
+			}
+		}
 	}
 
 	private conn(ws: WebSocket): Conn | null {

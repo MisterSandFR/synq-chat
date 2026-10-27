@@ -1,4 +1,5 @@
 import app from './app';
+import { sendReminders } from './calendar';
 
 export { Workspace } from './workspace';
 
@@ -17,5 +18,8 @@ export default {
 			return new Response(res.body, { status: res.status, headers });
 		}
 		return app.fetch(request, env, ctx);
+	},
+	async scheduled(_controller, env, ctx) {
+		ctx.waitUntil(sendReminders(env, Date.now()));
 	},
 } satisfies ExportedHandler<Env>;

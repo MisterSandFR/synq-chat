@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Me } from '../shared/types';
 import { api, ApiError } from './api';
 import { AuthScreen } from './AuthScreen';
+import { CalendarView } from './calendar/CalendarView';
 import { HomeScreen } from './HomeScreen';
 import { InviteScreen } from './InviteScreen';
 import { lastWorkspace, navigate, takeReturn, takeSsoNotice, usePath } from './router';
@@ -54,6 +55,13 @@ export function App() {
 		return <AuthScreen notice={notice} onSignedIn={refresh} />;
 	}
 
+	if (path === '/calendrier') {
+		return (
+			<div className='cal-page'>
+				<CalendarView me={me} workspaces={me.workspaces} />
+			</div>
+		);
+	}
 	const invite = path.match(/^\/invite\/([\w-]+)$/);
 	if (invite) {
 		return <InviteScreen code={invite[1]!} onJoined={refresh} />;

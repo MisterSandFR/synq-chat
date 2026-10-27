@@ -17,17 +17,20 @@ export const P = {
 	VOICE_SCREEN: 1 << 15,
 	VOICE_MODERATE: 1 << 16,
 	BYPASS_LIMIT: 1 << 17,
+	VIEW_EVENTS: 1 << 18,
+	CREATE_EVENTS: 1 << 19,
+	MANAGE_EVENTS: 1 << 20,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 18) - 1;
+export const ALL_PERMS = (1 << 21) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
 
 export const DEFAULT_MEMBER_PERMS =
-	P.VIEW_CHANNEL | P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD | P.VOICE_CONNECT | P.VOICE_SPEAK | P.VOICE_VIDEO | P.VOICE_SCREEN;
+	P.VIEW_CHANNEL | P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD | P.VOICE_CONNECT | P.VOICE_SPEAK | P.VOICE_VIDEO | P.VOICE_SCREEN | P.VIEW_EVENTS | P.CREATE_EVENTS;
 
 export const READ_ONLY_DENY = P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD;
 
@@ -53,6 +56,9 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'VOICE_SCREEN', label: 'Partage d’écran', hint: 'Partager son écran.', group: 'Vocal', channel: true },
 	{ key: 'VOICE_MODERATE', label: 'Modérer le vocal', hint: 'Couper le micro ou expulser un grade inférieur.', group: 'Vocal', channel: true },
 	{ key: 'BYPASS_LIMIT', label: 'Ignorer la limite de places', hint: 'Entrer dans un salon vocal complet.', group: 'Vocal', channel: true },
+	{ key: 'VIEW_EVENTS', label: 'Voir le calendrier', hint: 'Voir les événements de l’espace.', group: 'Espace', channel: false },
+	{ key: 'CREATE_EVENTS', label: 'Créer des événements', hint: 'Créer des événements et modifier les siens.', group: 'Espace', channel: false },
+	{ key: 'MANAGE_EVENTS', label: 'Gérer les événements', hint: 'Modifier et supprimer les événements des autres.', group: 'Espace', channel: false },
 ];
 
 export type Override = { allow: number; deny: number };
