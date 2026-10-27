@@ -23,6 +23,7 @@ import {
 } from './dm-threads';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
+import { useMemberMenu } from './members/useMemberMenu';
 import { MessageList } from './MessageList';
 import { ActivityPanel } from './notifications/ActivityPanel';
 import { openNotification, useBrowserNotifications } from './notifications/browser';
@@ -125,6 +126,18 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const lastActiveId = activeData?.items.at(-1)?.id;
 	const chatVisible = active?.kind === 'text' || active?.kind === 'dm' || (active?.kind === 'voice' && voiceChat);
 	const huddle = active?.kind === 'dm' && ((state.voice[active.id]?.length ?? 0) > 0 || voice.snapshot?.channelId === active.id);
+	const memberMenu = useMemberMenu({
+		workspaceId,
+		info: state.info ?? null,
+		channels: channels ?? [],
+		perms: state.perms,
+		voice: state.voice,
+		myId,
+		mentionChannelId: active && (chatVisible || huddle) ? active.id : null,
+		onProfile: (userId, rect) => setCard({ userId, rect }),
+		onMessage: (userId) => void startDirect([userId]).catch(() => undefined),
+		onChanged: () => reloadInfo().catch(() => undefined),
+	});
 
 	const openChannel = useCallback(
 		(id: string) => {
@@ -319,6 +332,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					onJumpTo={(id) => setJump({ channelId: active.id, id })}
 					onReply={setReplyTo}
 					onAuthor={(userId, anchor) => setCard({ userId, rect: anchor.getBoundingClientRect() })}
+					authorMenu={memberMenu.items}
 					extraActions={(message) => {
 						const saved = rc.savedIds.has(message.id);
 						return (
@@ -403,6 +417,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				members={members}
 				voice={voice}
 				width={width}
+				memberMenu={memberMenu}
 				onOpenSettings={() => setSettingsOpen(true)}
 				onOpenSearch={() => setSearchOpen(true)}
 				onNavigate={() => setNavOpen(false)}
@@ -566,6 +581,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 									voice={voice}
 									otherChannelName={otherVoice}
 									moveTargets={channels?.filter((c) => c.kind === 'voice' && c.id !== active.id) ?? []}
+									memberMenu={memberMenu.items}
 								/>
 								{(voiceChat || huddle) && (
 									<aside className='call-chat' style={{ width: chatWidth.width }} aria-label={`Chat de ${active.name}`}>
@@ -578,7 +594,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							messagePane
 						)}
 					</div>
-					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onMessage={(id) => void startDirect([id]).catch(() => undefined)} onClose={() => setPanel(null)} />}
+					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onMessage={(id) => void startDirect([id]).catch(() => undefined)} menu={memberMenu.items} onClose={() => setPanel(null)} />}
 					{panel === 'drive' && active && (
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}
@@ -626,6 +642,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 			{navOpen && <button type='button' className='scrim' aria-label='Fermer le menu' onClick={() => setNavOpen(false)} />}
 
 			<RemoteAudio voice={voice} />
+			{memberMenu.node}
 
 			{card && (
 				<ProfileCard

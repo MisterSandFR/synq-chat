@@ -11,6 +11,8 @@ import { CategoryNav } from './categories/CategoryNav';
 import { memberColor } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
+import { useContextMenu } from './ContextMenu';
+import { voiceDrag, type MemberMenu } from './members/useMemberMenu';
 import type { VoiceControls } from './voice/useVoice';
 import type { WorkspaceState } from './useWorkspace';
 
@@ -30,9 +32,10 @@ type Props = {
 	presenceText?: string;
 	meMenu?: (close: () => void) => ReactNode;
 	directs?: ReactNode;
+	memberMenu?: MemberMenu;
 };
 
-export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu, directs }: Props) {
+export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu, directs, memberMenu }: Props) {
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
@@ -80,6 +83,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 							members={members}
 							grades={grades}
 							speaking={voice.snapshot?.channelId === channel.id ? voice.snapshot.speaking : null}
+							memberMenu={memberMenu}
 							onOpen={() => open(channel.id)}
 							onJoin={() => {
 								open(channel.id);
@@ -150,14 +154,37 @@ type VoiceRowProps = {
 	speaking: Set<string> | null;
 	onOpen: () => void;
 	onJoin: () => void;
+	memberMenu?: MemberMenu;
 };
 
-function VoiceChannelRow({ channel, active, unread, mentions, participants, members, grades, speaking, onOpen, onJoin }: VoiceRowProps) {
+function VoiceChannelRow({ channel, active, unread, mentions, participants, members, grades, speaking, onOpen, onJoin, memberMenu }: VoiceRowProps) {
+	const ctx = useContextMenu();
+	const [over, setOver] = useState(false);
+	const droppable = () => Boolean(memberMenu && voiceDrag.userId && memberMenu.canMove(voiceDrag.userId, channel.id));
 	return (
 		<>
 			<a
 				href={`#${channel.id}`}
-				className='channel'
+				className={`channel${over ? ' channel-drop' : ''}`}
+				onDragOver={(e) => {
+					if (droppable()) {
+						e.preventDefault();
+						e.stopPropagation();
+						e.dataTransfer.dropEffect = 'move';
+						setOver(true);
+					}
+				}}
+				onDragLeave={() => setOver(false)}
+				onDrop={(e) => {
+					const userId = voiceDrag.userId;
+					setOver(false);
+					if (userId && droppable()) {
+						e.preventDefault();
+						e.stopPropagation();
+						voiceDrag.userId = null;
+						memberMenu!.move(userId, channel.id);
+					}
+				}}
 				aria-current={active ? 'page' : undefined}
 				title='Double-clic pour rejoindre'
 				onClick={(e) => {
@@ -186,7 +213,23 @@ function VoiceChannelRow({ channel, active, unread, mentions, participants, memb
 					{participants.map((p) => {
 						const member = members.get(p.userId);
 						return (
-							<li key={p.userId} className={`voice-user${speaking?.has(p.userId) ? ' voice-user-speaking' : ''}`}>
+							<li
+								key={p.userId}
+								className={`voice-user${speaking?.has(p.userId) ? ' voice-user-speaking' : ''}`}
+								{...(memberMenu ? ctx.bind(() => memberMenu.items(p.userId)) : {})}
+								draggable={memberMenu?.canDrag(p.userId) || undefined}
+								onDragStart={(e) => {
+									// Hors du glisser des salons de CategoryNav.
+									e.stopPropagation();
+									voiceDrag.userId = p.userId;
+									e.dataTransfer.effectAllowed = 'move';
+									e.dataTransfer.setData('text/plain', member?.name ?? p.userId);
+								}}
+								onDragEnd={(e) => {
+									e.stopPropagation();
+									voiceDrag.userId = null;
+								}}
+							>
 								<Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={22} />
 								<span className='grow ellipsis' style={{ color: memberColor(member, grades) }}>
 									{member?.name ?? 'Membre'}
@@ -201,6 +244,7 @@ function VoiceChannelRow({ channel, active, unread, mentions, participants, memb
 					})}
 				</ul>
 			)}
+			{ctx.menu}
 		</>
 	);
 }
