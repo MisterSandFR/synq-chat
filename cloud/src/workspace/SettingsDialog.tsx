@@ -5,6 +5,7 @@ import { ACCENTS, type Channel, type ChannelKind, type ChannelOverrides, type Gr
 import { api, errorText } from '../api';
 import { navigate } from '../router';
 import { Avatar, Dialog, Icon, useDismiss } from '../ui';
+import { ChannelPermissions } from './categories/OverridesEditor';
 import { memberColor, memberGrades } from './grades';
 
 type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites';
@@ -254,7 +255,7 @@ function ChannelsTab({ info, channels }: { info: WorkspaceDetail; channels: Chan
 				{editing.view === 'settings' ? (
 					<ChannelForm workspaceId={info.id} channel={edited} kind={edited.kind} onDone={() => setEditing(null)} />
 				) : (
-					<PermissionMatrix info={info} channel={edited} />
+					<ChannelPermissions info={info} channel={edited} />
 				)}
 			</div>
 		);
@@ -295,122 +296,6 @@ function ChannelsTab({ info, channels }: { info: WorkspaceDetail; channels: Chan
 				))}
 			</ul>
 			{error && <p className='notice notice-error'>{error}</p>}
-		</div>
-	);
-}
-
-type Cell = 'inherit' | 'allow' | 'deny';
-
-const cellOf = (override: Override | undefined, flag: number): Cell => (override && has(override.allow, flag) ? 'allow' : override && has(override.deny, flag) ? 'deny' : 'inherit');
-
-const NEXT: Record<Cell, Cell> = { inherit: 'allow', allow: 'deny', deny: 'inherit' };
-
-const CELL_LABEL: Record<Cell, string> = { inherit: 'hérité du grade', allow: 'autorisé', deny: 'refusé' };
-
-// Matrice permissions × grades : chaque cellule passe hérité, autorisé, refusé.
-function PermissionMatrix({ info, channel }: { info: WorkspaceDetail; channel: Channel }) {
-	const { error, run } = useAction();
-	const [overrides, setOverrides] = useState<ChannelOverrides | null>(null);
-	const [saved, setSaved] = useState(false);
-	const grades = [...info.grades].sort((a, b) => (a.id === DEFAULT_GRADE ? -1 : b.id === DEFAULT_GRADE ? 1 : b.position - a.position));
-	const rows = PERMISSIONS.filter((p) => p.channel && (channel.kind === 'voice' || p.group !== 'Vocal'));
-
-	useEffect(() => {
-		void api<ChannelOverrides>('GET', `/w/${info.id}/channels/${channel.id}/overrides`)
-			.then(setOverrides)
-			.catch(() => setOverrides({}));
-	}, [info.id, channel.id]);
-
-	const toggle = (gradeId: string, flag: number) => {
-		setSaved(false);
-		setOverrides((current) => {
-			const value = { allow: 0, deny: 0, ...current?.[gradeId] };
-			const next = NEXT[cellOf(value, flag)];
-			const allow = next === 'allow' ? value.allow | flag : value.allow & ~flag;
-			const deny = next === 'deny' ? value.deny | flag : value.deny & ~flag;
-			return { ...current, [gradeId]: { allow, deny } };
-		});
-	};
-
-	if (!overrides) {
-		return <div className='spinner' aria-busy />;
-	}
-
-	let group: PermGroup | null = null;
-	return (
-		<div className='stack'>
-			<p className='muted' style={{ fontSize: 14 }}>
-				Hérité suit les permissions du grade. Un refus du grade Membre s’applique à tous, une autorisation d’un autre grade l’emporte sur les refus.
-			</p>
-			<div className='matrix-scroll'>
-				<table className='matrix'>
-					<thead>
-						<tr>
-							<th scope='col'>Permission</th>
-							{grades.map((grade) => (
-								<th key={grade.id} scope='col' style={grade.color ? { color: grade.color } : undefined}>
-									{grade.id === DEFAULT_GRADE ? 'Membre (tous)' : grade.name}
-								</th>
-							))}
-						</tr>
-					</thead>
-					<tbody>
-						{rows.map((perm) => {
-							const header = perm.group !== group;
-							group = perm.group;
-							return (
-								<Fragment key={perm.key}>
-									{header && (
-										<tr className='matrix-group'>
-											<th colSpan={grades.length + 1}>{perm.group}</th>
-										</tr>
-									)}
-									<tr>
-										<th scope='row'>
-											<span>{perm.label}</span>
-											<span className='field-hint'>{perm.hint}</span>
-										</th>
-										{grades.map((grade) => {
-											const cell = cellOf(overrides[grade.id], P[perm.key]);
-											const editable = canTouchGrade(info, grade) || info.owner;
-											return (
-												<td key={grade.id}>
-													<button
-														type='button'
-														className={`matrix-cell matrix-${cell}`}
-														disabled={!editable}
-														aria-label={`${perm.label} pour ${grade.name} : ${CELL_LABEL[cell]}`}
-														title={CELL_LABEL[cell]}
-														onClick={() => toggle(grade.id, P[perm.key])}
-													>
-														{cell === 'allow' ? <Icon name='check' size={16} strokeWidth={2.4} /> : cell === 'deny' ? <Icon name='close' size={16} strokeWidth={2.4} /> : <span aria-hidden>/</span>}
-													</button>
-												</td>
-											);
-										})}
-									</tr>
-								</Fragment>
-							);
-						})}
-					</tbody>
-				</table>
-			</div>
-			{error && <p className='notice notice-error'>{error}</p>}
-			<div className='row'>
-				<button
-					type='button'
-					className='btn btn-primary'
-					onClick={() =>
-						void run(async () => {
-							setOverrides(await api<ChannelOverrides>('PUT', `/w/${info.id}/channels/${channel.id}/overrides`, { overrides }));
-							setSaved(true);
-						})
-					}
-				>
-					Enregistrer les permissions
-				</button>
-				{saved && <span className='muted'>Permissions enregistrées.</span>}
-			</div>
 		</div>
 	);
 }

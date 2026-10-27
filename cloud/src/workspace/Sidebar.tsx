@@ -5,6 +5,7 @@ import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/
 import { api } from '../api';
 import { navigate } from '../router';
 import { Avatar, Icon, useDismiss } from '../ui';
+import { CategoryNav } from './categories/CategoryNav';
 import { memberColor } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
@@ -29,15 +30,6 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
-	const sections = new Map<string, { kind: 'text' | 'voice'; label: string; items: Channel[] }>();
-	for (const channel of channels) {
-		const label = channel.category || (channel.kind === 'voice' ? 'Vocal' : 'Salons');
-		// Par libellé : sans catégorie et catégorie « Vocal » tombent dans la même section.
-		const key = `${channel.kind}:${label}`;
-		const section = sections.get(key) ?? { kind: channel.kind, label, items: [] };
-		section.items.push(channel);
-		sections.set(key, section);
-	}
 	const connectedChannel = voice.snapshot ? channels.find((c) => c.id === voice.snapshot!.channelId) : undefined;
 
 	const open = (id: string) => {
@@ -62,54 +54,36 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 				<kbd>Ctrl K</kbd>
 			</button>
 
-			<nav className='nav' aria-label='Salons'>
-				{[...sections.values()].map((section) => (
-					<div key={`${section.kind}:${section.label}`} className='nav-section'>
-						<div className='nav-section-head'>
-							<span>{section.label}</span>
-							{staff && (
-								<button
-									type='button'
-									className='icon-btn icon-btn-sm'
-									aria-label={section.kind === 'voice' ? 'Créer un salon vocal' : 'Créer un salon'}
-									title={section.kind === 'voice' ? 'Créer un salon vocal' : 'Créer un salon'}
-									onClick={() => onCreateChannel(section.kind)}
-								>
-									<Icon name='plus' size={14} strokeWidth={2} />
-								</button>
-							)}
-						</div>
-						{section.items.map((channel) =>
-							channel.kind === 'voice' ? (
-								<VoiceChannelRow
-									key={channel.id}
-									channel={channel}
-									active={channel.id === channelId}
-									unread={state.unread[channel.id] ?? 0}
-									mentions={state.mentions[channel.id] ?? 0}
-									participants={state.voice[channel.id] ?? []}
-									members={members}
-									grades={grades}
-									speaking={voice.snapshot?.channelId === channel.id ? voice.snapshot.speaking : null}
-									onOpen={() => open(channel.id)}
-									onJoin={() => {
-										open(channel.id);
-										void voice.join(channel.id);
-									}}
-								/>
-							) : (
-								<TextChannelRow key={channel.id} channel={channel} active={channel.id === channelId} unread={state.unread[channel.id] ?? 0} mentions={state.mentions[channel.id] ?? 0} onOpen={() => open(channel.id)} />
-							),
-						)}
-					</div>
-				))}
-				{staff && !channels.some((c) => c.kind === 'voice') && (
-					<button type='button' className='channel' style={{ border: 0, background: 'none' }} onClick={() => onCreateChannel('voice')}>
-						<Icon name='plus' size={16} />
-						<span className='channel-name'>Ajouter un salon vocal</span>
-					</button>
-				)}
-			</nav>
+			<CategoryNav
+				workspaceId={workspaceId}
+				info={state.info ?? null}
+				channels={channels}
+				channelId={channelId}
+				staff={staff}
+				onOpenChannel={open}
+				onCreateChannel={onCreateChannel}
+				renderChannel={(channel) =>
+					channel.kind === 'voice' ? (
+						<VoiceChannelRow
+							channel={channel}
+							active={channel.id === channelId}
+							unread={state.unread[channel.id] ?? 0}
+							mentions={state.mentions[channel.id] ?? 0}
+							participants={state.voice[channel.id] ?? []}
+							members={members}
+							grades={grades}
+							speaking={voice.snapshot?.channelId === channel.id ? voice.snapshot.speaking : null}
+							onOpen={() => open(channel.id)}
+							onJoin={() => {
+								open(channel.id);
+								void voice.join(channel.id);
+							}}
+						/>
+					) : (
+						<TextChannelRow channel={channel} active={channel.id === channelId} unread={state.unread[channel.id] ?? 0} mentions={state.mentions[channel.id] ?? 0} onOpen={() => open(channel.id)} />
+					)
+				}
+			/>
 
 			{voice.snapshot && (
 				<div className='voice-dock'>

@@ -23,6 +23,7 @@ import { authorizeUrl, completeLogin } from './recube';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
 import { notificationRoutes } from './routes/notifications';
 import { mediaRoutes } from './routes/media';
+import { categoryRoutes, cleanOverrides } from './routes/categories';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -645,17 +646,9 @@ app.delete('/w/:wid/channels/:cid', async (c) => unwrap(c, await stub(c).deleteC
 app.get('/w/:wid/channels/:cid/overrides', async (c) => unwrap(c, await stub(c).getOverrides(c.get('actor'), c.req.param('cid'))));
 
 app.put('/w/:wid/channels/:cid/overrides', async (c) => {
-	const { overrides } = await readJson<{ overrides: ChannelOverrides }>(c);
-	if (!overrides || typeof overrides !== 'object') {
+	const clean = await cleanOverrides(c, (await readJson<{ overrides: ChannelOverrides }>(c)).overrides);
+	if (!clean) {
 		return fail(c, 400, 'Surcharges invalides');
-	}
-	const grades = new Set((await listGrades(c.env.DB, c.get('workspaceId'))).map((g) => g.id));
-	const clean: ChannelOverrides = {};
-	for (const [gradeId, value] of Object.entries(overrides)) {
-		if (!grades.has(gradeId) || !value || !Number.isInteger(value.allow) || !Number.isInteger(value.deny)) {
-			return fail(c, 400, 'Surcharges invalides');
-		}
-		clean[gradeId] = { allow: value.allow, deny: value.deny };
 	}
 	return unwrap(c, await stub(c).setOverrides(c.get('actor'), c.req.param('cid'), clean));
 });
@@ -806,6 +799,7 @@ app.delete('/w/:wid/drive/files/:id', async (c) => unwrap(c, await stub(c).drive
 
 app.route('/', notificationRoutes);
 app.route('/', mediaRoutes);
+app.route('/', categoryRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

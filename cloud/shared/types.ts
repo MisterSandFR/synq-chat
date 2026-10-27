@@ -69,7 +69,10 @@ export interface Channel {
 	name: string;
 	kind: ChannelKind;
 	topic: string;
+	// Nom de la catégorie, vide sans catégorie.
 	category: string;
+	categoryId: string | null;
+	synced: boolean;
 	readOnly: boolean;
 	userLimit: number;
 	position: number;
@@ -81,6 +84,7 @@ export interface ChannelInput {
 	kind?: ChannelKind;
 	topic?: string;
 	category?: string;
+	categoryId?: string | null;
 	readOnly?: boolean;
 	userLimit?: number;
 	position?: number;

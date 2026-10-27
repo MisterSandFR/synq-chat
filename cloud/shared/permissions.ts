@@ -64,6 +64,8 @@ export interface PermSubject {
 	base: number;
 	// Toujours avec le grade par défaut.
 	grades: string[];
+	// Surcharge propre au membre, appliquée en dernier.
+	id?: string;
 }
 
 export const has = (perms: number, flag: number) => (perms & flag) === flag;
@@ -95,5 +97,7 @@ export function channelPerms(subject: PermSubject, overrides: Record<string, Ove
 			allow |= override.allow;
 		}
 	}
-	return (perms & ~deny) | allow;
+	const merged = (perms & ~deny) | allow;
+	const own = subject.id ? overrides[`@${subject.id}`] : undefined;
+	return own ? (merged & ~own.deny) | own.allow : merged;
 }

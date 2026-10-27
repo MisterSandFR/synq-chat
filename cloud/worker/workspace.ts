@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import type { Category, Layout } from '../shared/categories';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
@@ -24,6 +25,20 @@ import {
 import { NOTIFICATIONS_MIGRATION, forgetNotifications, listNotifications, markChannelNotificationsRead, markNotificationsRead, messageRecipients, notificationPrefs, notify, setNotifyLevel, unreadCount } from './notifications';
 import type { NotificationFilter, NotificationItem, NotificationPage, NotifyInput, NotifyLevel } from '../shared/notifications';
 import { parseAttachments } from './media';
+import {
+	applyLayout,
+	cleanCategoryName,
+	copyCategoryOverrides,
+	insertCategory,
+	listCategories,
+	nextPosition,
+	readCategoryOverrides,
+	removeCategory,
+	renameCategory,
+	resolveCategory,
+	validLayout,
+	writeCategoryOverrides,
+} from './categories';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -49,6 +64,9 @@ type ChannelRow = {
 	kind: ChannelKind;
 	topic: string;
 	category: string;
+	category_id: string | null;
+	category_name: string;
+	synced: number;
 	read_only: number;
 	ro_deny: number | null;
 	user_limit: number;
@@ -177,13 +195,35 @@ const MIGRATIONS = [
 	// Pièces jointes multiples : l'ancienne colonne reste lue pour compat, plus jamais écrite.
 	`ALTER TABLE messages ADD COLUMN attachments TEXT;
 	UPDATE messages SET attachments = json_array(json(attachment)), attachment = NULL WHERE attachment IS NOT NULL;`,
+	// Catégories en table : salons texte et vocaux mélangés, positions recalculées par catégorie.
+	`CREATE TABLE categories (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		position INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE category_overrides (
+		category_id TEXT NOT NULL,
+		subject_id TEXT NOT NULL,
+		allow INTEGER NOT NULL DEFAULT 0,
+		deny INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (category_id, subject_id)
+	);
+	ALTER TABLE channels ADD COLUMN category_id TEXT;
+	ALTER TABLE channels ADD COLUMN synced INTEGER NOT NULL DEFAULT 0;
+	INSERT INTO categories (id, name, position)
+		SELECT lower(hex(randomblob(16))), category, ROW_NUMBER() OVER (ORDER BY MIN(kind = 'voice'), category) - 1 FROM channels WHERE category != '' GROUP BY category;
+	UPDATE channels SET category_id = (SELECT k.id FROM categories k WHERE k.name = channels.category);
+	UPDATE channels SET position = r.n
+		FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY category_id ORDER BY kind = 'voice', position, name) - 1 AS n FROM channels) AS r
+		WHERE r.id = channels.id;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
 	FROM messages m LEFT JOIN messages r ON r.id = m.reply_to`;
 
-const CHANNEL_SELECT = `SELECT c.*, o.deny AS ro_deny FROM channels c
-	LEFT JOIN channel_overrides o ON o.channel_id = c.id AND o.grade_id = '${DEFAULT_GRADE}'`;
+const CHANNEL_SELECT = `SELECT c.*, o.deny AS ro_deny, COALESCE(k.name, '') AS category_name FROM channels c
+	LEFT JOIN channel_overrides o ON o.channel_id = c.id AND o.grade_id = '${DEFAULT_GRADE}'
+	LEFT JOIN categories k ON k.id = c.category_id`;
 
 const CHANNEL_BITS = PERMISSIONS.filter((p) => p.channel).reduce((acc, p) => acc | P[p.key], 0);
 
@@ -196,7 +236,9 @@ const toChannel = (row: ChannelRow): Channel => ({
 	name: row.name,
 	kind: row.kind,
 	topic: row.topic,
-	category: row.category,
+	category: row.category_name,
+	categoryId: row.category_id,
+	synced: row.synced === 1,
 	readOnly: has(row.ro_deny ?? 0, P.SEND_MESSAGES),
 	userLimit: row.user_limit,
 	position: row.position,
@@ -281,11 +323,13 @@ export class Workspace extends DurableObject<Env> {
 		const { n } = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM channels').one();
 		if (n === 0) {
 			const now = Date.now();
-			const insert = 'INSERT INTO channels (id, name, kind, topic, category, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)';
+			const text = insertCategory(this.sql, 'Salons textuels').id;
+			const vocal = insertCategory(this.sql, 'Salons vocaux').id;
+			const insert = 'INSERT INTO channels (id, name, kind, topic, category_id, synced, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
 			const announcements = crypto.randomUUID();
-			this.sql.exec(insert, crypto.randomUUID(), 'général', 'text', 'Discussions de l’équipe', '', 0, now);
-			this.sql.exec(insert, announcements, 'annonces', 'text', 'Annonces officielles, lecture seule', '', 1, now);
-			this.sql.exec(insert, crypto.randomUUID(), 'Salon vocal', 'voice', '', 'Vocal', 0, now);
+			this.sql.exec(insert, crypto.randomUUID(), 'général', 'text', 'Discussions de l’équipe', text, 1, 0, now);
+			this.sql.exec(insert, announcements, 'annonces', 'text', 'Annonces officielles, lecture seule', text, 0, 1, now);
+			this.sql.exec(insert, crypto.randomUUID(), 'Salon vocal', 'voice', '', vocal, 1, 0, now);
 			this.writeOverride(announcements, DEFAULT_GRADE, { allow: 0, deny: READ_ONLY_DENY });
 		}
 		return this.allChannels();
@@ -320,7 +364,7 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	private permsIn(actor: Actor, channelId: string): number {
-		return channelPerms({ owner: actor.owner, base: actor.perms, grades: actor.grades }, this.overrides(channelId));
+		return channelPerms({ owner: actor.owner, base: actor.perms, grades: actor.grades, id: actor.id }, this.overrides(channelId));
 	}
 
 	private can(actor: Actor, channelId: string, flag: number): boolean {
@@ -359,6 +403,7 @@ export class Workspace extends DurableObject<Env> {
 		}
 		this.ctx.storage.transactionSync(() => {
 			this.sql.exec('DELETE FROM channel_overrides WHERE channel_id = ?', channelId);
+			this.sql.exec('UPDATE channels SET synced = 0 WHERE id = ?', channelId);
 			for (const [gradeId, override] of Object.entries(overrides)) {
 				this.writeOverride(channelId, gradeId, override);
 			}
@@ -370,6 +415,7 @@ export class Workspace extends DurableObject<Env> {
 
 	gradeDeleted(gradeId: string): void {
 		this.sql.exec('DELETE FROM channel_overrides WHERE grade_id = ?', gradeId);
+		this.sql.exec('DELETE FROM category_overrides WHERE subject_id = ?', gradeId);
 		this.overrideCache.clear();
 	}
 
@@ -406,7 +452,7 @@ export class Workspace extends DurableObject<Env> {
 
 	private allChannels(): Channel[] {
 		return this.sql
-			.exec<ChannelRow>(`${CHANNEL_SELECT} ORDER BY c.kind = 'voice', c.category, c.position, c.name`)
+			.exec<ChannelRow>(`${CHANNEL_SELECT} ORDER BY k.position IS NOT NULL, k.position, c.position, c.name`)
 			.toArray()
 			.map(toChannel);
 	}
@@ -427,24 +473,35 @@ export class Workspace extends DurableObject<Env> {
 		if (this.channelByName(name)) {
 			return err(409, 'Un salon porte déjà ce nom');
 		}
-		const { max } = this.sql.exec<{ max: number | null }>('SELECT MAX(position) AS max FROM channels WHERE kind = ?', kind).one();
+		const categoryId = resolveCategory(this.sql, input, null);
+		if (categoryId === undefined) {
+			return err(404, 'Catégorie introuvable');
+		}
+		const readOnly = kind === 'text' && input.readOnly === true;
 		const id = crypto.randomUUID();
 		this.ctx.storage.transactionSync(() => {
 			this.sql.exec(
-				'INSERT INTO channels (id, name, kind, topic, category, user_limit, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+				'INSERT INTO channels (id, name, kind, topic, category_id, synced, user_limit, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
 				id,
 				name,
 				kind,
 				(input.topic ?? '').trim().slice(0, LIMITS.topicLength),
-				(input.category ?? '').trim().slice(0, LIMITS.categoryLength),
+				categoryId,
+				categoryId && !readOnly ? 1 : 0,
 				kind === 'voice' ? this.clampLimit(input.userLimit) : 0,
-				input.position ?? (max ?? -1) + 1,
+				input.position ?? nextPosition(this.sql, categoryId),
 				Date.now(),
 			);
-			if (kind === 'text' && input.readOnly) {
-				this.writeOverride(id, DEFAULT_GRADE, { allow: 0, deny: READ_ONLY_DENY });
+			// Nouveau salon d'une catégorie : mêmes permissions qu'elle.
+			if (categoryId) {
+				copyCategoryOverrides(this.sql, categoryId, id);
+			}
+			if (readOnly) {
+				const base = this.overrides(id)[DEFAULT_GRADE] ?? { allow: 0, deny: 0 };
+				this.writeOverride(id, DEFAULT_GRADE, { allow: base.allow & ~READ_ONLY_DENY, deny: base.deny | READ_ONLY_DENY });
 			}
 		});
+		this.overrideCache.delete(id);
 		const channel = this.channelView(id)!;
 		this.broadcastChannel(channel);
 		return ok(channel);
@@ -466,22 +523,40 @@ export class Workspace extends DurableObject<Env> {
 		if (clash && clash.id !== id) {
 			return err(409, 'Un salon porte déjà ce nom');
 		}
+		const categoryId = resolveCategory(this.sql, input, current.category_id);
+		if (categoryId === undefined) {
+			return err(404, 'Catégorie introuvable');
+		}
+		const moved = categoryId !== current.category_id;
+		let changed = moved;
 		this.ctx.storage.transactionSync(() => {
 			this.sql.exec(
-				'UPDATE channels SET name = ?, topic = ?, category = ?, user_limit = ?, position = ? WHERE id = ?',
+				'UPDATE channels SET name = ?, topic = ?, category_id = ?, synced = ?, user_limit = ?, position = ? WHERE id = ?',
 				name,
 				input.topic === undefined ? current.topic : input.topic.trim().slice(0, LIMITS.topicLength),
-				input.category === undefined ? current.category : input.category.trim().slice(0, LIMITS.categoryLength),
+				categoryId,
+				moved && !categoryId ? 0 : current.synced,
 				current.kind === 'voice' ? this.clampLimit(input.userLimit ?? current.user_limit) : 0,
-				input.position ?? current.position,
+				input.position ?? (moved ? nextPosition(this.sql, categoryId) : current.position),
 				id,
 			);
+			if (moved && categoryId && current.synced === 1) {
+				copyCategoryOverrides(this.sql, categoryId, id);
+				this.overrideCache.delete(id);
+			}
 			if (input.readOnly !== undefined) {
 				const base = this.overrides(id)[DEFAULT_GRADE] ?? { allow: 0, deny: 0 };
-				this.writeOverride(id, DEFAULT_GRADE, input.readOnly ? { allow: base.allow & ~READ_ONLY_DENY, deny: base.deny | READ_ONLY_DENY } : { allow: base.allow, deny: base.deny & ~READ_ONLY_DENY });
+				const next = input.readOnly ? { allow: base.allow & ~READ_ONLY_DENY, deny: base.deny | READ_ONLY_DENY } : { allow: base.allow, deny: base.deny & ~READ_ONLY_DENY };
+				// Formulaire renvoyé tel quel : ne désynchronise que sur un vrai changement.
+				if (next.allow !== base.allow || next.deny !== base.deny) {
+					this.writeOverride(id, DEFAULT_GRADE, next);
+					this.sql.exec('UPDATE channels SET synced = 0 WHERE id = ?', id);
+					changed = true;
+				}
 			}
 		});
-		if (input.readOnly !== undefined) {
+		this.overrideCache.delete(id);
+		if (changed) {
 			this.resync();
 		}
 		const channel = this.channelView(id)!;
@@ -716,6 +791,9 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	memberRemoved(userId: string): void {
+		this.sql.exec('DELETE FROM channel_overrides WHERE grade_id = ?', `@${userId}`);
+		this.sql.exec('DELETE FROM category_overrides WHERE subject_id = ?', `@${userId}`);
+		this.overrideCache.clear();
 		const channels = new Set<string>();
 		for (const ws of this.ctx.getWebSockets(userId)) {
 			const voice = this.conn(ws)?.voice;
@@ -1250,6 +1328,116 @@ export class Workspace extends DurableObject<Env> {
 			this.broadcastIn(messageChannel, { t: 'message_deleted', channelId: messageChannel, id });
 		}
 		this.broadcastIn(channelId, { t: 'drive', channelId });
+	}
+
+	// Catégories et ordre des salons.
+
+	categories(actor: Actor): Category[] {
+		const all = listCategories(this.sql);
+		if (has(actor.perms, P.MANAGE_CHANNELS)) {
+			return all;
+		}
+		const used = new Set(this.channels(actor).map((c) => c.categoryId));
+		return all.filter((c) => used.has(c.id));
+	}
+
+	createCategory(actor: Actor, rawName: string): Result<Category> {
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
+		}
+		const name = cleanCategoryName(rawName);
+		if (!name) {
+			return err(400, 'Nom de catégorie requis');
+		}
+		const category = insertCategory(this.sql, name);
+		this.resync();
+		return ok(category);
+	}
+
+	updateCategory(actor: Actor, id: string, rawName: string): Result<Category> {
+		const denied = this.categoryDenied<Category>(actor, id);
+		if (denied) {
+			return denied;
+		}
+		const name = cleanCategoryName(rawName);
+		if (!name) {
+			return err(400, 'Nom de catégorie requis');
+		}
+		const category = renameCategory(this.sql, id, name)!;
+		this.resync();
+		return ok(category);
+	}
+
+	deleteCategory(actor: Actor, id: string): Result<null> {
+		const denied = this.categoryDenied<null>(actor, id);
+		if (denied) {
+			return denied;
+		}
+		this.ctx.storage.transactionSync(() => removeCategory(this.sql, id));
+		this.resync();
+		return ok(null);
+	}
+
+	getCategoryOverrides(actor: Actor, id: string): Result<ChannelOverrides> {
+		return this.categoryDenied<ChannelOverrides>(actor, id) ?? ok(readCategoryOverrides(this.sql, id));
+	}
+
+	setCategoryOverrides(actor: Actor, id: string, overrides: ChannelOverrides): Result<ChannelOverrides> {
+		const denied = this.categoryDenied<ChannelOverrides>(actor, id);
+		if (denied) {
+			return denied;
+		}
+		const masked: ChannelOverrides = {};
+		for (const [key, override] of Object.entries(overrides)) {
+			const allow = override.allow & CHANNEL_BITS;
+			masked[key] = { allow, deny: override.deny & CHANNEL_BITS & ~allow };
+		}
+		this.ctx.storage.transactionSync(() => writeCategoryOverrides(this.sql, id, masked));
+		this.overrideCache.clear();
+		this.resync();
+		return ok(readCategoryOverrides(this.sql, id));
+	}
+
+	syncChannel(actor: Actor, channelId: string): Result<Channel> {
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
+		}
+		const row = this.channelRow(channelId);
+		if (!row) {
+			return err(404, 'Salon introuvable');
+		}
+		const categoryId = row.category_id;
+		if (!categoryId) {
+			return err(400, 'Salon sans catégorie');
+		}
+		this.ctx.storage.transactionSync(() => {
+			copyCategoryOverrides(this.sql, categoryId, channelId);
+			this.sql.exec('UPDATE channels SET synced = 1 WHERE id = ?', channelId);
+		});
+		this.overrideCache.delete(channelId);
+		this.resync();
+		return ok(this.channelView(channelId)!);
+	}
+
+	setLayout(actor: Actor, input: Partial<Layout>): Result<null> {
+		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
+			return err(403, DENIED);
+		}
+		const layout = validLayout(this.sql, input);
+		if (!layout) {
+			return err(400, 'Ordre invalide');
+		}
+		this.ctx.storage.transactionSync(() => applyLayout(this.sql, layout));
+		this.overrideCache.clear();
+		this.resync();
+		return ok(null);
+	}
+
+	private categoryDenied<T>(actor: Actor, id: string): Result<T> | null {
+		if (!listCategories(this.sql).some((c) => c.id === id)) {
+			return err(404, 'Catégorie introuvable');
+		}
+		return has(actor.perms, P.MANAGE_CHANNELS) ? null : err(403, DENIED);
 	}
 
 	async fetch(request: Request): Promise<Response> {
