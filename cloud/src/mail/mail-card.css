@@ -1,0 +1,71 @@
+.mail-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	max-width: 520px;
+	margin-top: 6px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--bg);
+	color: inherit;
+	text-decoration: none;
+}
+
+.mail-card:hover {
+	background: var(--hover);
+}
+
+.mail-card-icon {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	border-radius: var(--r-sm);
+	background: var(--accent-soft);
+	color: var(--accent-ink);
+}
+
+.mail-card-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.mail-card-text strong {
+	overflow: hidden;
+	font-size: 14px;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mail-card-from {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.mail-card-snippet {
+	display: -webkit-box;
+	overflow: hidden;
+	font-size: 13px;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+
+.mail-card-open {
+	flex: none;
+	align-self: center;
+	color: var(--accent-ink);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+@media (max-width: 860px) {
+	.mail-card-open {
+		display: none;
+	}
+}

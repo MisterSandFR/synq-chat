@@ -55,6 +55,9 @@ export interface MailThread {
 	assigneeName: string | null;
 	messageCount: number;
 	lastAt: number;
+	// Optionnels tant que le serveur ne les renvoie pas partout.
+	pinned?: boolean;
+	snoozedUntil?: number | null;
 }
 
 export interface MailAttachment {
@@ -76,6 +79,9 @@ export interface MailMessage {
 	body: string;
 	attachments: MailAttachment[];
 	sentBy: string | null;
+	hasHtml?: boolean;
+	toList?: MailAddress[];
+	ccList?: MailAddress[];
 }
 
 export interface MailNote {
@@ -96,6 +102,69 @@ export interface MailThreadDetail {
 export interface MailTestResult {
 	imap: string | null;
 	smtp: string | null;
+}
+
+export interface MailAddress {
+	name: string;
+	addr: string;
+}
+
+export interface MailUpload {
+	key: string;
+	name: string;
+	size: number;
+	type: string;
+}
+
+export interface MailDraft {
+	id: string;
+	mailboxId: string;
+	threadId: string | null;
+	to: MailAddress[];
+	cc: MailAddress[];
+	subject: string;
+	text: string;
+	attachments: MailUpload[];
+	updatedAt: number;
+}
+
+export interface MailSendInput {
+	mailboxId: string;
+	threadId?: string | null;
+	forwardOf?: string | null;
+	to: string[];
+	cc?: string[];
+	bcc?: string[];
+	subject: string;
+	text: string;
+	attachments?: string[];
+	draftId?: string | null;
+}
+
+export type MailAiAction = 'reply' | 'quick' | 'summary' | 'ask';
+
+export interface MailAiInput {
+	action: MailAiAction;
+	prompt?: string;
+	tone?: 'neutre' | 'chaleureux' | 'formel' | 'bref';
+}
+
+export interface MailAiResult {
+	text?: string;
+	suggestions?: Array<{ label: string; text: string }>;
+}
+
+export interface MailCardRef {
+	threadId: string;
+	subject: string;
+	from: string;
+	snippet: string;
+}
+
+declare module './types' {
+	interface Message {
+		mailCard?: MailCardRef;
+	}
 }
 
 export const MAIL_PORTS = { imap: [993], smtp: [465, 587] } as const;
