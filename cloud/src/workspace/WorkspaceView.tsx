@@ -9,6 +9,7 @@ import { Composer } from './Composer';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
+import { DropZone } from './media/DropZone';
 import { ResizeHandle, useResizable } from './resizable';
 import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
@@ -184,19 +185,19 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const onlineMembers = [...members.values()].filter((m) => state.online.has(m.id));
 	const otherVoice = voice.snapshot && voice.snapshot.channelId !== active?.id ? channels?.find((c) => c.id === voice.snapshot!.channelId)?.name ?? null : null;
 
-	const sendMessage = async (body: string, attachmentKey?: string, reply?: number) => {
+	const sendMessage = async (body: string, attachmentKeys: string[], reply?: number) => {
 		if (!active) {
 			return;
 		}
 		if (activeData?.hasNewer) {
 			await loadMessages(active.id);
 		}
-		const message = await api<Message>('POST', `/w/${workspaceId}/channels/${active.id}/messages`, { body, attachmentKey, replyTo: reply });
+		const message = await api<Message>('POST', `/w/${workspaceId}/channels/${active.id}/messages`, { body, attachmentKeys, replyTo: reply });
 		dispatch({ type: 'message', message });
 	};
 
 	const messagePane = active && (
-			<>
+			<DropZone enabled={has(activePerms, P.ATTACH_FILES)}>
 				<MessageList
 					key={`messages-${active.id}`}
 					workspaceId={workspaceId}
@@ -249,7 +250,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					onSend={sendMessage}
 					onTyping={() => send({ t: 'typing', channelId: active.id })}
 				/>
-			</>
+			</DropZone>
 	);
 
 	return (

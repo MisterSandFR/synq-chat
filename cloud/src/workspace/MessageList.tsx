@@ -1,16 +1,13 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { mentionedUsers, type Channel, type Grade, type Message } from '../../shared/types';
-import { fileUrl } from '../api';
-import { Avatar, Icon, fileIcon, formatSize } from '../ui';
+import { Avatar, Icon } from '../ui';
 import { memberColor, memberLabel } from './grades';
+import { MessageMedia } from './media/MessageMedia';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import type { ChannelMessages } from './useWorkspace';
 
 const GROUP_GAP = 5 * 60 * 1000;
-const IMAGES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']);
-const VIDEOS = new Set(['video/mp4', 'video/webm']);
-const AUDIOS = new Set(['audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm']);
 
 const time = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
 const longDate = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -180,7 +177,7 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 										</p>
 									)
 								)}
-								{message.attachment && <AttachmentView workspaceId={workspaceId} attachment={message.attachment} onLoad={keepBottom} />}
+								<MessageMedia workspaceId={workspaceId} message={message} onLoad={keepBottom} />
 							</div>
 							{editing !== message.id && (
 								<div className='msg-actions'>
@@ -215,35 +212,6 @@ export function MessageList({ workspaceId, channel, data, lookup, canModerate, g
 				</button>
 			)}
 		</div>
-	);
-}
-
-function AttachmentView({ workspaceId, attachment, onLoad }: { workspaceId: string; attachment: NonNullable<Message['attachment']>; onLoad: () => void }) {
-	const url = fileUrl(workspaceId, attachment.key);
-	if (IMAGES.has(attachment.type)) {
-		return (
-			<a href={url} target='_blank' rel='noopener noreferrer'>
-				<img className='attachment-media' src={url} alt={attachment.name} loading='lazy' onLoad={onLoad} />
-			</a>
-		);
-	}
-	if (VIDEOS.has(attachment.type)) {
-		return <video className='attachment-media' src={url} controls preload='metadata' onLoadedMetadata={onLoad} />;
-	}
-	if (AUDIOS.has(attachment.type)) {
-		return <audio src={url} controls preload='metadata' style={{ display: 'block', marginTop: 6, maxWidth: '100%' }} />;
-	}
-	return (
-		<a className='attachment-file' href={url} download={attachment.name}>
-			<span className='file-icon'>
-				<Icon name={fileIcon(attachment.type)} />
-			</span>
-			<span className='file-meta'>
-				<span>{attachment.name}</span>
-				<span>{formatSize(attachment.size)}</span>
-			</span>
-			<Icon name='download' size={16} />
-		</a>
 	);
 }
 

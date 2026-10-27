@@ -165,7 +165,7 @@ describe('fichiers', () => {
 		expect(upload.data.name).toBe('logo été.svg');
 
 		const msg = await owner.req<Message>('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: '', attachmentKey: upload.data.key });
-		expect(msg.data.attachment).toMatchObject({ name: 'logo été.svg', type: 'image/svg+xml', size: svg.length });
+		expect(msg.data.attachments[0]).toMatchObject({ name: 'logo été.svg', type: 'image/svg+xml', size: svg.length });
 
 		const fileId = upload.data.key.split('/').pop();
 		const res = await exports.default.fetch(new Request(`${BASE}/api/w/${wid}/files/${fileId}`, { headers: { cookie: member.cookie } }));

@@ -18,8 +18,10 @@ import {
 } from '../shared/types';
 import { DUMMY_HASH, hashPassword, randomToken, sha256, verifyPassword } from './crypto';
 import { cleanName, denyUnless, fail, readJson, stub, unwrap, workspaceStub, type Ctx, type AppEnv } from './http';
+import { resolveAttachments } from './media';
 import { authorizeUrl, completeLogin } from './recube';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
+import { mediaRoutes } from './routes/media';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -40,6 +42,7 @@ const INLINE_TYPES = new Set([
 	'audio/ogg',
 	'audio/wav',
 	'audio/webm',
+	'audio/mp4',
 ]);
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -678,25 +681,16 @@ app.get('/w/:wid/search', async (c) => {
 });
 
 app.post('/w/:wid/channels/:cid/messages', async (c) => {
-	const body = await readJson<{ body: string; attachmentKey: string; replyTo: number }>(c);
-	let attachment: Attachment | null = null;
-	if (typeof body.attachmentKey === 'string') {
-		// Métadonnées relues depuis R2, jamais depuis le client.
-		const key = body.attachmentKey;
-		const object = key.startsWith(`w/${c.get('workspaceId')}/`) ? await c.env.FILES.head(key) : null;
-		if (!object) {
-			return fail(c, 400, 'Fichier joint introuvable');
-		}
-		attachment = {
-			key,
-			name: object.customMetadata?.name ?? key.split('/').pop() ?? 'fichier',
-			size: object.size,
-			type: object.httpMetadata?.contentType ?? 'application/octet-stream',
-		};
+	const body = await readJson<{ body: string; attachmentKey: string; attachmentKeys: string[]; replyTo: number }>(c);
+	// `attachmentKey` seul : clients d'avant les pièces jointes multiples.
+	const keys: unknown[] = Array.isArray(body.attachmentKeys) ? body.attachmentKeys : body.attachmentKey === undefined ? [] : [body.attachmentKey];
+	const attachments = await resolveAttachments(c.env.FILES, c.get('workspaceId'), keys);
+	if (!attachments.ok) {
+		return fail(c, attachments.status, attachments.error);
 	}
 	const text = typeof body.body === 'string' ? body.body : '';
 	const replyTo = Number.isInteger(body.replyTo) ? (body.replyTo as number) : null;
-	return unwrap(c, await stub(c).postMessage(c.get('actor'), c.req.param('cid'), text, attachment, replyTo));
+	return unwrap(c, await stub(c).postMessage(c.get('actor'), c.req.param('cid'), text, attachments.value, replyTo));
 });
 
 app.patch('/w/:wid/messages/:mid', async (c) => {
@@ -809,6 +803,7 @@ app.patch('/w/:wid/drive/files/:id', async (c) => {
 
 app.delete('/w/:wid/drive/files/:id', async (c) => unwrap(c, await stub(c).driveDeleteFile(c.get('actor'), c.req.param('id'))));
 
+app.route('/', mediaRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

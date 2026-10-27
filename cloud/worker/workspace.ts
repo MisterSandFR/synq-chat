@@ -21,6 +21,7 @@ import {
 	type VoiceFlags,
 	type VoiceParticipant,
 } from '../shared/types';
+import { parseAttachments } from './media';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -59,6 +60,7 @@ type MessageRow = {
 	user_id: string;
 	body: string;
 	attachment: string | null;
+	attachments: string | null;
 	reply_to: number | null;
 	reply_user: string | null;
 	reply_body: string | null;
@@ -169,6 +171,9 @@ const MIGRATIONS = [
 		PRIMARY KEY (channel_id, grade_id)
 	);
 	INSERT INTO channel_overrides (channel_id, grade_id, allow, deny) SELECT id, 'default', 0, 1408 FROM channels WHERE read_only = 1;`,
+	// Pièces jointes multiples : l'ancienne colonne reste lue pour compat, plus jamais écrite.
+	`ALTER TABLE messages ADD COLUMN attachments TEXT;
+	UPDATE messages SET attachments = json_array(json(attachment)), attachment = NULL WHERE attachment IS NOT NULL;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
@@ -200,7 +205,7 @@ const toMessage = (row: MessageRow): Message => ({
 	channelId: row.channel_id,
 	userId: row.user_id,
 	body: row.body,
-	attachment: row.attachment ? (JSON.parse(row.attachment) as Attachment) : null,
+	attachments: parseAttachments(row.attachments, row.attachment),
 	replyTo: row.reply_to === null ? null : { id: row.reply_to, userId: row.reply_user, body: row.reply_body },
 	createdAt: row.created_at,
 	editedAt: row.edited_at,
@@ -541,18 +546,18 @@ export class Workspace extends DurableObject<Env> {
 		return ok({ messages: rows.slice(0, PAGE_SIZE).reverse().map(toMessage), hasMore: rows.length > PAGE_SIZE, hasNewer: false });
 	}
 
-	postMessage(actor: Actor, channelId: string, body: string, attachment: Attachment | null, replyTo: number | null = null): Result<Message> {
+	postMessage(actor: Actor, channelId: string, body: string, attachments: Attachment[], replyTo: number | null = null): Result<Message> {
 		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
 		}
 		if (!this.can(actor, channelId, P.SEND_MESSAGES)) {
 			return err(403, 'Tu ne peux pas écrire dans ce salon');
 		}
-		if (attachment && !this.can(actor, channelId, P.ATTACH_FILES)) {
+		if (attachments.length && !this.can(actor, channelId, P.ATTACH_FILES)) {
 			return err(403, 'Tu ne peux pas joindre de fichier ici');
 		}
 		const text = body.trim();
-		if (!text && !attachment) {
+		if (!text && !attachments.length) {
 			return err(400, 'Message vide');
 		}
 		if (text.length > LIMITS.messageLength) {
@@ -562,21 +567,25 @@ export class Workspace extends DurableObject<Env> {
 		if (replyTo !== null && !target) {
 			return err(400, 'Message cité introuvable');
 		}
+		const keys = attachments.map((a) => a.key);
+		if (keys.length && this.sql.exec(`SELECT 1 FROM files WHERE key IN (${keys.map(() => '?').join(', ')})`, ...keys).toArray().length) {
+			return err(409, 'Fichier déjà joint à un message');
+		}
 		const now = Date.now();
 		const id = this.ctx.storage.transactionSync(() => {
 			const row = this.sql
 				.exec<{ id: number }>(
-					'INSERT INTO messages (channel_id, user_id, body, attachment, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
+					'INSERT INTO messages (channel_id, user_id, body, attachments, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
 					channelId,
 					actor.id,
 					text,
-					attachment ? JSON.stringify(attachment) : null,
+					attachments.length ? JSON.stringify(attachments) : null,
 					replyTo,
 					now,
 				)
 				.one();
 			this.saveMentions(row.id, text);
-			if (attachment) {
+			for (const attachment of attachments) {
 				this.insertFile(channelId, null, attachment, actor.id, row.id);
 			}
 			return row.id;
@@ -584,7 +593,7 @@ export class Workspace extends DurableObject<Env> {
 		this.setRead(actor.id, channelId, id);
 		const message = this.message(id)!;
 		this.broadcastIn(channelId, { t: 'message', message });
-		if (attachment) {
+		if (attachments.length) {
 			this.broadcastIn(channelId, { t: 'drive', channelId });
 		}
 		return ok(message);
@@ -599,7 +608,7 @@ export class Workspace extends DurableObject<Env> {
 			return err(403, 'Seul l’auteur peut modifier ce message');
 		}
 		const text = body.trim();
-		if (!text && !current.attachment) {
+		if (!text && !current.attachments.length) {
 			return err(400, 'Message vide');
 		}
 		if (text.length > LIMITS.messageLength) {
@@ -628,9 +637,9 @@ export class Workspace extends DurableObject<Env> {
 			this.sql.exec('DELETE FROM files WHERE message_id = ?', id);
 		});
 		this.broadcastIn(current.channelId, { t: 'message_deleted', channelId: current.channelId, id });
-		if (current.attachment) {
+		if (current.attachments.length) {
 			this.broadcastIn(current.channelId, { t: 'drive', channelId: current.channelId });
-			await this.deleteObjects([current.attachment.key]);
+			await this.deleteObjects(current.attachments.map((a) => a.key));
 		}
 		return ok(null);
 	}
@@ -1089,7 +1098,7 @@ export class Workspace extends DurableObject<Env> {
 		return toFile(row);
 	}
 
-	// Fichier supprimé du drive : le message lié perd sa pièce jointe, ou disparaît s'il n'avait qu'elle.
+	// Fichier supprimé du drive : le message lié perd cette pièce jointe, ou disparaît s'il ne lui reste rien.
 	private detachFiles(files: FileRow[]): { updated: number[]; deleted: Array<{ id: number; channelId: string }> } {
 		const updated: number[] = [];
 		const deleted: Array<{ id: number; channelId: string }> = [];
@@ -1098,13 +1107,18 @@ export class Workspace extends DurableObject<Env> {
 			if (file.message_id === null) {
 				continue;
 			}
-			const message = this.sql.exec<{ body: string }>('SELECT body FROM messages WHERE id = ?', file.message_id).toArray()[0];
+			const message = this.sql
+				.exec<{ body: string; attachments: string | null; attachment: string | null }>('SELECT body, attachments, attachment FROM messages WHERE id = ?', file.message_id)
+				.toArray()[0];
 			if (!message) {
 				continue;
 			}
-			if (message.body) {
-				this.sql.exec('UPDATE messages SET attachment = NULL WHERE id = ?', file.message_id);
-				updated.push(file.message_id);
+			const rest = parseAttachments(message.attachments, message.attachment).filter((a) => a.key !== file.key);
+			if (message.body || rest.length) {
+				this.sql.exec('UPDATE messages SET attachments = ?, attachment = NULL WHERE id = ?', rest.length ? JSON.stringify(rest) : null, file.message_id);
+				if (!updated.includes(file.message_id)) {
+					updated.push(file.message_id);
+				}
 			} else {
 				this.sql.exec('DELETE FROM messages WHERE id = ?', file.message_id);
 				deleted.push({ id: file.message_id, channelId: file.channel_id });

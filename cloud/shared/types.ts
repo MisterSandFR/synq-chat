@@ -103,7 +103,7 @@ export interface Message {
 	channelId: string;
 	userId: string;
 	body: string;
-	attachment: Attachment | null;
+	attachments: Attachment[];
 	replyTo: MessageRef | null;
 	createdAt: number;
 	editedAt: number | null;
