@@ -1,5 +1,6 @@
 import type { NotificationItem } from './notifications';
 import type { PinInfo, Reaction } from './chat';
+import type { DirectConversation, ThreadSummary } from './dm-threads';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -63,7 +64,7 @@ export interface WorkspaceDetail {
 	members: Member[];
 }
 
-export type ChannelKind = 'text' | 'voice';
+export type ChannelKind = 'text' | 'voice' | 'dm';
 
 export interface Channel {
 	id: string;
@@ -113,6 +114,9 @@ export interface Message {
 	replyTo: MessageRef | null;
 	createdAt: number;
 	editedAt: number | null;
+	// Réponse de fil : id du message racine.
+	threadRoot?: number | null;
+	thread?: ThreadSummary | null;
 }
 
 export interface MessagePage {
@@ -210,7 +214,10 @@ export type ServerEvent =
 	| { t: 'commands_changed' }
 	| { t: 'announcement'; channelId: string; text: string; updatedBy: string | null; updatedAt: number | null }
 	| { t: 'reactions'; channelId: string; messageId: number; reactions: Reaction[] }
-	| { t: 'pinned'; channelId: string; messageId: number; pinned: PinInfo | null };
+	| { t: 'pinned'; channelId: string; messageId: number; pinned: PinInfo | null }
+	| { t: 'dm'; conversation: DirectConversation }
+	| { t: 'thread'; channelId: string; rootId: number; message: Message; root: Message }
+	| { t: 'call_ring'; channelId: string; by: string };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

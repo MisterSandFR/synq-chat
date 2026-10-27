@@ -27,6 +27,7 @@ import { categoryRoutes, cleanOverrides } from './routes/categories';
 import { commandRoutes } from './routes/commands';
 import { rcRoutes } from './routes/rc';
 import { chatRoutes } from './routes/chat';
+import { dmThreadsRoutes } from './routes/dm-threads';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -809,6 +810,7 @@ app.route('/', categoryRoutes);
 app.route('/', commandRoutes);
 app.route('/', rcRoutes);
 app.route('/', chatRoutes);
+app.route('/', dmThreadsRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

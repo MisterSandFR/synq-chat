@@ -29,9 +29,10 @@ type Props = {
 	presence?: Presence;
 	presenceText?: string;
 	meMenu?: (close: () => void) => ReactNode;
+	directs?: ReactNode;
 };
 
-export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu }: Props) {
+export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu, directs }: Props) {
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
@@ -62,7 +63,8 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 			<CategoryNav
 				workspaceId={workspaceId}
 				info={state.info ?? null}
-				channels={channels}
+				channels={channels.filter((c) => c.kind !== 'dm')}
+				footer={directs}
 				channelId={channelId}
 				staff={staff}
 				onOpenChannel={open}

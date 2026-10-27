@@ -3,6 +3,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Category, Layout } from '../shared/categories';
 import { appUserId, type CommandConfig, type CommandInput, type SlashCommand } from '../shared/commands';
 import type { PinInfo, Reaction } from '../shared/chat';
+import { DM_MAX_MEMBERS, DM_PERMS, type DirectChange, type DirectConversation, type FollowedThread, type ThreadView } from '../shared/dm-threads';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
@@ -45,6 +46,20 @@ import { editCommand, findCommand, insertCommand, listCommandConfigs, listComman
 import { RC_LIMITS, everyoneMentions, type Announcement, type SavedMessage } from '../shared/rc';
 import { EVERYONE, insertMentions, readAnnouncement, savedRows, writeAnnouncement, writeSaved } from './rc';
 import { decorate, dropChannelExtras, dropExtras, setPin, toggleReaction } from './chat';
+import {
+	changeDirect,
+	createDirect,
+	directById,
+	findDirect,
+	follow,
+	followedRows,
+	isFollowing,
+	lastReplyId,
+	listDirects,
+	loadDmMembers,
+	markThreadRead,
+	unfollow,
+} from './dm-threads';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -92,6 +107,9 @@ type MessageRow = {
 	reply_body: string | null;
 	created_at: number;
 	edited_at: number | null;
+	thread_root?: number | null;
+	thread_count?: number;
+	thread_last?: number | null;
 };
 
 type FolderRow = { id: string; channel_id: string; parent_id: string | null; name: string; created_by: string; created_at: number };
@@ -267,14 +285,35 @@ const MIGRATIONS = [
 		pinned_at INTEGER NOT NULL
 	);
 	CREATE INDEX pins_channel ON pins (channel_id, pinned_at);`,
+	`CREATE TABLE dm_members (
+		channel_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		PRIMARY KEY (channel_id, user_id)
+	);
+	CREATE INDEX dm_members_user ON dm_members (user_id);
+	ALTER TABLE channels ADD COLUMN dm_group INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE channels ADD COLUMN dm_name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE messages ADD COLUMN thread_root INTEGER;
+	ALTER TABLE messages ADD COLUMN thread_broadcast INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX messages_thread ON messages (thread_root, id);
+	CREATE TABLE thread_follows (
+		user_id TEXT NOT NULL,
+		root_id INTEGER NOT NULL,
+		last_read_id INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (user_id, root_id)
+	);`,
 ];
 
-const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
+const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
+	(SELECT COUNT(*) FROM messages t WHERE t.thread_root = m.id) AS thread_count,
+	(SELECT MAX(t.created_at) FROM messages t WHERE t.thread_root = m.id) AS thread_last
 	FROM messages m LEFT JOIN messages r ON r.id = m.reply_to`;
 
 const CHANNEL_SELECT = `SELECT c.*, o.deny AS ro_deny, COALESCE(k.name, '') AS category_name FROM channels c
 	LEFT JOIN channel_overrides o ON o.channel_id = c.id AND o.grade_id = '${DEFAULT_GRADE}'
 	LEFT JOIN categories k ON k.id = c.category_id`;
+// Réponses de fil hors salon, sauf celles envoyées aussi dans le salon.
+const IN_CHANNEL = '(m.thread_root IS NULL OR m.thread_broadcast = 1)';
 
 const CHANNEL_BITS = PERMISSIONS.filter((p) => p.channel).reduce((acc, p) => acc | P[p.key], 0);
 
@@ -305,6 +344,8 @@ const toMessage = (row: MessageRow): Message => ({
 	replyTo: row.reply_to === null ? null : { id: row.reply_to, userId: row.reply_user, body: row.reply_body },
 	createdAt: row.created_at,
 	editedAt: row.edited_at,
+	threadRoot: row.thread_root ?? null,
+	thread: row.thread_count ? { count: row.thread_count, lastAt: row.thread_last ?? row.created_at } : null,
 });
 
 const toFolder = (row: FolderRow): DriveFolder => ({
@@ -348,6 +389,7 @@ const DENIED = 'Permission insuffisante';
 export class Workspace extends DurableObject<Env> {
 	private readonly sql: SqlStorage;
 	private readonly overrideCache = new Map<string, ChannelOverrides>();
+	private dmCache: Map<string, string[]> | null = null;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -415,6 +457,10 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	private permsIn(actor: Actor, channelId: string): number {
+		const participants = this.dmMembers(channelId);
+		if (participants) {
+			return participants.includes(actor.id) ? DM_PERMS : 0;
+		}
 		return channelPerms({ owner: actor.owner, base: actor.perms, grades: actor.grades, id: actor.id }, this.overrides(channelId));
 	}
 
@@ -436,7 +482,7 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	getOverrides(actor: Actor, channelId: string): Result<ChannelOverrides> {
-		if (!this.channelRow(channelId)) {
+		if (!this.roomRow(channelId)) {
 			return err(404, 'Salon introuvable');
 		}
 		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
@@ -446,7 +492,7 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	setOverrides(actor: Actor, channelId: string, overrides: ChannelOverrides): Result<ChannelOverrides> {
-		if (!this.channelRow(channelId)) {
+		if (!this.roomRow(channelId)) {
 			return err(404, 'Salon introuvable');
 		}
 		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
@@ -562,7 +608,7 @@ export class Workspace extends DurableObject<Env> {
 		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
 			return err(403, DENIED);
 		}
-		const current = this.channelRow(id);
+		const current = this.roomRow(id);
 		if (!current) {
 			return err(404, 'Salon introuvable');
 		}
@@ -619,7 +665,7 @@ export class Workspace extends DurableObject<Env> {
 		if (!has(actor.perms, P.MANAGE_CHANNELS)) {
 			return err(403, DENIED);
 		}
-		const current = this.channelRow(id);
+		const current = this.roomRow(id);
 		if (!current) {
 			return err(404, 'Salon introuvable');
 		}
@@ -655,9 +701,9 @@ export class Workspace extends DurableObject<Env> {
 			return err(404, 'Salon introuvable');
 		}
 		const older = (before: number, limit: number) =>
-			this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.channel_id = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`, channelId, before, limit + 1).toArray();
+			this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.channel_id = ? AND m.id < ? AND ${IN_CHANNEL} ORDER BY m.id DESC LIMIT ?`, channelId, before, limit + 1).toArray();
 		const newer = (from: number, limit: number) =>
-			this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.channel_id = ? AND m.id >= ? ORDER BY m.id ASC LIMIT ?`, channelId, from, limit + 1).toArray();
+			this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.channel_id = ? AND m.id >= ? AND ${IN_CHANNEL} ORDER BY m.id ASC LIMIT ?`, channelId, from, limit + 1).toArray();
 
 		if (cursor.around !== undefined) {
 			const before = older(cursor.around, AROUND);
@@ -823,7 +869,7 @@ export class Workspace extends DurableObject<Env> {
 				FROM messages m
 				LEFT JOIN reads r ON r.channel_id = m.channel_id AND r.user_id = ?1
 				LEFT JOIN mentions x ON x.message_id = m.id AND x.user_id IN (?1, '${EVERYONE}')
-				WHERE m.id > COALESCE(r.last_read_id, 0) AND m.user_id != ?1
+				WHERE m.id > COALESCE(r.last_read_id, 0) AND m.user_id != ?1 AND ${IN_CHANNEL}
 				GROUP BY m.channel_id`,
 				actor.id,
 			)
@@ -892,7 +938,7 @@ export class Workspace extends DurableObject<Env> {
 			return err(404, 'Connexion temps réel introuvable, recharge la page');
 		}
 		const channel = this.channelRow(channelId);
-		if (!channel || channel.kind !== 'voice' || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+		if (!channel || (channel.kind !== 'voice' && channel.kind !== 'dm') || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon vocal introuvable');
 		}
 		if (!this.can(actor, channelId, P.VOICE_CONNECT)) {
@@ -917,6 +963,9 @@ export class Workspace extends DurableObject<Env> {
 		this.setVoice(ws, conn, { channelId, sessionId: null, recvSessionId: null, tracks: [], muted: false, deafened: false, video: false, screen: false });
 		if (previous && previous !== channelId) {
 			this.broadcastVoice(previous);
+		}
+		if (channel.kind === 'dm' && others.length === 0) {
+			this.ringDirect(actor.id, channelId);
 		}
 		return ok(this.broadcastVoice(channelId));
 	}
@@ -1285,6 +1334,179 @@ export class Workspace extends DurableObject<Env> {
 			this.broadcastIn(current.channelId, { t: 'pinned', channelId: current.channelId, messageId, pinned: result.value });
 		}
 		return result;
+	}
+
+	// Messages directs et fils.
+
+	directs(actor: Actor): DirectConversation[] {
+		return listDirects(this.sql, actor.id);
+	}
+
+	// Participants validés comme membres par la route, auteur compris.
+	openDirect(actor: Actor, userIds: string[], name: string): Result<DirectConversation> {
+		if (!userIds.includes(actor.id) || userIds.length < 2 || userIds.length > DM_MAX_MEMBERS) {
+			return err(400, 'Participants invalides');
+		}
+		this.dmCache ??= loadDmMembers(this.sql);
+		const existing = name ? null : findDirect(this.dmCache, userIds);
+		if (existing) {
+			return ok(directById(this.sql, existing)!);
+		}
+		const id = this.ctx.storage.transactionSync(() => createDirect(this.sql, userIds, name));
+		this.dmCache = null;
+		const conversation = directById(this.sql, id)!;
+		this.sendTo(userIds, { t: 'channel_upsert', channel: this.channelView(id)!, perms: DM_PERMS });
+		this.sendTo(userIds, { t: 'dm', conversation });
+		return ok(conversation);
+	}
+
+	// Groupes seulement, par un participant ; null pour qui vient de partir.
+	updateDirect(actor: Actor, channelId: string, change: DirectChange): Result<DirectConversation | null> {
+		const current = directById(this.sql, channelId);
+		if (!current || !current.memberIds.includes(actor.id)) {
+			return err(404, 'Conversation introuvable');
+		}
+		if (!current.group) {
+			return err(400, 'Réservé aux groupes');
+		}
+		if (change.remove !== undefined && !current.memberIds.includes(change.remove)) {
+			return err(404, 'Participant introuvable');
+		}
+		const add = [...new Set(change.add ?? [])].filter((id) => !current.memberIds.includes(id));
+		if (current.memberIds.length + add.length > DM_MAX_MEMBERS) {
+			return err(400, `${DM_MAX_MEMBERS} participants maximum`);
+		}
+		this.ctx.storage.transactionSync(() => changeDirect(this.sql, channelId, { add, remove: change.remove, name: change.name }));
+		this.dmCache = null;
+		this.resync();
+		const conversation = directById(this.sql, channelId)!;
+		this.sendTo(conversation.memberIds, { t: 'dm', conversation });
+		return ok(conversation.memberIds.includes(actor.id) ? conversation : null);
+	}
+
+	threadView(actor: Actor, rootId: number): Result<ThreadView> {
+		const found = this.threadRoot(actor, rootId);
+		if (!found.ok) {
+			return err(found.status, found.error);
+		}
+		const replies = this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.thread_root = ? ORDER BY m.id LIMIT 500`, rootId).toArray().map(toMessage);
+		return ok({ root: found.value, replies, following: isFollowing(this.sql, actor.id, rootId) });
+	}
+
+	threadReply(actor: Actor, rootId: number, body: string, attachment: Attachment | null, broadcast: boolean): Result<Message> {
+		const found = this.threadRoot(actor, rootId);
+		if (!found.ok) {
+			return err(found.status, found.error);
+		}
+		const { channelId, userId: rootAuthor } = found.value;
+		if (!this.can(actor, channelId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		if (attachment && !this.can(actor, channelId, P.ATTACH_FILES)) {
+			return err(403, 'Tu ne peux pas joindre de fichier ici');
+		}
+		const text = body.trim();
+		if (!text && !attachment) {
+			return err(400, 'Message vide');
+		}
+		if (text.length > LIMITS.messageLength) {
+			return err(400, `Message trop long (${LIMITS.messageLength} caractères max)`);
+		}
+		const id = this.ctx.storage.transactionSync(() => {
+			const row = this.sql
+				.exec<{ id: number }>(
+					'INSERT INTO messages (channel_id, user_id, body, attachment, thread_root, thread_broadcast, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
+					channelId,
+					actor.id,
+					text,
+					attachment ? JSON.stringify(attachment) : null,
+					rootId,
+					broadcast ? 1 : 0,
+					Date.now(),
+				)
+				.one();
+			this.saveMentions(row.id, text);
+			if (attachment) {
+				this.insertFile(channelId, null, attachment, actor.id, row.id);
+			}
+			follow(this.sql, rootAuthor, rootId, null);
+			follow(this.sql, actor.id, rootId, row.id);
+			return row.id;
+		});
+		const message = this.message(id)!;
+		this.broadcastIn(channelId, { t: 'thread', channelId, rootId, message, root: this.message(rootId)! });
+		if (broadcast) {
+			this.setRead(actor.id, channelId, id);
+			this.broadcastIn(channelId, { t: 'message', message });
+		}
+		if (attachment) {
+			this.broadcastIn(channelId, { t: 'drive', channelId });
+		}
+		return ok(message);
+	}
+
+	followThread(actor: Actor, rootId: number, following: boolean): Result<{ following: boolean }> {
+		const found = this.threadRoot(actor, rootId);
+		if (!found.ok) {
+			return err(found.status, found.error);
+		}
+		if (following) {
+			follow(this.sql, actor.id, rootId, lastReplyId(this.sql, rootId));
+		} else {
+			unfollow(this.sql, actor.id, rootId);
+		}
+		return ok({ following });
+	}
+
+	readThread(actor: Actor, rootId: number): Result<null> {
+		const found = this.threadRoot(actor, rootId);
+		if (!found.ok) {
+			return err(found.status, found.error);
+		}
+		markThreadRead(this.sql, actor.id, rootId);
+		return ok(null);
+	}
+
+	followedThreads(actor: Actor): FollowedThread[] {
+		return followedRows(this.sql, actor.id)
+			.map((row) => ({ root: this.message(row.rootId), unread: row.unread }))
+			.filter((t): t is FollowedThread => t.root !== null && this.can(actor, t.root.channelId, P.VIEW_CHANNEL))
+			.sort((a, b) => (b.root.thread?.lastAt ?? b.root.createdAt) - (a.root.thread?.lastAt ?? a.root.createdAt))
+			.slice(0, 50);
+	}
+
+	private threadRoot(actor: Actor, rootId: number): Result<Message> {
+		const root = Number.isInteger(rootId) ? this.message(rootId) : null;
+		if (!root || !this.can(actor, root.channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Message introuvable');
+		}
+		if (root.threadRoot) {
+			return err(400, 'Un fil ne s’ouvre que sur un message du salon');
+		}
+		return ok(root);
+	}
+
+	private dmMembers(channelId: string): string[] | null {
+		this.dmCache ??= loadDmMembers(this.sql);
+		return this.dmCache.get(channelId) ?? null;
+	}
+
+	// Un DM n'est pas un salon d'espace : ni réglages ni suppression par les gestionnaires.
+	private roomRow(id: string): ChannelRow | null {
+		const row = this.channelRow(id);
+		return row?.kind === 'dm' ? null : row;
+	}
+
+	private sendTo(userIds: string[], event: ServerEvent): void {
+		for (const userId of new Set(userIds)) {
+			for (const ws of this.ctx.getWebSockets(userId)) {
+				this.send(ws, event);
+			}
+		}
+	}
+
+	private ringDirect(callerId: string, channelId: string): void {
+		this.sendTo((this.dmMembers(channelId) ?? []).filter((id) => id !== callerId), { t: 'call_ring', channelId, by: callerId });
 	}
 
 	private driveDenied<T>(actor: Actor, channelId: string): Result<T> | null {

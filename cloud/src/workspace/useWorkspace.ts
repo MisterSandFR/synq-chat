@@ -5,6 +5,7 @@ import { mentionedUsers, type Channel, type ClientEvent, type Message, type Mess
 import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
+import { initialDmThreads, reduceDmThreads, type DmThreadsAction, type DmThreadsState } from './dm-threads/state';
 
 export interface ChannelMessages {
 	items: Message[];
@@ -37,6 +38,7 @@ export interface WorkspaceState {
 	// Incrémenté à chaque évènement de notification : le panneau Activité se recharge.
 	notificationsVersion: number;
 	lastNotification: NotificationItem | null;
+	dmThreads: DmThreadsState;
 }
 
 export type PageMode = 'latest' | 'older' | 'newer' | 'around';
@@ -50,7 +52,8 @@ type Action =
 	| { type: 'page'; channelId: string; page: MessagePage; mode: PageMode }
 	| { type: 'message'; message: Message }
 	| { type: 'read'; channelId: string }
-	| { type: 'typing_expire'; now: number };
+	| { type: 'typing_expire'; now: number }
+	| DmThreadsAction;
 
 const TYPING_TTL = 4000;
 
@@ -76,6 +79,7 @@ const initial: WorkspaceState = {
 	notificationsUnread: 0,
 	notificationsVersion: 0,
 	lastNotification: null,
+	dmThreads: initialDmThreads,
 };
 
 const sortChannels = (channels: Channel[]) =>
@@ -212,6 +216,11 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		case 'members_changed':
 		case 'commands_changed':
 			return state;
+		case 'thread':
+			return withMessage(state, event.root, 'update');
+		case 'dm':
+		case 'call_ring':
+			return state;
 	}
 }
 
@@ -219,8 +228,13 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 	switch (action.type) {
 		case 'info':
 			return { ...state, info: action.info };
-		case 'event':
-			return onEvent(state, action);
+		case 'event': {
+			const next = onEvent(state, action);
+			const dmThreads = reduceDmThreads(next.dmThreads, action.event);
+			return dmThreads === next.dmThreads ? next : { ...next, dmThreads };
+		}
+		case 'dm_threads':
+			return { ...state, dmThreads: action.update(state.dmThreads) };
 		case 'status':
 			return state.status === action.status ? state : { ...state, status: action.status };
 		case 'closed':

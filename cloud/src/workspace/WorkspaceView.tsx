@@ -6,6 +6,21 @@ import { api } from '../api';
 import { navigate, readPref, rememberWorkspace, writePref } from '../router';
 import { Avatar, Icon, Logo } from '../ui';
 import { Composer } from './Composer';
+import {
+	CallRing,
+	channelLabel,
+	DirectMessagesView,
+	DirectSection,
+	dismissRing,
+	GroupDialog,
+	NewDirectDialog,
+	openDirect,
+	ThreadPanel,
+	ThreadsView,
+	upsertDirect,
+	useDirectsLoader,
+	type ContentView,
+} from './dm-threads';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { MessageList } from './MessageList';
@@ -57,6 +72,7 @@ function useFocused(): boolean {
 export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadges }: Props) {
 	const myId = me.user.id;
 	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
+	useDirectsLoader(workspaceId, state.connId, dispatch);
 	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, forceMuted: state.forceMuted, voiceMoved: state.voiceMoved, send });
 	const width = useResizable({ pref: 'sidebar_width', min: 220, max: 520, initial: 280, edge: 'end' });
 	const chatWidth = useResizable({ pref: 'voice_chat_width', min: 300, max: 720, initial: 380, edge: 'start' });
@@ -76,6 +92,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const [copied, setCopied] = useState<number | null>(null);
 	const myProfile = rc.profiles.get(myId);
 	const [voiceChat, setVoiceChatState] = useState(() => readPref('voice_chat') !== '0' && window.innerWidth > 860);
+	const [view, setView] = useState<ContentView>(null);
+	const [thread, setThread] = useState<{ channelId: string; id: number } | null>(null);
+	const [newDirect, setNewDirect] = useState(false);
+	const [groupOpen, setGroupOpen] = useState(false);
 
 	const setVoiceChat = (open: boolean) => {
 		setVoiceChatState(open);
@@ -93,20 +113,28 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const page = channelId === 'activite' ? 'activity' : null;
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
 	const grades = state.info?.grades ?? [];
+	const dms = state.dmThreads.dms;
+	const rooms = useMemo(() => (channels ?? []).filter((c) => c.kind !== 'dm'), [channels]);
+	const labelOf = (id: string) => channelLabel(channels?.find((c) => c.id === id), dms, members, myId);
+	const activeDm = active?.kind === 'dm' ? dms?.find((d) => d.id === active.id) : undefined;
+	// Un DM s'affiche sous le nom de ses participants.
+	const shown = active?.kind === 'dm' ? { ...active, name: labelOf(active.id), topic: '' } : active;
 	const activePerms = active ? (state.perms[active.id] ?? 0) : 0;
 	const activeData = active ? state.messages[active.id] : undefined;
 	const lastActiveId = activeData?.items.at(-1)?.id;
-	const chatVisible = active?.kind === 'text' || (active?.kind === 'voice' && voiceChat);
+	const chatVisible = active?.kind === 'text' || active?.kind === 'dm' || (active?.kind === 'voice' && voiceChat);
+	const huddle = active?.kind === 'dm' && ((state.voice[active.id]?.length ?? 0) > 0 || voice.snapshot?.channelId === active.id);
 
 	const openChannel = useCallback(
 		(id: string) => {
 			setNavOpen(false);
+			setView(null);
 			navigate(`/w/${workspaceId}/${id}`);
 		},
 		[workspaceId],
 	);
 
-	const lookup: Lookup = useMemo(() => ({ members, channels: channels ?? [], myId, openChannel }), [members, channels, myId, openChannel]);
+	const lookup: Lookup = useMemo(() => ({ members, channels: rooms, myId, openChannel }), [members, rooms, myId, openChannel]);
 
 	const openMessage = useCallback(
 		(cid: string, id: number) => {
@@ -191,8 +219,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 		const unread = Object.values(state.unread).reduce((sum, n) => sum + n, 0);
 		const mentions = Object.values(state.mentions).reduce((sum, n) => sum + n, 0);
 		const badge = mentions ? `(${mentions}) ` : unread ? '• ' : '';
-		document.title = `${badge}${active ? `${active.kind === 'text' ? '#' : ''}${active.name} · ` : ''}${state.info?.name ?? 'Synq'}`;
-	}, [state.unread, state.mentions, active, state.info]);
+		document.title = `${badge}${shown ? `${shown.kind === 'text' ? '#' : ''}${shown.name} · ` : ''}${state.info?.name ?? 'Synq'}`;
+	}, [state.unread, state.mentions, shown?.kind, shown?.name, state.info]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -245,6 +273,16 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 		dispatch({ type: 'message', message });
 	};
 
+	const startDirect = async (userIds: string[], name = '') => {
+		const { conversation, channel, perms } = await openDirect(workspaceId, userIds, name);
+		dispatch({ type: 'dm_threads', update: upsertDirect(conversation) });
+		if (!channels?.some((c) => c.id === channel.id)) {
+			dispatch({ type: 'event', event: { t: 'channel_upsert', channel, perms }, activeChannelId: channelId, myId, focused });
+		}
+		setNewDirect(false);
+		openChannel(channel.id);
+	};
+
 	const messagePane = active && (
 			<DropZone enabled={has(activePerms, P.ATTACH_FILES)}>
 				{active.kind === 'text' && (
@@ -261,7 +299,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				<MessageList
 					key={`messages-${active.id}`}
 					workspaceId={workspaceId}
-					channel={active}
+					channel={shown!}
 					data={activeData}
 					lookup={lookup}
 					canModerate={has(activePerms, P.MANAGE_MESSAGES)}
@@ -311,6 +349,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							</>
 						);
 					}}
+					onOpenThread={(id) => setThread({ channelId: active.id, id })}
 					onEdit={async (id, body) => {
 						await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
 					}}
@@ -341,7 +380,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				<Composer
 					key={`composer-${active.id}`}
 					workspaceId={workspaceId}
-					channel={active}
+					channel={shown!}
 					canPost={has(activePerms, P.SEND_MESSAGES)}
 					canAttach={has(activePerms, P.ATTACH_FILES)}
 					lookup={lookup}
@@ -365,7 +404,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				width={width}
 				onOpenSettings={() => setSettingsOpen(true)}
 				onOpenSearch={() => setSearchOpen(true)}
-				onNavigate={() => setNavOpen(false)}
+				onNavigate={() => {
+					setNavOpen(false);
+					setView(null);
+				}}
 				onCreateChannel={setCreateKind}
 				presence={myProfile && presenceOf(myProfile, true)}
 				presenceText={myProfile?.statusText}
@@ -386,6 +428,21 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						}}
 					/>
 				)}
+				directs={
+					<DirectSection
+						state={state}
+						channelId={channelId}
+						members={members}
+						myId={myId}
+						view={view}
+						onOpenView={(next) => {
+							setView(next);
+							setNavOpen(false);
+						}}
+						onOpenDirect={openChannel}
+						onNewDirect={() => setNewDirect(true)}
+					/>
+				}
 			/>
 
 			<main className='main'>
@@ -402,10 +459,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					{active && (
 						<>
 							<h1>
-								<Icon name={active.kind === 'voice' ? 'speaker' : active.readOnly ? 'megaphone' : 'hash'} />
-								<span className='ellipsis'>{active.name}</span>
+								<Icon name={view === 'dms' ? 'chat' : view === 'threads' ? 'thread' : active.kind === 'voice' ? 'speaker' : active.kind === 'dm' ? 'chat' : active.readOnly ? 'megaphone' : 'hash'} />
+								<span className='ellipsis'>{view === 'dms' ? 'Messages directs' : view === 'threads' ? 'Fils' : shown!.name}</span>
 							</h1>
-							<p className='topbar-topic'>{active.topic}</p>
+							<p className='topbar-topic'>{view ? null : shown!.topic}</p>
 						</>
 					)}
 					<span className='grow' />
@@ -424,6 +481,16 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						<button type='button' className='icon-btn' aria-pressed={voiceChat} aria-label='Chat du salon vocal' title='Chat du salon vocal' onClick={() => setVoiceChat(!voiceChat)}>
 							<Icon name='chat' />
 							{!voiceChat && (state.unread[active.id] ?? 0) > 0 && <span className='dot' style={{ marginLeft: -6, marginTop: -14 }} />}
+						</button>
+					)}
+					{!view && active?.kind === 'dm' && voice.snapshot?.channelId !== active.id && (
+						<button type='button' className='btn dm-call-btn' onClick={() => void voice.join(active.id)}>
+							<Icon name='headphones' size={16} /> Appeler
+						</button>
+					)}
+					{!view && activeDm?.group && (
+						<button type='button' className='icon-btn' aria-label='Participants du groupe' title='Participants du groupe' onClick={() => setGroupOpen(true)}>
+							<Icon name='users' />
 						</button>
 					)}
 					{active && (
@@ -450,6 +517,17 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				</header>
 
 				{state.status === 'offline' && <p className='banner'>Connexion perdue. Reconnexion en cours…</p>}
+				<CallRing
+					ring={voice.snapshot?.channelId === state.dmThreads.ring?.channelId ? null : state.dmThreads.ring}
+					members={members}
+					label={labelOf}
+					onJoin={(cid) => {
+						dispatch({ type: 'dm_threads', update: dismissRing });
+						openChannel(cid);
+						void voice.join(cid);
+					}}
+					onDismiss={() => dispatch({ type: 'dm_threads', update: dismissRing })}
+				/>
 
 				<div className='body'>
 					<div className='content'>
@@ -461,14 +539,27 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 								unread={state.notificationsUnread}
 								version={state.notificationsVersion}
 								onOpenMessage={openMessage}
+								/>
+						) : view === 'dms' ? (
+							<DirectMessagesView state={state} lookup={lookup} onOpen={openChannel} onNew={() => setNewDirect(true)} />
+						) : view === 'threads' ? (
+							<ThreadsView
+								workspaceId={workspaceId}
+								connId={state.connId}
+								lookup={lookup}
+								channelLabel={labelOf}
+								onOpen={(cid, id) => {
+									openChannel(cid);
+									setThread({ channelId: cid, id });
+								}}
 							/>
 						) : !active ? (
 							<div className='spinner' aria-busy />
-						) : active.kind === 'voice' ? (
+						) : active.kind === 'voice' || huddle ? (
 							<div className='call-layout'>
 								<CallView
 									workspaceId={workspaceId}
-									channel={active}
+									channel={shown!}
 									participants={state.voice[active.id] ?? []}
 									members={members}
 									grades={grades}
@@ -478,7 +569,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 									otherChannelName={otherVoice}
 									moveTargets={channels?.filter((c) => c.kind === 'voice' && c.id !== active.id) ?? []}
 								/>
-								{voiceChat && (
+								{(voiceChat || huddle) && (
 									<aside className='call-chat' style={{ width: chatWidth.width }} aria-label={`Chat de ${active.name}`}>
 										<ResizeHandle resize={chatWidth} label='Redimensionner le chat' />
 										{messagePane}
@@ -489,7 +580,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							messagePane
 						)}
 					</div>
-					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onClose={() => setPanel(null)} />}
+					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onMessage={(id) => void startDirect([id]).catch(() => undefined)} onClose={() => setPanel(null)} />}
 					{panel === 'drive' && active && (
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}
@@ -514,6 +605,21 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							canPin={has(activePerms, P.PIN_MESSAGES) || has(activePerms, P.MANAGE_MESSAGES)}
 							onJump={(id) => setJump({ channelId: active.id, id })}
 							onClose={() => setPanel(null)}
+						/>
+					)}
+					{view === null && thread && shown && thread.channelId === shown.id && (
+						<ThreadPanel
+							workspaceId={workspaceId}
+							connId={state.connId}
+							channel={shown}
+							channelName={labelOf(shown.id)}
+							rootId={thread.id}
+							state={state}
+							dispatch={dispatch}
+							lookup={lookup}
+							grades={grades}
+							canPost={has(activePerms, P.SEND_MESSAGES)}
+							onClose={() => setThread(null)}
 						/>
 					)}
 				</div>
@@ -548,7 +654,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						open={settingsOpen}
 						onClose={() => setSettingsOpen(false)}
 						info={state.info}
-						channels={channels}
+						channels={rooms}
 						myId={myId}
 						onChanged={async () => {
 							await reloadInfo().catch(() => undefined);
@@ -556,11 +662,30 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						}}
 					/>
 					<CreateChannelDialog workspaceId={workspaceId} kind={createKind} onClose={() => setCreateKind(null)} />
+					<NewDirectDialog open={newDirect} members={members} myId={myId} online={state.online} onClose={() => setNewDirect(false)} onSubmit={startDirect} />
+					{activeDm?.group && (
+						<GroupDialog
+							open={groupOpen}
+							workspaceId={workspaceId}
+							conversation={activeDm}
+							members={members}
+							myId={myId}
+							online={state.online}
+							onClose={() => setGroupOpen(false)}
+							onChanged={(conversation) => {
+								if (conversation) {
+									dispatch({ type: 'dm_threads', update: upsertDirect(conversation) });
+								} else {
+									setGroupOpen(false);
+								}
+							}}
+						/>
+					)}
 					<SearchPalette
 						open={searchOpen}
 						onClose={() => setSearchOpen(false)}
 						workspaceId={workspaceId}
-						channels={channels}
+						channels={rooms}
 						lookup={lookup}
 						onOpenChannel={openChannel}
 						onOpenMessage={(cid, id) => {

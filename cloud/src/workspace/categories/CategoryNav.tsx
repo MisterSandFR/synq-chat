@@ -16,8 +16,10 @@ type Props = {
 	channelId: string | null;
 	staff: boolean;
 	onOpenChannel: (id: string) => void;
-	onCreateChannel: (kind: ChannelKind) => void;
+	onCreateChannel: (kind: Exclude<ChannelKind, 'dm'>) => void;
 	renderChannel: (channel: Channel) => ReactNode;
+	// Rendu en fin de liste, dans la même zone de défilement.
+	footer?: ReactNode;
 };
 
 type Group = { category: Category | null; items: Channel[] };
@@ -36,7 +38,7 @@ function readCollapsed(workspaceId: string): Set<string> {
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || a.name.localeCompare(b.name);
 
-export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel }: Props) {
+export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel, footer }: Props) {
 	const categories = useCategories(workspaceId, channels);
 	const [collapsed, setCollapsed] = useState(() => readCollapsed(workspaceId));
 	const [prompt, setPrompt] = useState<Prompt | null>(null);
@@ -307,6 +309,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					)}
 				</Dialog>
 			)}
+			{footer}
 		</nav>
 	);
 }
