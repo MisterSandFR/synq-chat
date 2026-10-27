@@ -25,7 +25,8 @@ import {
 import { P, has } from '../../shared/permissions';
 import { loadActor } from '../grades';
 import { cleanName, fail, readJson, unwrap, workspaceStub, type AppEnv, type Ctx } from '../http';
-import { AI_ACTIONS, AI_TONES, ai, mailPrompt, parseSuggestions, type AiTone } from '../mail/ai';
+import { aiText } from '../ai';
+import { AI_ACTIONS, AI_TONES, mailPrompt, parseSuggestions, type AiTone } from '../mail/ai';
 import { sanitizeMail, textDocument } from '../mail/html';
 import { ImapClient } from '../mail/imap';
 import { binary, parseAddresses } from '../mail/mime';
@@ -1083,10 +1084,6 @@ mailRoutes.post('/mail/threads/:tid/ai', async (c) => {
 		return fail(c, 400, 'Question requise');
 	}
 	const tone: AiTone = typeof body.tone === 'string' && Object.hasOwn(AI_TONES, body.tone) ? body.tone : 'neutre';
-	const { success } = await c.env.AUTH_LIMITER.limit({ key: `mail-ai:${c.get('user').id}` });
-	if (!success) {
-		return fail(c, 429, 'Trop de demandes, réessaie dans une minute');
-	}
 	const { thread } = found;
 	const { results } = await c.env.DB.prepare('SELECT id, from_name, from_addr, date FROM mail_messages WHERE thread_id = ? ORDER BY date DESC, created_at DESC LIMIT 8')
 		.bind(thread.id)
@@ -1098,14 +1095,10 @@ mailRoutes.post('/mail/threads/:tid/ai', async (c) => {
 			body: (await (await c.env.FILES.get(bodyKey(thread.mailbox_id, row.id)))?.text()) ?? '',
 		})),
 	);
-	let text: string;
-	try {
-		text = await ai.run(c.env, mailPrompt({ subject: thread.subject, messages }, { action, prompt, tone }));
-	} catch (error) {
-		return c.json({ error: `IA indisponible : ${errorMessage(error)}` }, 502);
+	const result = await aiText(c.env, c.get('user').id, mailPrompt({ subject: thread.subject, messages }, { action, prompt, tone }));
+	if (!result.ok) {
+		return unwrap(c, result);
 	}
-	if (!text) {
-		return c.json({ error: 'IA indisponible : réponse vide' }, 502);
-	}
+	const text = result.value;
 	return c.json((action === 'quick' ? { suggestions: parseSuggestions(text) } : { text }) satisfies MailAiResult);
 });

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MailAiResult, MailboxInfo, MailDraft, MailHtml, MailThread, MailThreadDetail, MailUpload } from '../shared/mail';
 import type { MessagePage } from '../shared/types';
-import { ai } from '../worker/mail/ai';
+import { aiRunner } from '../worker/ai';
 import { sanitizeMail } from '../worker/mail/html';
 import { parseMail } from '../worker/mail/mime';
 import { loadBox, storeIncoming, wakeSnoozed } from '../worker/mail/store';
@@ -295,9 +295,9 @@ describe('mail : API v2', () => {
 		expect(page.data.messages.at(-1)).toMatchObject({ body: 'À traiter', mailCard: { threadId: thread!.id, subject: 'Devis', from: 'Dupont, Jean' } });
 
 		const prompts: string[] = [];
-		ai.run = async (_env, messages) => {
-			prompts.push(messages[1]!.content);
-			return messages[1]!.content.includes('tableau JSON') ? 'Voici : [{"label":"Accepter","text":"Ça me va."},{"label":"","text":"x"}]' : '- Devis reçu';
+		aiRunner.run = async (_env, task) => {
+			prompts.push(task.prompt);
+			return task.prompt.includes('tableau JSON') ? 'Voici : [{"label":"Accepter","text":"Ça me va."},{"label":"","text":"x"}]' : '- Devis reçu';
 		};
 		expect((await alice.req<MailAiResult>('POST', `/api/mail/threads/${thread!.id}/ai`, { action: 'quick' })).data).toEqual({ suggestions: [{ label: 'Accepter', text: 'Ça me va.' }] });
 		expect((await alice.req<MailAiResult>('POST', `/api/mail/threads/${thread!.id}/ai`, { action: 'summary' })).data).toEqual({ text: '- Devis reçu' });
@@ -305,5 +305,14 @@ describe('mail : API v2', () => {
 		expect((await alice.req('POST', `/api/mail/threads/${thread!.id}/ai`, { action: 'ask' })).status).toBe(400);
 		expect((await alice.req('POST', `/api/mail/threads/${thread!.id}/ai`, { action: 'autre' })).status).toBe(400);
 		expect((await bob.req('POST', `/api/mail/threads/${thread!.id}/ai`, { action: 'summary' })).status).toBe(404);
+
+		expect((await alice.req('POST', '/api/ai/rewrite', { action: 'inconnu', text: 'x' })).status).toBe(400);
+		expect((await alice.req('POST', '/api/ai/rewrite', { action: 'corriger', text: 'x'.repeat(8001) })).status).toBe(400);
+		expect((await alice.req<{ text: string }>('POST', '/api/ai/rewrite', { action: 'corriger', text: 'Bonjour **toi**' })).data).toEqual({ text: '- Devis reçu' });
+		expect(prompts.at(-1)).toContain('Bonjour **toi**');
+		aiRunner.run = async () => {
+			throw new Error('panne');
+		};
+		expect((await alice.req('POST', '/api/ai/rewrite', { action: 'raccourcir', text: 'x' })).status).toBe(503);
 	});
 });

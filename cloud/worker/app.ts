@@ -30,6 +30,7 @@ import { chatRoutes } from './routes/chat';
 import { dmThreadsRoutes } from './routes/dm-threads';
 import { calendarRoutes, icsRoutes } from './routes/calendar';
 import { mailRoutes } from './routes/mail';
+import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
 import { voiceRoutes } from './routes/voice';
 import { guestRoutes } from './routes/guests';
@@ -856,6 +857,7 @@ app.route('/', calendarRoutes);
 app.route('/', mailRoutes);
 app.route('/', eventCardRoutes);
 app.route('/', guestRoutes);
+app.route('/', aiRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
