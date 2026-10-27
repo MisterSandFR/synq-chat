@@ -4,6 +4,7 @@ import type { Category, Layout } from '../shared/categories';
 import { appUserId, type CommandConfig, type CommandInput, type SlashCommand } from '../shared/commands';
 import type { PinInfo, Reaction } from '../shared/chat';
 import { DM_MAX_MEMBERS, DM_PERMS, type DirectChange, type DirectConversation, type FollowedThread, type ThreadView } from '../shared/dm-threads';
+import type { CalendarReminder } from '../shared/calendar';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
@@ -1100,6 +1101,17 @@ export class Workspace extends DurableObject<Env> {
 		}
 		this.broadcastVoice(channelId);
 		return ok(null);
+	}
+
+	// Calendrier
+
+	// Rappel poussé par le cron sur les sockets de l'utilisateur dans cet espace.
+	calendarReminder(userId: string, reminder: CalendarReminder): void {
+		for (const ws of this.ctx.getWebSockets(userId)) {
+			if (this.conn(ws)) {
+				this.send(ws, { t: 'calendar_reminder', reminder });
+			}
+		}
 	}
 
 	private conn(ws: WebSocket): Conn | null {

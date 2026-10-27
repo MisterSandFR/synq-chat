@@ -22,17 +22,20 @@ export const P = {
 	MENTION_EVERYONE: 1 << 20,
 	PIN_MESSAGES: 1 << 21,
 	ADD_REACTIONS: 1 << 22,
+	VIEW_EVENTS: 1 << 23,
+	CREATE_EVENTS: 1 << 24,
+	MANAGE_EVENTS: 1 << 25,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 23) - 1;
+export const ALL_PERMS = (1 << 26) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
 
 export const DEFAULT_MEMBER_PERMS =
-	P.VIEW_CHANNEL | P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD | P.VOICE_CONNECT | P.VOICE_SPEAK | P.VOICE_VIDEO | P.VOICE_SCREEN | P.ADD_REACTIONS;
+	P.VIEW_CHANNEL | P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD | P.VOICE_CONNECT | P.VOICE_SPEAK | P.VOICE_VIDEO | P.VOICE_SCREEN | P.ADD_REACTIONS | P.VIEW_EVENTS | P.CREATE_EVENTS;
 
 export const READ_ONLY_DENY = P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD;
 
@@ -63,6 +66,9 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'BYPASS_LIMIT', label: 'Ignorer la limite de places', hint: 'Entrer dans un salon vocal complet.', group: 'Vocal', channel: true },
 	{ key: 'MANAGE_COMMANDS', label: 'Gérer les commandes', hint: 'Créer, modifier et supprimer les commandes slash personnalisées.', group: 'Espace', channel: false },
 	{ key: 'MENTION_EVERYONE', label: 'Mentionner @all et @here', hint: 'Notifier tout le salon ou ses membres en ligne.', group: 'Messages', channel: true },
+	{ key: 'VIEW_EVENTS', label: 'Voir le calendrier', hint: 'Voir les événements de l’espace.', group: 'Espace', channel: false },
+	{ key: 'CREATE_EVENTS', label: 'Créer des événements', hint: 'Créer des événements et modifier les siens.', group: 'Espace', channel: false },
+	{ key: 'MANAGE_EVENTS', label: 'Gérer les événements', hint: 'Modifier et supprimer les événements des autres.', group: 'Espace', channel: false },
 ];
 
 export type Override = { allow: number; deny: number };

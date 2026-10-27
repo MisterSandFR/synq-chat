@@ -145,6 +145,7 @@ const PATHS = {
 	'list-ordered': 'M10 6h10M10 12h10M10 18h10M4 4.5l1.5-.5v4M4 14.5a1.5 1.5 0 0 1 3 0c0 1.5-3 2-3 3.5h3',
 	copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
 	clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',
+	repeat: 'M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3',
 } as const;
 
 export type IconName = keyof typeof PATHS;

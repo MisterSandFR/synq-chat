@@ -1,6 +1,7 @@
 import type { NotificationItem } from './notifications';
 import type { PinInfo, Reaction } from './chat';
 import type { DirectConversation, ThreadSummary } from './dm-threads';
+import type { CalendarReminder } from './calendar';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -217,7 +218,8 @@ export type ServerEvent =
 	| { t: 'pinned'; channelId: string; messageId: number; pinned: PinInfo | null }
 	| { t: 'dm'; conversation: DirectConversation }
 	| { t: 'thread'; channelId: string; rootId: number; message: Message; root: Message }
-	| { t: 'call_ring'; channelId: string; by: string };
+	| { t: 'call_ring'; channelId: string; by: string }
+	| { t: 'calendar_reminder'; reminder: CalendarReminder };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

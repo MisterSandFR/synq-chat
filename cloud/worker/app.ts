@@ -28,6 +28,7 @@ import { commandRoutes } from './routes/commands';
 import { rcRoutes } from './routes/rc';
 import { chatRoutes } from './routes/chat';
 import { dmThreadsRoutes } from './routes/dm-threads';
+import { calendarRoutes, icsRoutes } from './routes/calendar';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -273,6 +274,8 @@ app.get('/auth/recube/callback', async (c) => {
 	await openSession(c, id);
 	return c.redirect('/');
 });
+
+app.route('/', icsRoutes);
 
 // Tout ce qui suit exige une session.
 app.use('*', async (c, next) => {
@@ -811,6 +814,7 @@ app.route('/', commandRoutes);
 app.route('/', rcRoutes);
 app.route('/', chatRoutes);
 app.route('/', dmThreadsRoutes);
+app.route('/', calendarRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

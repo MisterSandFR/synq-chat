@@ -213,6 +213,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, notificationsUnread: event.unread, notificationsVersion: state.notificationsVersion + 1 };
 		case 'announcement':
 			return { ...state, announcements: { ...state.announcements, [event.channelId]: event.text } };
+		// Rappel affiché par le centre de notifications.
+		case 'calendar_reminder':
 		case 'members_changed':
 		case 'commands_changed':
 			return state;
