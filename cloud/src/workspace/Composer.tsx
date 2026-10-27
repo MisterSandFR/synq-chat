@@ -1,8 +1,12 @@
 import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 
-import { LIMITS, type Attachment, type Channel, type Message } from '../../shared/types';
-import { errorText, uploadAttachment } from '../api';
-import { Avatar, Icon, formatSize } from '../ui';
+import { LIMITS, type Channel, type Message } from '../../shared/types';
+import { errorText } from '../api';
+import { Avatar, Icon } from '../ui';
+import { useOfferedFiles } from './media/bus';
+import { PendingFiles } from './media/PendingFiles';
+import { RecordButtons } from './media/Recorder';
+import { useUploads } from './media/useUploads';
 import { excerpt, toTokens, type Lookup } from './richText';
 
 type Props = {
@@ -13,7 +17,7 @@ type Props = {
 	lookup: Lookup;
 	replyTo: Message | null;
 	onCancelReply: () => void;
-	onSend: (body: string, attachmentKey?: string, replyTo?: number) => Promise<void>;
+	onSend: (body: string, attachmentKeys: string[], replyTo?: number) => Promise<void>;
 	onTyping: () => void;
 };
 
@@ -24,8 +28,7 @@ const TRIGGER_RE = /(^|\s)([@#])([\p{L}\p{N}_ -]{0,32})$/u;
 
 export function Composer({ workspaceId, channel, canPost, canAttach, lookup, replyTo, onCancelReply, onSend, onTyping }: Props) {
 	const [text, setText] = useState('');
-	const [attachment, setAttachment] = useState<Attachment | null>(null);
-	const [progress, setProgress] = useState<{ name: string; ratio: number } | null>(null);
+	const uploads = useUploads(workspaceId);
 	const [error, setError] = useState<string | null>(null);
 	const [sending, setSending] = useState(false);
 	const [caret, setCaret] = useState(0);
@@ -34,6 +37,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const lastTyping = useRef(0);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const textarea = useRef<HTMLTextAreaElement>(null);
+	useOfferedFiles(canAttach ? uploads.add : null);
 
 	const trigger = useMemo(() => {
 		const match = text.slice(0, caret).match(TRIGGER_RE);
@@ -78,32 +82,21 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		});
 	};
 
-	const attach = async (file: File) => {
+	const attach = (files: File[]) => {
 		setError(null);
-		if (file.size > LIMITS.fileSize) {
-			setError(`${file.name} dépasse 50 Mo.`);
-			return;
-		}
-		setProgress({ name: file.name, ratio: 0 });
-		try {
-			setAttachment(await uploadAttachment(workspaceId, file, (ratio) => setProgress({ name: file.name, ratio })));
-		} catch (err) {
-			setError(errorText(err));
-		} finally {
-			setProgress(null);
-		}
+		uploads.add(files);
 	};
 
 	const submit = async () => {
-		if (sending || progress || (!text.trim() && !attachment)) {
+		if (sending || uploads.blocked || (!text.trim() && !uploads.keys.length)) {
 			return;
 		}
 		setSending(true);
 		setError(null);
 		try {
-			await onSend(toTokens(text, lookup), attachment?.key, replyTo?.id);
+			await onSend(toTokens(text, lookup), uploads.keys, replyTo?.id);
 			setText('');
-			setAttachment(null);
+			uploads.clear();
 			onCancelReply();
 			lastTyping.current = 0;
 			if (textarea.current) {
@@ -143,10 +136,10 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	};
 
 	const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-		const file = event.clipboardData.files[0];
-		if (file && canAttach) {
+		const files = [...event.clipboardData.files];
+		if (files.length && canAttach) {
 			event.preventDefault();
-			void attach(file);
+			attach(files);
 		}
 	};
 
@@ -192,23 +185,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 						</button>
 					</div>
 				)}
-				{(attachment || progress) && (
-					<div className='composer-chips'>
-						{progress && <span className='file-chip'>Envoi de {progress.name} : {Math.round(progress.ratio * 100)} %</span>}
-						{attachment && (
-							<span className='file-chip'>
-								<Icon name='paperclip' size={14} />
-								<span className='ellipsis' style={{ maxWidth: 220 }}>
-									{attachment.name}
-								</span>
-								<span className='muted'>{formatSize(attachment.size)}</span>
-								<button type='button' className='icon-btn icon-btn-sm' aria-label='Retirer le fichier' onClick={() => setAttachment(null)}>
-									<Icon name='close' size={14} />
-								</button>
-							</span>
-						)}
-					</div>
-				)}
+				{uploads.items.length > 0 && <PendingFiles items={uploads.items} onRemove={uploads.remove} />}
 				<label className='sr-only' htmlFor='composer'>
 					Message pour #{channel.name}
 				</label>
@@ -241,27 +218,29 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 							<Icon name='paperclip' />
 						</button>
 					)}
+					{canAttach && <RecordButtons onClip={(file) => attach([file])} />}
 					<input
 						ref={fileInput}
 						type='file'
+						multiple
 						hidden
 						onChange={(e) => {
-							const file = e.target.files?.[0];
+							const files = [...(e.target.files ?? [])];
 							e.target.value = '';
-							if (file) {
-								void attach(file);
+							if (files.length) {
+								attach(files);
 							}
 						}}
 					/>
 					<span className='grow' />
-					{error ? (
+					{error || uploads.notice ? (
 						<span className='composer-hint' role='alert' style={{ color: 'var(--danger)', display: 'inline' }}>
-							{error}
+							{error ?? uploads.notice}
 						</span>
 					) : (
 						<span className='composer-hint'>Maj + Entrée pour aller à la ligne</span>
 					)}
-					<button className='send-btn' aria-label='Envoyer' title='Envoyer' disabled={sending || Boolean(progress) || (!text.trim() && !attachment)}>
+					<button className='send-btn' aria-label='Envoyer' title='Envoyer' disabled={sending || uploads.blocked || (!text.trim() && !uploads.keys.length)}>
 						<Icon name='send' strokeWidth={2} />
 					</button>
 				</div>
