@@ -231,6 +231,15 @@ describe('mail : protocoles', () => {
 		await client.logout();
 	});
 
+	it('connexion coupée avant l’accueil : certificat ou port signalé', async () => {
+		const closed: Opener = () => ({
+			readable: new ReadableStream({ start: (controller) => controller.close() }),
+			writable: new WritableStream(),
+			close: () => undefined,
+		});
+		await expect(ImapClient.open(closed, 'mail.example.org', 993, Date.now() + 2000)).rejects.toThrow('certificat du serveur ne correspond pas');
+	});
+
 	it('SMTP 587 : STARTTLS, AUTH PLAIN, dot-stuffing', async () => {
 		const server = smtpServer();
 		await smtpSend(server.open, { ...CONFIG, port: 587 }, Date.now() + 5000, { from: 'support@synq.test', to: ['jean@client.test'], data: 'Subject: x\r\n\r\n.ligne\nfin' });

@@ -25,6 +25,9 @@ export const transport: { open: Opener } = {
 	open: (hostname, port, tls) => wrap(connect({ hostname, port }, { secureTransport: tls, allowHalfOpen: false })),
 };
 
+// Le runtime vérifie toujours le certificat : un certificat émis pour un autre nom coupe la connexion sans message.
+const NO_HANDSHAKE = 'Connexion TLS impossible : le certificat du serveur ne correspond pas à cet hôte, ou le port est fermé';
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -33,6 +36,7 @@ export class Wire {
 	private reader: ReadableStreamDefaultReader<Uint8Array>;
 	private writer: WritableStreamDefaultWriter<Uint8Array>;
 	private buffer: Uint8Array = new Uint8Array(0);
+	private received = false;
 
 	constructor(
 		private readonly duplex: Duplex,
@@ -52,10 +56,17 @@ export class Wire {
 			timer = setTimeout(() => reject(new Error('Délai dépassé')), remaining);
 		});
 		try {
-			const { value, done } = await Promise.race([this.reader.read(), timeout]);
-			if (done || !value) {
-				throw new Error('Connexion fermée par le serveur');
+			let chunk: ReadableStreamReadResult<Uint8Array>;
+			try {
+				chunk = await Promise.race([this.reader.read(), timeout]);
+			} catch (cause) {
+				throw this.received ? cause : new Error(NO_HANDSHAKE);
 			}
+			const { value, done } = chunk;
+			if (done || !value) {
+				throw new Error(this.received ? 'Connexion fermée par le serveur' : NO_HANDSHAKE);
+			}
+			this.received = true;
 			if (this.buffer.length) {
 				const next = new Uint8Array(this.buffer.length + value.length);
 				next.set(this.buffer);
