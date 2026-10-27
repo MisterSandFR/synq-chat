@@ -7,7 +7,7 @@ import { Avatar, Icon } from '../ui';
 import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
 import { emojiOnly } from './chat/markdown';
 import { Reactions } from './chat/Reactions';
-import { ContextMenu, type ContextMenuItem } from './ContextMenu';
+import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { memberColor, memberLabel } from './grades';
 import { MessageMedia } from './media/MessageMedia';
 import { EventCard } from './events/EventCard';
@@ -51,6 +51,7 @@ type Props = {
 	onEdit: (id: number, body: string) => Promise<void>;
 	onDelete: (id: number) => Promise<void>;
 	onAuthor?: (userId: string, anchor: HTMLElement) => void;
+	authorMenu?: (userId: string) => ContextMenuItem[];
 	extraActions?: (message: Message) => ReactNode;
 	canReact: boolean;
 	canPin: boolean;
@@ -77,6 +78,7 @@ export function MessageList({
 	onEdit,
 	onDelete,
 	onAuthor,
+	authorMenu,
 	extraActions,
 	onReact,
 	onPin,
@@ -93,6 +95,7 @@ export function MessageList({
 	const [picker, setPicker] = useState<{ id: number; anchor: DOMRect } | null>(null);
 	const [menu, setMenu] = useState<{ message: Message; x: number; y: number } | null>(null);
 	const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const authorCtx = useContextMenu();
 
 	useLayoutEffect(() => {
 		const el = ref.current;
@@ -267,6 +270,7 @@ export function MessageList({
 														onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => e.key === 'Enter' && onAuthor(author.id, e.currentTarget),
 													}
 												: {})}
+											{...(authorMenu && author ? authorCtx.bind(() => authorMenu(author.id)) : {})}
 										>
 											{author?.name ?? 'Ancien membre'}
 										</span>
@@ -371,6 +375,7 @@ export function MessageList({
 				</button>
 			)}
 		</div>
+		{authorCtx.menu}
 		{menu && (
 			<ContextMenu
 				x={menu.x}

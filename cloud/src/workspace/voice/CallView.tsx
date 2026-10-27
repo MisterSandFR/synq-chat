@@ -4,6 +4,7 @@ import { P, has } from '../../../shared/permissions';
 import type { Channel, Grade, Member, VoiceParticipant } from '../../../shared/types';
 import { api, errorText } from '../../api';
 import { Avatar, Icon, useDismiss } from '../../ui';
+import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { memberColor } from '../grades';
 import type { VoiceControls } from './useVoice';
 
@@ -63,9 +64,11 @@ type Props = {
 	otherChannelName: string | null;
 	// Salons vocaux où l'on peut déplacer quelqu'un (permission vérifiée par le serveur).
 	moveTargets: Channel[];
+	memberMenu?: (userId: string) => ContextMenuItem[];
 };
 
-export function CallView({ workspaceId, channel, participants, members, grades, perms, myId, voice, otherChannelName, moveTargets }: Props) {
+export function CallView({ workspaceId, channel, participants, members, grades, perms, myId, voice, otherChannelName, moveTargets, memberMenu }: Props) {
+	const ctx = useContextMenu();
 	const snapshot = voice.snapshot;
 	const connected = snapshot?.channelId === channel.id;
 	const speaking = connected ? snapshot.speaking : new Set<string>();
@@ -95,7 +98,7 @@ export function CallView({ workspaceId, channel, participants, members, grades, 
 		const member = members.get(p.userId);
 		const cam = camFor(p);
 		return (
-			<div key={p.userId} className={`tile${speaking.has(p.userId) ? ' tile-speaking' : ''}`}>
+			<div key={p.userId} className={`tile${speaking.has(p.userId) ? ' tile-speaking' : ''}`} {...(memberMenu ? ctx.bind(() => memberMenu(p.userId)) : {})}>
 				{cam ? <Video stream={cam} mirror={p.userId === myId} /> : <Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={72} />}
 				{(canModerate || canMove) && p.userId !== myId && (
 					<TileMenu
@@ -120,6 +123,7 @@ export function CallView({ workspaceId, channel, participants, members, grades, 
 
 	return (
 		<section className='call' aria-label={`Salon vocal ${channel.name}`}>
+			{ctx.menu}
 			{!connected ? (
 				<div className='call-empty'>
 					{participants.length > 0 ? (

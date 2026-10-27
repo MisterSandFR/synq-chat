@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 
 import { parseCommand } from '../../shared/commands';
 import { searchEmojis } from '../../shared/emoji';
@@ -15,6 +15,7 @@ import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
 import { RecordButtons } from './media/Recorder';
 import { useUploads } from './media/useUploads';
+import { MENTION_EVENT, type MentionDetail } from './members/useMemberMenu';
 import { excerpt, toTokens, type Lookup } from './richText';
 
 type Props = {
@@ -59,6 +60,25 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 			textarea.current?.setSelectionRange(next.length, next.length);
 		});
 	});
+
+	// Mention envoyée par le menu d'un membre.
+	useEffect(() => {
+		const onMention = (e: Event) => {
+			const detail = (e as CustomEvent<MentionDetail>).detail;
+			if (detail.channelId !== channel.id) {
+				return;
+			}
+			const next = `${text}${text && !text.endsWith(' ') ? ' ' : ''}${detail.text}`;
+			setText(next);
+			setCaret(next.length);
+			requestAnimationFrame(() => {
+				textarea.current?.focus();
+				textarea.current?.setSelectionRange(next.length, next.length);
+			});
+		};
+		window.addEventListener(MENTION_EVENT, onMention);
+		return () => window.removeEventListener(MENTION_EVENT, onMention);
+	}, [text, channel.id]);
 
 	const trigger = useMemo(() => {
 		const before = text.slice(0, caret);

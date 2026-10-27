@@ -1,13 +1,15 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 
-import { DEFAULT_GRADE, P, PERMISSIONS, has, type Override, type PermGroup } from '../../shared/permissions';
-import { ACCENTS, type Channel, type ChannelKind, type ChannelOverrides, type Grade, type Member, type WorkspaceDetail } from '../../shared/types';
+import { DEFAULT_GRADE, P, has, type Override, type PermGroup } from '../../shared/permissions';
+import { type Channel, type ChannelKind, type ChannelOverrides, type Grade, type Member, type WorkspaceDetail } from '../../shared/types';
 import { api, errorText } from '../api';
 import { navigate } from '../router';
 import { Avatar, Dialog, Icon, useDismiss } from '../ui';
 import { ChannelPermissions } from './categories/OverridesEditor';
 import { CommandsTab } from './commands/CommandsSettings';
-import { memberColor, memberGrades } from './grades';
+import { memberColor, memberGrades, topOf } from './grades';
+import { GradesTab } from './settings/GradesSettings';
+import { Swatches } from './settings/Swatches';
 
 type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands';
 
@@ -35,13 +37,6 @@ function useAction() {
 	return { error, run };
 }
 
-const OWNER_TOP = Number.MAX_SAFE_INTEGER;
-
-const topOf = (member: Member, grades: Grade[]) => (member.owner ? OWNER_TOP : Math.max(0, ...memberGrades(member, grades).map((g) => g.position)));
-
-// Grade modifiable : sous son plus haut grade, ou propriétaire.
-const canTouchGrade = (info: WorkspaceDetail, grade: Grade) => info.owner || (has(info.perms, P.MANAGE_GRADES) && (grade.id === DEFAULT_GRADE || grade.position < info.top));
-
 export function SettingsDialog({ open, onClose, info, channels, myId, onChanged }: Props) {
 	const [tab, setTab] = useState<Tab>('space');
 	const tabs: Array<[Tab, string, boolean]> = [
@@ -66,7 +61,7 @@ export function SettingsDialog({ open, onClose, info, channels, myId, onChanged 
 			</div>
 			{current === 'space' && <SpaceTab info={info} myId={myId} onChanged={onChanged} />}
 			{current === 'channels' && <ChannelsTab info={info} channels={channels} />}
-			{current === 'grades' && <GradesTab info={info} onChanged={onChanged} />}
+			{current === 'grades' && <GradesTab info={info} myId={myId} onChanged={onChanged} />}
 			{current === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
 			{current === 'invites' && <InvitesTab workspaceId={info.id} />}
 			{current === 'commands' && <CommandsTab workspaceId={info.id} />}
@@ -144,25 +139,6 @@ function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: stri
 				</button>
 			)}
 			{error && <p className='notice notice-error'>{error}</p>}
-		</div>
-	);
-}
-
-function Swatches({ value, onPick, allowNone }: { value: string; onPick: (color: string) => void; allowNone?: boolean }) {
-	return (
-		<div className='swatches'>
-			{allowNone && (
-				<button type='button' className='swatch swatch-none' aria-label='Sans couleur' aria-pressed={value === ''} onClick={() => onPick('')}>
-					<Icon name='close' size={14} />
-				</button>
-			)}
-			{ACCENTS.map((color) => (
-				<button key={color} type='button' className='swatch' style={{ background: color }} aria-label={`Couleur ${color}`} aria-pressed={value.toUpperCase() === color} onClick={() => onPick(color)} />
-			))}
-			<label className='swatch' style={{ display: 'grid', placeItems: 'center', background: 'var(--surface)', cursor: 'pointer' }} title='Couleur personnalisée'>
-				<Icon name='plus' size={14} />
-				<input type='color' className='sr-only' defaultValue={value || '#6A4BFF'} onChange={(e) => onPick(e.target.value)} aria-label='Couleur personnalisée' />
-			</label>
 		</div>
 	);
 }
@@ -299,162 +275,6 @@ function ChannelsTab({ info, channels }: { info: WorkspaceDetail; channels: Chan
 				))}
 			</ul>
 			{error && <p className='notice notice-error'>{error}</p>}
-		</div>
-	);
-}
-
-function GradesTab({ info, onChanged }: { info: WorkspaceDetail; onChanged: () => Promise<unknown> }) {
-	const { error, run } = useAction();
-	const [editing, setEditing] = useState<string | null>(null);
-	const ordered = [...info.grades].sort((a, b) => b.position - a.position);
-	const movable = ordered.filter((g) => g.id !== DEFAULT_GRADE);
-	const counts = new Map(info.grades.map((g) => [g.id, info.members.filter((m) => g.id === DEFAULT_GRADE || m.gradeIds.includes(g.id)).length]));
-
-	const move = (grade: Grade, direction: 1 | -1) =>
-		run(async () => {
-			const ids = [...movable].reverse().map((g) => g.id);
-			const index = ids.indexOf(grade.id);
-			const swap = index + direction;
-			if (swap < 0 || swap >= ids.length) {
-				return;
-			}
-			[ids[index], ids[swap]] = [ids[swap]!, ids[index]!];
-			await api('PUT', `/w/${info.id}/grades/order`, { ids });
-			await onChanged();
-		});
-
-	const edited = info.grades.find((g) => g.id === editing);
-	if (edited) {
-		return <GradeEditor info={info} grade={edited} onDone={() => setEditing(null)} onChanged={onChanged} />;
-	}
-
-	return (
-		<div className='stack'>
-			<div className='row'>
-				<p className='muted grow' style={{ fontSize: 14 }}>
-					Les grades du haut l’emportent. Tu ne gères que ceux placés sous ton plus haut grade.
-				</p>
-				<button
-					type='button'
-					className='btn btn-primary'
-					onClick={() =>
-						void run(async () => {
-							const grade = await api<Grade>('POST', `/w/${info.id}/grades`, { name: 'Nouveau grade', permissions: 0 });
-							await onChanged();
-							setEditing(grade.id);
-						})
-					}
-				>
-					<Icon name='plus' size={16} /> Nouveau grade
-				</button>
-			</div>
-			<ul className='list'>
-				{ordered.map((grade) => {
-					const editable = canTouchGrade(info, grade);
-					const index = movable.indexOf(grade);
-					return (
-						<li key={grade.id} className='list-row'>
-							<span className='grade-dot' style={{ background: grade.color || 'var(--line-strong)' }} aria-hidden />
-							<span className='grow ellipsis' style={{ fontWeight: 600, color: grade.color || undefined }}>
-								{grade.name}
-								{grade.id === DEFAULT_GRADE && <span className='muted' style={{ fontWeight: 400 }}> (tout le monde)</span>}
-							</span>
-							<span className='muted' style={{ fontSize: 13 }}>
-								{counts.get(grade.id) ?? 0} membre{(counts.get(grade.id) ?? 0) > 1 ? 's' : ''}
-							</span>
-							{grade.id !== DEFAULT_GRADE && editable && (
-								<>
-									<button type='button' className='icon-btn icon-btn-sm' aria-label={`Monter ${grade.name}`} disabled={index === 0 || !canTouchGrade(info, movable[index - 1]!)} onClick={() => void move(grade, 1)}>
-										<Icon name='up' size={14} />
-									</button>
-									<button type='button' className='icon-btn icon-btn-sm' aria-label={`Descendre ${grade.name}`} disabled={index === movable.length - 1} onClick={() => void move(grade, -1)}>
-										<Icon name='down' size={14} />
-									</button>
-								</>
-							)}
-							<button type='button' className='icon-btn icon-btn-sm' aria-label={`Modifier ${grade.name}`} disabled={!editable} onClick={() => setEditing(grade.id)}>
-								<Icon name='pencil' size={16} />
-							</button>
-						</li>
-					);
-				})}
-			</ul>
-			{error && <p className='notice notice-error'>{error}</p>}
-		</div>
-	);
-}
-
-function GradeEditor({ info, grade, onDone, onChanged }: { info: WorkspaceDetail; grade: Grade; onDone: () => void; onChanged: () => Promise<unknown> }) {
-	const { error, run } = useAction();
-	const [name, setName] = useState(grade.name);
-	const [color, setColor] = useState(grade.color);
-	const [perms, setPerms] = useState(grade.permissions);
-	const fullPower = info.owner || has(info.perms, P.ADMINISTRATOR);
-	const groups = [...new Set(PERMISSIONS.map((p) => p.group))];
-
-	return (
-		<div className='stack' style={{ gap: 20 }}>
-			<button type='button' className='btn btn-ghost' style={{ alignSelf: 'flex-start' }} onClick={onDone}>
-				<Icon name='chevron-left' size={16} /> Tous les grades
-			</button>
-			<label className='field'>
-				Nom
-				<input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} />
-			</label>
-			<div className='field'>
-				Couleur
-				<Swatches value={color} onPick={setColor} allowNone />
-			</div>
-			{groups.map((group) => (
-				<fieldset key={group} className='perm-group'>
-					<legend>{group}</legend>
-					{PERMISSIONS.filter((p) => p.group === group).map((perm) => {
-						const flag = P[perm.key];
-						const allowed = fullPower || has(info.perms, flag);
-						return (
-							<label key={perm.key} className='perm-row'>
-								<input type='checkbox' checked={has(perms, flag)} disabled={!allowed} onChange={(e) => setPerms(e.target.checked ? perms | flag : perms & ~flag)} />
-								<span>
-									<span className='perm-label'>{perm.label}</span>
-									<span className='field-hint'>{perm.hint}</span>
-								</span>
-							</label>
-						);
-					})}
-				</fieldset>
-			))}
-			{error && <p className='notice notice-error'>{error}</p>}
-			<div className='row'>
-				<button
-					type='button'
-					className='btn btn-primary'
-					onClick={() =>
-						void run(async () => {
-							await api('PATCH', `/w/${info.id}/grades/${grade.id}`, { name, color, permissions: perms });
-							await onChanged();
-							onDone();
-						})
-					}
-				>
-					Enregistrer
-				</button>
-				{grade.id !== DEFAULT_GRADE && (
-					<button
-						type='button'
-						className='btn btn-danger'
-						onClick={() =>
-							window.confirm(`Supprimer le grade « ${grade.name} » ? Ses membres le perdent.`) &&
-							void run(async () => {
-								await api('DELETE', `/w/${info.id}/grades/${grade.id}`);
-								await onChanged();
-								onDone();
-							})
-						}
-					>
-						Supprimer le grade
-					</button>
-				)}
-			</div>
 		</div>
 	);
 }

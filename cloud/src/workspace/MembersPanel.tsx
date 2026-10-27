@@ -1,5 +1,6 @@
 import type { Grade, Member, VoiceParticipant } from '../../shared/types';
 import { Avatar, Icon } from '../ui';
+import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { memberColor, memberGrades } from './grades';
 
 type Props = {
@@ -9,11 +10,13 @@ type Props = {
 	voice: Record<string, VoiceParticipant[]>;
 	myId: string;
 	onMessage?: (userId: string) => void;
+	menu?: (userId: string) => ContextMenuItem[];
 	onClose: () => void;
 };
 
 // Membres en ligne rangés sous leur plus haut grade, comme une liste TeamSpeak ; hors ligne à part.
-export function MembersPanel({ members, grades, online, voice, myId, onMessage, onClose }: Props) {
+export function MembersPanel({ members, grades, online, voice, myId, onMessage, menu, onClose }: Props) {
+	const ctx = useContextMenu();
 	const inVoice = new Set(Object.values(voice).flatMap((list) => list.map((p) => p.userId)));
 	const sorted = [...members].sort((a, b) => a.name.localeCompare(b.name));
 	const groups = new Map<string, { label: string; color?: string; order: number; list: Member[] }>();
@@ -50,7 +53,7 @@ export function MembersPanel({ members, grades, online, voice, myId, onMessage, 
 						</h3>
 						<ul className='list'>
 							{section.list.map((member) => (
-								<li key={member.id} className={`list-row${online.has(member.id) ? '' : ' member-offline'}`}>
+								<li key={member.id} className={`list-row${online.has(member.id) ? '' : ' member-offline'}`} {...(menu ? ctx.bind(() => menu(member.id)) : {})}>
 									<Avatar name={member.name} url={member.avatarUrl} size={32} online={online.has(member.id)} />
 									<span className='grow ellipsis' style={{ color: memberColor(member, grades) }}>
 										{member.name}
@@ -72,6 +75,7 @@ export function MembersPanel({ members, grades, online, voice, myId, onMessage, 
 					</section>
 				))}
 			</div>
+			{ctx.menu}
 		</aside>
 	);
 }
