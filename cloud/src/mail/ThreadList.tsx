@@ -9,7 +9,7 @@ const TABS: Array<[MailTab, string]> = [
 	['open', 'Ouverts'],
 	['snoozed', 'En attente'],
 	['done', 'Traités'],
-	['mine', 'Assignés à moi'],
+	['mine', 'À moi'],
 	['drafts', 'Brouillons'],
 ];
 
