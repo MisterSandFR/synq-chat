@@ -841,6 +841,39 @@ export class Workspace extends DurableObject<Env> {
 		return remoteSessionIds.every((id) => id !== voice.sessionId && allowed.has(id));
 	}
 
+	// Le membre déplacé rejoint lui-même : seul son navigateur peut ouvrir ses connexions WebRTC.
+	voiceMove(actor: Actor, targetId: string, channelId: string): Result<null> {
+		const sockets = this.ctx.getWebSockets(targetId).filter((ws) => this.conn(ws)?.voice);
+		const target = sockets[0] && this.conn(sockets[0]);
+		if (!target?.voice) {
+			return err(404, 'Ce membre n’est pas en vocal');
+		}
+		const destination = this.channelRow(channelId);
+		if (!destination || destination.kind !== 'voice' || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon vocal introuvable');
+		}
+		if (target.voice.channelId === channelId) {
+			return ok(null);
+		}
+		if (!this.can(actor, target.voice.channelId, P.VOICE_MOVE) || !this.can(actor, channelId, P.VOICE_MOVE)) {
+			return err(403, DENIED);
+		}
+		if (targetId !== actor.id && (target.actor.owner || (!actor.owner && target.actor.top >= actor.top))) {
+			return err(403, 'Grade égal ou supérieur au tien');
+		}
+		if (!this.can(target.actor, channelId, P.VOICE_CONNECT)) {
+			return err(403, `${target.actor.name} ne peut pas rejoindre ce salon`);
+		}
+		const others = this.participants(channelId).filter((p) => p.userId !== targetId);
+		if (destination.user_limit > 0 && others.length >= destination.user_limit && !this.can(target.actor, channelId, P.BYPASS_LIMIT)) {
+			return err(409, 'Salon complet');
+		}
+		for (const ws of sockets) {
+			this.send(ws, { t: 'voice_move', channelId, by: actor.name });
+		}
+		return ok(null);
+	}
+
 	voiceModerate(actor: Actor, targetId: string, action: 'mute' | 'kick'): Result<null> {
 		const sockets = this.ctx.getWebSockets(targetId).filter((ws) => this.conn(ws)?.voice);
 		const target = sockets[0] && this.conn(sockets[0]);

@@ -150,6 +150,14 @@ voiceRoutes.put('/w/:wid/voice/tracks/close', async (c) => {
 	return sfuReply(c, reply);
 });
 
+voiceRoutes.post('/w/:wid/voice/move', async (c) => {
+	const { userId, channelId } = await readJson<{ userId: string; channelId: string }>(c);
+	if (typeof userId !== 'string' || typeof channelId !== 'string') {
+		return fail(c, 400, 'Requête invalide');
+	}
+	return unwrap(c, await stub(c).voiceMove(c.get('actor'), userId, channelId));
+});
+
 voiceRoutes.post('/w/:wid/voice/moderate', async (c) => {
 	const { userId, action } = await readJson<{ userId: string; action: 'mute' | 'kick' }>(c);
 	if (typeof userId !== 'string' || (action !== 'mute' && action !== 'kick')) {

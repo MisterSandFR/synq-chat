@@ -439,6 +439,13 @@ kbd {
 	color: var(--danger);
 }
 
+.menu-label {
+	padding: 6px 10px 2px;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
 .menu-sep {
 	height: 1px;
 	margin: 6px 4px;

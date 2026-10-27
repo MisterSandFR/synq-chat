@@ -24,6 +24,7 @@ export interface WorkspaceState {
 	drive: Record<string, number>;
 	voiceEnded: { reason: string; at: number } | null;
 	forceMuted: { by: string; at: number } | null;
+	voiceMoved: { channelId: string; by: string; at: number } | null;
 	status: 'connecting' | 'live' | 'offline';
 	closed: string | null;
 }
@@ -57,6 +58,7 @@ const initial: WorkspaceState = {
 	drive: {},
 	voiceEnded: null,
 	forceMuted: null,
+	voiceMoved: null,
 	status: 'connecting',
 	closed: null,
 };
@@ -138,6 +140,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		}
 		case 'voice_force_mute':
 			return { ...state, forceMuted: { by: event.by, at: Date.now() } };
+		case 'voice_move':
+			return { ...state, voiceMoved: { channelId: event.channelId, by: event.by, at: Date.now() } };
 		case 'channel_deleted': {
 			const { [event.id]: _messages, ...messages } = state.messages;
 			const { [event.id]: _unread, ...unread } = state.unread;

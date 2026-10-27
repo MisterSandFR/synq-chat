@@ -703,6 +703,29 @@ describe('grades et permissions', () => {
 		bobSocket.ws.close(1000);
 		vi.restoreAllMocks();
 	});
+
+	it('déplace un membre entre salons vocaux selon la permission et la hiérarchie', async () => {
+		mockVoice();
+		const { owner, bob, carol, wid, general } = await team();
+		const channels = await owner.req<Channel[]>('GET', `/api/w/${wid}/channels`);
+		const lobby = channels.data.find((c) => c.kind === 'voice')!;
+		const room = await owner.req<Channel>('POST', `/api/w/${wid}/channels`, { name: 'réunion', kind: 'voice' });
+		const carolSocket = await carol.socket(wid);
+		const carolConn = ((await carolSocket.next('hello')) as Extract<ServerEvent, { t: 'hello' }>).connId;
+		const ownerSocket = await owner.socket(wid);
+		await ownerSocket.next('hello');
+		expect((await owner.req('POST', `/api/w/${wid}/voice/move`, { userId: carol.user.id, channelId: room.data.id })).status).toBe(404);
+		await carol.req('POST', `/api/w/${wid}/voice/join`, { channelId: lobby.id, connId: carolConn });
+		expect((await bob.req('POST', `/api/w/${wid}/voice/move`, { userId: carol.user.id, channelId: room.data.id })).status).toBe(403);
+		expect((await owner.req('POST', `/api/w/${wid}/voice/move`, { userId: carol.user.id, channelId: general.id })).status).toBe(404);
+		expect((await carol.req('POST', `/api/w/${wid}/voice/move`, { userId: owner.user.id, channelId: room.data.id })).status).toBe(404);
+		expect((await owner.req('POST', `/api/w/${wid}/voice/move`, { userId: carol.user.id, channelId: room.data.id })).status).toBe(200);
+		const moved = (await carolSocket.next('voice_move')) as Extract<ServerEvent, { t: 'voice_move' }>;
+		expect(moved).toMatchObject({ channelId: room.data.id, by: owner.user.name });
+		carolSocket.ws.close(1000);
+		ownerSocket.ws.close(1000);
+		vi.restoreAllMocks();
+	});
 });
 
 function mockVoice() {

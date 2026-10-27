@@ -186,6 +186,7 @@ export type ServerEvent =
 			voice: Record<string, VoiceParticipant[]>;
 	  }
 	| { t: 'voice_force_mute'; by: string }
+	| { t: 'voice_move'; channelId: string; by: string }
 	| { t: 'message'; message: Message }
 	| { t: 'message_updated'; message: Message }
 	| { t: 'message_deleted'; channelId: string; id: number }

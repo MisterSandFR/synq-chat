@@ -46,7 +46,7 @@ function useFocused(): boolean {
 export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props) {
 	const myId = me.user.id;
 	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
-	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, forceMuted: state.forceMuted, send });
+	const voice = useVoice({ workspaceId, connId: state.connId, myId, voice: state.voice, voiceEnded: state.voiceEnded, forceMuted: state.forceMuted, voiceMoved: state.voiceMoved, send });
 	const width = useResizable({ pref: 'sidebar_width', min: 220, max: 520, initial: 280, edge: 'end' });
 	const chatWidth = useResizable({ pref: 'voice_chat_width', min: 300, max: 720, initial: 380, edge: 'start' });
 	const focused = useFocused();
@@ -326,6 +326,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 									myId={myId}
 									voice={voice}
 									otherChannelName={otherVoice}
+									moveTargets={channels?.filter((c) => c.kind === 'voice' && c.id !== active.id) ?? []}
 								/>
 								{voiceChat && (
 									<aside className='call-chat' style={{ width: chatWidth.width }} aria-label={`Chat de ${active.name}`}>

@@ -61,21 +61,26 @@ type Props = {
 	myId: string;
 	voice: VoiceControls;
 	otherChannelName: string | null;
+	// Salons vocaux où l'on peut déplacer quelqu'un (permission vérifiée par le serveur).
+	moveTargets: Channel[];
 };
 
-export function CallView({ workspaceId, channel, participants, members, grades, perms, myId, voice, otherChannelName }: Props) {
+export function CallView({ workspaceId, channel, participants, members, grades, perms, myId, voice, otherChannelName, moveTargets }: Props) {
 	const snapshot = voice.snapshot;
 	const connected = snapshot?.channelId === channel.id;
 	const speaking = connected ? snapshot.speaking : new Set<string>();
 	const full = channel.userLimit > 0 && participants.length >= channel.userLimit && !has(perms, P.BYPASS_LIMIT);
 	const canConnect = has(perms, P.VOICE_CONNECT);
 	const canModerate = has(perms, P.VOICE_MODERATE);
+	const canMove = has(perms, P.VOICE_MOVE) && moveTargets.length > 0;
 	const [modError, setModError] = useState<string | null>(null);
-	const moderate = (userId: string, action: 'mute' | 'kick') =>
-		api('POST', `/w/${workspaceId}/voice/moderate`, { userId, action }).then(
+	const report = (request: Promise<unknown>) =>
+		request.then(
 			() => setModError(null),
 			(error) => setModError(errorText(error)),
 		);
+	const moderate = (userId: string, action: 'mute' | 'kick') => report(api('POST', `/w/${workspaceId}/voice/moderate`, { userId, action }));
+	const move = (userId: string, channelId: string) => report(api('POST', `/w/${workspaceId}/voice/move`, { userId, channelId }));
 
 	const camFor = (p: VoiceParticipant) => {
 		if (!connected || !p.video) {
@@ -92,7 +97,15 @@ export function CallView({ workspaceId, channel, participants, members, grades, 
 		return (
 			<div key={p.userId} className={`tile${speaking.has(p.userId) ? ' tile-speaking' : ''}`}>
 				{cam ? <Video stream={cam} mirror={p.userId === myId} /> : <Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={72} />}
-				{canModerate && p.userId !== myId && <TileMenu name={member?.name ?? 'ce membre'} onMute={() => void moderate(p.userId, 'mute')} onKick={() => void moderate(p.userId, 'kick')} />}
+				{(canModerate || canMove) && p.userId !== myId && (
+					<TileMenu
+						name={member?.name ?? 'ce membre'}
+						onMute={canModerate ? () => void moderate(p.userId, 'mute') : undefined}
+						onKick={canModerate ? () => void moderate(p.userId, 'kick') : undefined}
+						targets={canMove ? moveTargets : []}
+						onMove={(channelId) => void move(p.userId, channelId)}
+					/>
+				)}
 				<span className='tile-label'>
 					<span className='ellipsis' style={{ color: memberColor(member, grades) }}>
 						{member?.name ?? 'Membre'}
@@ -166,7 +179,9 @@ export function CallView({ workspaceId, channel, participants, members, grades, 
 	);
 }
 
-function TileMenu({ name, onMute, onKick }: { name: string; onMute: () => void; onKick: () => void }) {
+type TileMenuProps = { name: string; onMute?: () => void; onKick?: () => void; targets: Channel[]; onMove: (channelId: string) => void };
+
+function TileMenu({ name, onMute, onKick, targets, onMove }: TileMenuProps) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	useDismiss(ref, open, () => setOpen(false));
@@ -176,29 +191,53 @@ function TileMenu({ name, onMute, onKick }: { name: string; onMute: () => void; 
 				<Icon name='shield' size={16} />
 			</button>
 			{open && (
-				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 200 }}>
-					<button
-						type='button'
-						role='menuitem'
-						className='menu-item'
-						onClick={() => {
-							setOpen(false);
-							onMute();
-						}}
-					>
-						<Icon name='mic-off' size={16} /> Couper son micro
-					</button>
-					<button
-						type='button'
-						role='menuitem'
-						className='menu-item menu-item-danger'
-						onClick={() => {
-							setOpen(false);
-							onKick();
-						}}
-					>
-						<Icon name='hangup' size={16} /> Retirer du vocal
-					</button>
+				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 220, maxHeight: 360, overflowY: 'auto' }}>
+					{onMute && (
+						<button
+							type='button'
+							role='menuitem'
+							className='menu-item'
+							onClick={() => {
+								setOpen(false);
+								onMute();
+							}}
+						>
+							<Icon name='mic-off' size={16} /> Couper son micro
+						</button>
+					)}
+					{onKick && (
+						<button
+							type='button'
+							role='menuitem'
+							className='menu-item menu-item-danger'
+							onClick={() => {
+								setOpen(false);
+								onKick();
+							}}
+						>
+							<Icon name='hangup' size={16} /> Retirer du vocal
+						</button>
+					)}
+					{targets.length > 0 && (
+						<>
+							{(onMute || onKick) && <div className='menu-sep' />}
+							<p className='menu-label'>Déplacer vers</p>
+							{targets.map((target) => (
+								<button
+									key={target.id}
+									type='button'
+									role='menuitem'
+									className='menu-item'
+									onClick={() => {
+										setOpen(false);
+										onMove(target.id);
+									}}
+								>
+									<Icon name='speaker' size={16} /> <span className='ellipsis'>{target.name}</span>
+								</button>
+							))}
+						</>
+					)}
 				</div>
 			)}
 		</div>

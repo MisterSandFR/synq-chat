@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ClientEvent, VoiceParticipant } from '../../../shared/types';
 import { errorText } from '../../api';
+import { navigate } from '../../router';
 import { VoiceClient, type VoiceSnapshot } from './VoiceClient';
 
 type Options = {
@@ -11,12 +12,13 @@ type Options = {
 	voice: Record<string, VoiceParticipant[]>;
 	voiceEnded: { reason: string; at: number } | null;
 	forceMuted: { by: string; at: number } | null;
+	voiceMoved: { channelId: string; by: string; at: number } | null;
 	send: (event: ClientEvent) => void;
 };
 
 export type VoiceControls = ReturnType<typeof useVoice>;
 
-export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, forceMuted, send }: Options) {
+export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, forceMuted, voiceMoved, send }: Options) {
 	const clientRef = useRef<VoiceClient | null>(null);
 	const [snapshot, setSnapshot] = useState<VoiceSnapshot | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -124,6 +126,18 @@ export function useVoice({ workspaceId, connId, myId, voice, voiceEnded, forceMu
 			setNotice(`${forceMuted.by} a coupé ton micro.`);
 		}
 	}, [forceMuted]);
+
+	useEffect(() => {
+		const from = clientRef.current?.snapshot.channelId;
+		if (!voiceMoved || !from || from === voiceMoved.channelId) {
+			return;
+		}
+		// Qui regardait l'ancien salon suit l'appel ; sinon la vue ne bouge pas.
+		if (location.pathname.endsWith(`/${from}`)) {
+			navigate(`/w/${workspaceId}/${voiceMoved.channelId}`, true);
+		}
+		void joinRef.current(voiceMoved.channelId).then(() => setNotice(`${voiceMoved.by} t’a déplacé dans un autre salon vocal.`));
+	}, [voiceMoved, workspaceId]);
 
 	useEffect(() => () => void clientRef.current?.leave().catch(() => undefined), []);
 
