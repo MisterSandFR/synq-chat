@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
-import type { MailAiInput, MailAiResult, MailboxInfo, MailDraft, MailSendInput, MailThreadDetail, MailUpload } from '../../shared/mail';
+import type { MailAiInput, MailAiResult, MailboxInfo, MailDraft, MailScheduleInput, MailSendInput, MailThreadDetail, MailUpload } from '../../shared/mail';
 import { api, errorText, upload } from '../api';
-import { Icon, fileIcon, formatSize } from '../ui';
-import { formatAddress, parseAddresses, validAddress } from './format';
+import { Icon, fileIcon, formatSize, useDismiss } from '../ui';
+import { formatAddress, longDate, parseAddresses, snoozeChoices, validAddress } from './format';
 import { QuickReplies } from './QuickReplies';
+import { Templates } from './Templates';
 
 export type ComposeSeed = {
 	id: string;
@@ -13,11 +14,15 @@ export type ComposeSeed = {
 	forwardOf: string | null;
 	to: string;
 	cc: string;
+	bcc: string;
 	subject: string;
 	text: string;
 	attachments: MailUpload[];
 	// Déjà enregistré côté serveur.
 	saved: boolean;
+	sendAt?: number | null;
+	// Message cité, transmis à l'assistant de rédaction.
+	context?: string;
 };
 
 export const newSeed = (patch: Partial<ComposeSeed> & { mailboxId: string }): ComposeSeed => ({
@@ -26,6 +31,7 @@ export const newSeed = (patch: Partial<ComposeSeed> & { mailboxId: string }): Co
 	forwardOf: null,
 	to: '',
 	cc: '',
+	bcc: '',
 	subject: '',
 	text: '',
 	attachments: [],
@@ -37,13 +43,15 @@ export const seedFromDraft = (draft: MailDraft): ComposeSeed => ({
 	id: draft.id,
 	mailboxId: draft.mailboxId,
 	threadId: draft.threadId,
-	forwardOf: null,
+	forwardOf: draft.forwardOf,
 	to: draft.to.map(formatAddress).join(', '),
 	cc: draft.cc.map(formatAddress).join(', '),
+	bcc: (draft.bcc ?? []).map(formatAddress).join(', '),
 	subject: draft.subject,
 	text: draft.text,
 	attachments: draft.attachments,
 	saved: true,
+	sendAt: draft.sendAt,
 });
 
 const UPLOAD_MAX = 20 * 1024 * 1024;
@@ -66,18 +74,20 @@ type Props = {
 	onMaximize: () => void;
 	onClose: (kept: boolean) => void;
 	onSent: (detail: MailThreadDetail) => void;
+	onScheduled?: (at: number) => void;
 	// Reformulation branchée par le parent ; la forme fonction reçoit le texte du message.
 	aiSlot?: ReactNode | ((field: ComposerField) => ReactNode);
 };
 
 export type ComposerField = { value: string; onChange: (text: string) => void; textarea: RefObject<HTMLTextAreaElement | null> };
 
-export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaximize, onClose, onSent, aiSlot }: Props) {
-	const [form, setForm] = useState(() => ({ ...seed, bcc: '' }));
-	const [showCc, setShowCc] = useState(Boolean(seed.cc));
+export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaximize, onClose, onSent, onScheduled, aiSlot }: Props) {
+	const [form, setForm] = useState(() => ({ ...seed }));
+	const [showCc, setShowCc] = useState(Boolean(seed.cc || seed.bcc));
+	const [scheduled, setScheduled] = useState(seed.sendAt ?? null);
 	const [pending, setPending] = useState<Pending[]>([]);
 	const [tone, setTone] = useState<NonNullable<MailAiInput['tone']>>('neutre');
-	const [status, setStatus] = useState<string | null>(seed.saved ? 'Brouillon' : null);
+	const [status, setStatus] = useState<string | null>(seed.sendAt ? `Envoi prévu ${longDate(seed.sendAt)}` : seed.saved ? 'Brouillon' : null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState<'send' | 'ai' | null>(null);
 	const state = useRef(form);
@@ -96,23 +106,35 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 
 	const empty = () => {
 		const f = state.current;
-		return !f.to.trim() && !f.cc.trim() && !f.text.trim() && f.attachments.length === 0;
+		return !f.to.trim() && !f.cc.trim() && !f.bcc.trim() && !f.text.trim() && f.attachments.length === 0;
 	};
 
-	const save = async () => {
+	const save = async (): Promise<boolean> => {
 		if (!dirty.current || sending.current) {
-			return;
+			return !dirty.current;
 		}
 		if (saving.current) {
 			await saving.current;
 		}
 		const f = state.current;
 		dirty.current = false;
-		const body = { mailboxId: f.mailboxId, threadId: f.threadId, to: parseAddresses(f.to), cc: parseAddresses(f.cc), subject: f.subject, text: f.text, attachments: f.attachments };
+		let ok = false;
+		const body = {
+			mailboxId: f.mailboxId,
+			threadId: f.threadId,
+			forwardOf: f.forwardOf,
+			to: parseAddresses(f.to),
+			cc: parseAddresses(f.cc),
+			bcc: parseAddresses(f.bcc),
+			subject: f.subject,
+			text: f.text,
+			attachments: f.attachments,
+		};
 		saving.current = api<MailDraft>('PUT', `/mail/drafts/${f.id}`, body)
 			.then(() => {
+				ok = true;
 				saved.current = true;
-				setStatus('Brouillon enregistré');
+				setStatus((current) => (current?.startsWith('Envoi prévu') ? current : 'Brouillon enregistré'));
 			})
 			.catch((e) => {
 				dirty.current = true;
@@ -122,6 +144,7 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 				saving.current = null;
 			});
 		await saving.current;
+		return ok;
 	};
 
 	useEffect(() => {
@@ -192,23 +215,71 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 		}
 	};
 
+	const check = (): string | null => {
+		const to = parseAddresses(form.to);
+		const invalid = [...to, ...parseAddresses(form.cc), ...parseAddresses(form.bcc)].find((address) => !validAddress(address.addr));
+		if (to.length === 0) {
+			return 'Ajoute au moins un destinataire.';
+		}
+		if (invalid) {
+			return `Adresse invalide : ${invalid.addr}`;
+		}
+		return pending.length ? 'Envoi des pièces jointes en cours.' : null;
+	};
+
+	const insert = (body: string) => {
+		const area = textArea.current;
+		const text = state.current.text;
+		const start = area?.selectionStart ?? text.length;
+		const end = area?.selectionEnd ?? text.length;
+		set({ text: text.slice(0, start) + body + text.slice(end) });
+		requestAnimationFrame(() => {
+			area?.focus();
+			area?.setSelectionRange(start + body.length, start + body.length);
+		});
+	};
+
+	// Brouillon enregistré d'abord : le cron envoie ce que le serveur a.
+	const schedule = async (at: number | null) => {
+		const problem = at === null ? null : check();
+		if (problem) {
+			setError(problem);
+			return;
+		}
+		setBusy('send');
+		setError(null);
+		dirty.current = true;
+		if (!(await save())) {
+			setBusy(null);
+			setError('Brouillon non enregistré : envoi non programmé.');
+			return;
+		}
+		try {
+			await api<MailDraft>('POST', `/mail/drafts/${form.id}/schedule`, { sendAt: at } satisfies MailScheduleInput);
+			setScheduled(at);
+			if (at === null) {
+				setStatus('Envoi prévu annulé');
+				setBusy(null);
+				return;
+			}
+			sending.current = true;
+			onScheduled?.(at);
+			onClose(true);
+		} catch (e) {
+			setError(errorText(e));
+			setBusy(null);
+		}
+	};
+
 	const send = async () => {
+		const problem = check();
+		if (problem) {
+			setError(problem);
+			return;
+		}
 		const to = parseAddresses(form.to);
 		const cc = parseAddresses(form.cc);
 		const bcc = parseAddresses(form.bcc);
-		const invalid = [...to, ...cc, ...bcc].find((address) => !validAddress(address.addr));
-		if (to.length === 0) {
-			setError('Ajoute au moins un destinataire.');
-			return;
-		}
-		if (invalid) {
-			setError(`Adresse invalide : ${invalid.addr}`);
-			return;
-		}
-		if (pending.length) {
-			setError('Envoi des pièces jointes en cours.');
-			return;
-		}
 		setBusy('send');
 		setError(null);
 		sending.current = true;
@@ -246,6 +317,7 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 
 	const title = form.subject.trim() || 'Nouveau message';
 	const senders = boxes.filter((box) => box.access.reply || box.id === form.mailboxId);
+	const signature = boxes.find((box) => box.id === form.mailboxId)?.signature?.trim();
 
 	return (
 		<section className={`mail-composer${minimized ? ' is-min' : ''}${maximized ? ' is-max' : ''}`} onKeyDown={onKeyDown} aria-label={title}>
@@ -312,6 +384,11 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 						</label>
 					</div>
 					<textarea ref={textArea} className='mail-composer-text' value={form.text} onChange={(e) => set({ text: e.target.value })} placeholder='Écris ton message' maxLength={20_000} />
+					{signature && (
+						<p className='mail-composer-sign' title={signature}>
+							Signature ajoutée à l’envoi
+						</p>
+					)}
 					{form.threadId && !form.text.trim() && <QuickReplies threadId={form.threadId} onPick={(text) => set({ text })} />}
 					{(form.attachments.length > 0 || pending.length > 0) && (
 						<div className='mail-composer-files'>
@@ -340,6 +417,7 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 							<Icon name='paperclip' size={16} />
 						</button>
 						<input ref={fileInput} type='file' multiple hidden onChange={(e) => (attach(e.target.files), (e.target.value = ''))} />
+						<Templates text={form.text} onInsert={insert} />
 						{aiSlot && <span className='mail-composer-slot'>{typeof aiSlot === 'function' ? aiSlot({ value: form.text, onChange: (text) => set({ text }), textarea: textArea }) : aiSlot}</span>}
 						{form.threadId && (
 							<span className='mail-composer-ai'>
@@ -367,6 +445,7 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 								</option>
 							))}
 						</select>
+						<SchedulePop disabled={busy !== null} scheduled={scheduled} onPick={(at) => void schedule(at)} onCancel={() => void schedule(null)} />
 						<button type='button' className='btn btn-primary' disabled={busy !== null} onClick={() => void send()}>
 							<Icon name='send' size={16} />
 							{busy === 'send' ? 'Envoi…' : 'Envoyer'}
@@ -375,5 +454,55 @@ export function Composer({ seed, boxes, minimized, maximized, onMinimize, onMaxi
 				</>
 			)}
 		</section>
+	);
+}
+
+function SchedulePop({ disabled, scheduled, onPick, onCancel }: { disabled: boolean; scheduled: number | null; onPick: (at: number) => void; onCancel: () => void }) {
+	const [open, setOpen] = useState(false);
+	const [date, setDate] = useState('');
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	const label = scheduled ? `Envoi prévu ${longDate(scheduled)}` : 'Envoyer plus tard';
+	return (
+		<div className='mail-pop-anchor' ref={ref}>
+			<button type='button' className='icon-btn icon-btn-sm' aria-pressed={Boolean(scheduled)} disabled={disabled} onClick={() => setOpen(!open)} title={label} aria-label={label} aria-expanded={open}>
+				<Icon name='clock' size={16} />
+			</button>
+			{open && (
+				<div className='popover mail-pop mail-pop-up mail-pop-right'>
+					<div className='menu-label'>Envoyer plus tard</div>
+					{snoozeChoices().map((choice) => (
+						<button key={choice.key} type='button' className='menu-item' onClick={() => (setOpen(false), onPick(choice.at))}>
+							<span className='mail-pop-grow'>{choice.label}</span>
+							<small className='muted'>{longDate(choice.at)}</small>
+						</button>
+					))}
+					<form
+						className='mail-pop-date'
+						onSubmit={(e: FormEvent) => {
+							e.preventDefault();
+							const at = new Date(date).getTime();
+							if (at > Date.now() + 60_000) {
+								setOpen(false);
+								onPick(at);
+							}
+						}}
+					>
+						<input type='datetime-local' value={date} onChange={(e) => setDate(e.target.value)} aria-label='Date d’envoi' />
+						<button className='btn' disabled={!date}>
+							Programmer
+						</button>
+					</form>
+					{scheduled && (
+						<>
+							<div className='menu-sep' />
+							<button type='button' className='menu-item' onClick={() => (setOpen(false), onCancel())}>
+								Annuler l’envoi prévu
+							</button>
+						</>
+					)}
+				</div>
+			)}
+		</div>
 	);
 }

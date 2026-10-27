@@ -25,6 +25,7 @@ type Props = {
 	onReply: (all: boolean) => void;
 	onForward: () => void;
 	onNote: () => void;
+	onUnread: () => void;
 };
 
 function Pop({ icon, label, text, children, align = 'left' }: { icon: IconName; label: string; text?: string; children: (close: () => void) => ReactNode; align?: 'left' | 'right' }) {
@@ -42,7 +43,7 @@ function Pop({ icon, label, text, children, align = 'left' }: { icon: IconName; 
 	);
 }
 
-export function ThreadToolbar({ thread, canReply, busy, aiOpen, meId, members, workspaces, onBack, onPatch, onDelete, onAi, onReply, onForward, onNote }: Props) {
+export function ThreadToolbar({ thread, canReply, busy, aiOpen, meId, members, workspaces, onBack, onPatch, onDelete, onAi, onReply, onForward, onNote, onUnread }: Props) {
 	const [copied, setCopied] = useState(false);
 	const [sharing, setSharing] = useState(false);
 	const [date, setDate] = useState('');
@@ -112,6 +113,9 @@ export function ThreadToolbar({ thread, canReply, busy, aiOpen, meId, members, w
 					</Pop>
 				</>
 			)}
+			<button className='icon-btn' onClick={onUnread} title='Marquer comme non lu (u)' aria-label='Marquer comme non lu'>
+				<Icon name='mail' size={17} />
+			</button>
 			<button className='icon-btn' onClick={() => void copyLink()} title={copied ? 'Lien copié' : 'Copier le lien'} aria-label='Copier le lien'>
 				<Icon name={copied ? 'check' : 'link'} size={17} />
 			</button>

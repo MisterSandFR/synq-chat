@@ -1,10 +1,17 @@
 import { useRef, useState } from 'react';
 
-import type { MailMessage } from '../../shared/mail';
+import type { MailMessage, MailTranslateInput } from '../../shared/mail';
+import type { AiTextResult } from '../../shared/ai';
+import { api } from '../api';
 import { Avatar, Icon, useDismiss } from '../ui';
 import { Attachments } from './Attachments';
 import { addressLabel, longDate, relativeDate } from './format';
 import { MailBody } from './MailBody';
+import { aiErrorText } from './Summary';
+
+type Translation = { lang: MailTranslateInput['lang']; text: string | null; error: string | null; original: boolean };
+
+const LANGS: Record<MailTranslateInput['lang'], string> = { fr: 'français', en: 'anglais' };
 
 type Props = {
 	message: MailMessage;
@@ -18,10 +25,22 @@ type Props = {
 export function MessageCard({ message, expanded, canReply, onToggle, onReply, onForward }: Props) {
 	const [menu, setMenu] = useState(false);
 	const [plain, setPlain] = useState(false);
+	const [translation, setTranslation] = useState<Translation | null>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	useDismiss(menuRef, menu, () => setMenu(false));
 	const sender = message.fromName || message.fromAddr;
 	const recipients = message.toList?.length ? message.toList.map(addressLabel).join(', ') : message.to;
+
+	const translate = async (lang: MailTranslateInput['lang']) => {
+		setMenu(false);
+		setTranslation({ lang, text: null, error: null, original: false });
+		try {
+			const result = await api<AiTextResult>('POST', `/mail/messages/${message.id}/translate`, { lang } satisfies MailTranslateInput);
+			setTranslation((current) => (current?.lang === lang ? { ...current, text: result.text } : current));
+		} catch (e) {
+			setTranslation((current) => (current?.lang === lang ? { ...current, error: aiErrorText(e) } : current));
+		}
+	};
 
 	if (!expanded) {
 		return (
@@ -70,6 +89,14 @@ export function MessageCard({ message, expanded, canReply, onToggle, onReply, on
 									</button>
 								</>
 							)}
+							<button className='menu-item' onClick={() => void translate('fr')}>
+								<Icon name='sparkle' size={16} />
+								Traduire en français
+							</button>
+							<button className='menu-item' onClick={() => void translate('en')}>
+								<Icon name='sparkle' size={16} />
+								Traduire en anglais
+							</button>
 							{message.hasHtml && (
 								<button className='menu-item' onClick={() => (setMenu(false), setPlain(!plain))}>
 									<Icon name='file' size={16} />
@@ -84,7 +111,33 @@ export function MessageCard({ message, expanded, canReply, onToggle, onReply, on
 					)}
 				</div>
 			</header>
-			<div className='mail-message-body'>
+			{translation && (
+				<section className='mail-translation' aria-busy={translation.text === null && !translation.error}>
+					<header>
+						<Icon name='sparkle' size={14} />
+						<span>Traduction en {LANGS[translation.lang]}</span>
+						{translation.text !== null && (
+							<button className='link' onClick={() => setTranslation({ ...translation, original: !translation.original })}>
+								{translation.original ? 'Voir la traduction' : 'Voir l’original'}
+							</button>
+						)}
+						<button className='icon-btn icon-btn-sm' onClick={() => setTranslation(null)} title='Fermer la traduction' aria-label='Fermer la traduction'>
+							<Icon name='close' size={13} />
+						</button>
+					</header>
+					{translation.error ? (
+						<p className='notice notice-error'>{translation.error}</p>
+					) : translation.text === null ? (
+						<div className='mail-skeleton'>
+							<span />
+							<span />
+						</div>
+					) : (
+						!translation.original && <p className='mail-msg-text'>{translation.text}</p>
+					)}
+				</section>
+			)}
+			<div className='mail-message-body' hidden={Boolean(translation?.text && !translation.original)}>
 				<MailBody message={message} plain={plain} />
 			</div>
 			<Attachments messageId={message.id} attachments={message.attachments} />

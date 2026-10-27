@@ -1,10 +1,11 @@
-import type { MailMessage } from '../../shared/mail';
+import type { MailAttachment, MailMessage } from '../../shared/mail';
 import type { User } from '../../shared/types';
 import { ImapClient } from './imap';
 import { formatAddresses, parseMail } from './mime';
 import { unseal } from './secret';
 import { buildMessage, smtpSend, type OutgoingAttachment } from './smtp';
 import type { Opener } from './wire';
+import { fold } from './search';
 
 export interface BoxRow {
 	id: string;
@@ -22,6 +23,7 @@ export interface BoxRow {
 	synced_at: number | null;
 	sync_error: string | null;
 	created_at: number;
+	signature: string;
 }
 
 // Erreur métier affichable telle quelle.
@@ -39,6 +41,19 @@ export const attachmentKey = (boxId: string, messageId: string, index: number) =
 export const htmlKey = (boxId: string, messageId: string) => `mail/${boxId}/${messageId}/html`;
 
 const MAX_HTML = 2 * 1024 * 1024;
+const MAX_INDEX = 20_000;
+const BACKFILL_HTML = 10;
+const BACKFILL_INDEX = 50;
+
+const ftsInsert = (db: D1Database, boxId: string, id: string, subject: string, sender: string, body: string) => {
+	const text = `${subject}\n${sender}\n${body.slice(0, MAX_INDEX)}`;
+	return db.prepare('INSERT OR REPLACE INTO mail_search (mid, mailbox_id, text, norm) VALUES (?, ?, ?, ?)').bind(id, boxId, text, fold(text));
+};
+
+export const markRead = (db: D1Database, userId: string, threadId: string, at: number) =>
+	db
+		.prepare('INSERT INTO mail_reads (user_id, thread_id, read_at) VALUES (?, ?, ?) ON CONFLICT (user_id, thread_id) DO UPDATE SET read_at = MAX(read_at, excluded.read_at)')
+		.bind(userId, threadId, at);
 
 export const loadBox = (db: D1Database, id: string) => db.prepare('SELECT * FROM mailboxes WHERE id = ?').bind(id).first<BoxRow>();
 
@@ -91,7 +106,7 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 					"INSERT INTO mail_threads (id, mailbox_id, subject, snippet, participants, status, message_count, last_at, created_at) VALUES (?, ?, ?, ?, ?, 'open', 1, ?, ?)",
 				).bind(threadId, box.id, subject, text, from, date, now),
 		env.DB.prepare(
-			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, date, created_at, has_html) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, date, created_at, has_html, html_checked, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)",
 		).bind(
 			id,
 			box.id,
@@ -112,6 +127,7 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 			now,
 			html ? 1 : 0,
 		),
+		ftsInsert(env.DB, box.id, id, subject, `${mail.from?.name ?? ''} ${mail.from?.address ?? ''}`, mail.text),
 	]);
 	return true;
 }
@@ -132,7 +148,7 @@ export interface Outgoing {
 	attachments: OutgoingAttachment[];
 }
 
-export async function sendMail(env: Env, box: BoxRow, user: User, out: Outgoing, opener: Opener): Promise<string> {
+export async function sendMail(env: Env, box: BoxRow, user: Pick<User, 'id'>, out: Outgoing, opener: Opener): Promise<string> {
 	const last = out.threadId
 		? await env.DB.prepare('SELECT message_id, refs FROM mail_messages WHERE thread_id = ? ORDER BY date DESC, created_at DESC LIMIT 1')
 				.bind(out.threadId)
@@ -177,7 +193,7 @@ export async function sendMail(env: Env, box: BoxRow, user: User, out: Outgoing,
 					"INSERT INTO mail_threads (id, mailbox_id, subject, snippet, participants, status, message_count, last_at, created_at) VALUES (?, ?, ?, ?, ?, 'open', 1, ?, ?)",
 				).bind(threadId, box.id, out.subject.slice(0, 300), text, recipients[0]!, now, now),
 		env.DB.prepare(
-			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, sent_by, date, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, 'out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, sent_by, date, created_at, html_checked, indexed) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, 'out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)",
 		).bind(
 			id,
 			box.id,
@@ -196,6 +212,8 @@ export async function sendMail(env: Env, box: BoxRow, user: User, out: Outgoing,
 			now,
 			now,
 		),
+		ftsInsert(env.DB, box.id, id, out.subject, `${box.name} ${box.address}`, out.text),
+		markRead(env.DB, user.id, threadId, now),
 	]);
 	return threadId;
 }
@@ -205,6 +223,11 @@ export async function syncMailbox(env: Env, id: string, opener: Opener): Promise
 	const box = await loadBox(env.DB, id);
 	if (!box) {
 		return null;
+	}
+	try {
+		await indexPending(env, box.id);
+	} catch (cause) {
+		console.error(JSON.stringify({ level: 'error', message: 'mail index', mailbox: id, error: String(cause) }));
 	}
 	let fetched = 0;
 	let error: string | null = null;
@@ -231,6 +254,14 @@ export async function syncMailbox(env: Env, id: string, opener: Opener): Promise
 			}
 			if (!uids.length) {
 				await env.DB.prepare('UPDATE mailboxes SET last_uid = ?, uid_validity = ? WHERE id = ?').bind(lastUid, uidValidity, id).run();
+			}
+			// UID d'une autre validité : ils désignent d'autres messages.
+			if (!box.uid_validity || box.uid_validity === uidValidity) {
+				try {
+					await backfillHtml(env, box, client);
+				} catch (cause) {
+					console.error(JSON.stringify({ level: 'error', message: 'mail html backfill', mailbox: id, error: String(cause) }));
+				}
 			}
 		} finally {
 			await client.logout();
@@ -290,4 +321,57 @@ export async function sendReply(env: Env, box: BoxRow, threadId: string, user: U
 		toList: [{ name: '', addr: to }],
 		ccList: [],
 	};
+}
+
+// Relevés avant l'index : corps relu depuis R2, par lots.
+export async function indexPending(env: Env, boxId: string): Promise<number> {
+	const { results } = await env.DB.prepare('SELECT id, subject, from_name, from_addr FROM mail_messages WHERE mailbox_id = ? AND indexed = 0 LIMIT ?')
+		.bind(boxId, BACKFILL_INDEX)
+		.all<{ id: string; subject: string; from_name: string; from_addr: string }>();
+	if (!results.length) {
+		return 0;
+	}
+	const bodies = await Promise.all(results.map(async (row) => (await (await env.FILES.get(bodyKey(boxId, row.id)))?.text()) ?? ''));
+	await env.DB.batch(
+		results.flatMap((row, i) => [
+			ftsInsert(env.DB, boxId, row.id, row.subject, `${row.from_name} ${row.from_addr}`, bodies[i]!),
+			env.DB.prepare('UPDATE mail_messages SET indexed = 1 WHERE id = ?').bind(row.id),
+		]),
+	);
+	return results.length;
+}
+
+// Relevés avant le stockage du HTML : re-téléchargés par UID, une seule fois chacun.
+export async function backfillHtml(env: Env, box: BoxRow, client: ImapClient): Promise<number> {
+	const { results } = await env.DB.prepare(
+		"SELECT id, uid, message_id, attachments FROM mail_messages WHERE mailbox_id = ? AND direction = 'in' AND has_html = 0 AND html_checked = 0 AND uid IS NOT NULL ORDER BY date DESC LIMIT ?",
+	)
+		.bind(box.id, BACKFILL_HTML)
+		.all<{ id: string; uid: number; message_id: string; attachments: string }>();
+	let found = 0;
+	for (const row of results) {
+		// Erreur réseau : on s'arrête sans marquer, le passage suivant reprend.
+		const message = await client.fetch(row.uid);
+		let html = '';
+		let attachments = row.attachments;
+		try {
+			const mail = message?.raw ? parseMail(message.raw) : null;
+			// UID réattribué : pas de HTML d'un autre message.
+			if (mail && (!mail.messageId || mail.messageId === row.message_id)) {
+				html = mail.html.length <= MAX_HTML ? mail.html : '';
+				const list = JSON.parse(row.attachments) as MailAttachment[];
+				if (list.length && list.length === Math.min(mail.attachments.length, MAX_ATTACHMENTS)) {
+					attachments = JSON.stringify(list.map((a, i) => (mail.attachments[i]?.cid ? { ...a, cid: mail.attachments[i]!.cid } : a)));
+				}
+			}
+		} catch (cause) {
+			console.error(JSON.stringify({ level: 'error', message: 'mail html parse', mailbox: box.id, uid: row.uid, error: String(cause) }));
+		}
+		if (html) {
+			await env.FILES.put(htmlKey(box.id, row.id), html, { httpMetadata: { contentType: 'text/html; charset=utf-8' } });
+			found++;
+		}
+		await env.DB.prepare('UPDATE mail_messages SET has_html = ?, html_checked = 1, attachments = ? WHERE id = ?').bind(html ? 1 : 0, attachments, row.id).run();
+	}
+	return found;
 }

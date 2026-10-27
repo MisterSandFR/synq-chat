@@ -10,6 +10,7 @@ import { DraftCard } from './DraftCard';
 import { formatAddress, forwardSubject, longDate, replySubject, replyTargets } from './format';
 import { MessageCard } from './MessageCard';
 import { QuickReplies } from './QuickReplies';
+import { ThreadSummary } from './Summary';
 import { ThreadToolbar, type ThreadPatch } from './ThreadToolbar';
 
 type Props = {
@@ -23,11 +24,19 @@ type Props = {
 	onChanged: () => Promise<void>;
 	onCompose: (seed: ComposeSeed) => void;
 	onSent: (detail: MailThreadDetail) => void;
+	onRead: () => void;
+	onUnread: () => void;
 };
+
+const CONTEXT_MAX = 4000;
+const LONG_THREAD = 1500;
+
+// Message cité pour l'assistant de rédaction.
+const quoted = (message: MailMessage) => `De : ${message.fromName ? `${message.fromName} <${message.fromAddr}>` : message.fromAddr}\nObjet : ${message.subject}\n\n${message.body}`.slice(0, CONTEXT_MAX);
 
 const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
-export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onBack, onChanged, onCompose, onSent }: Props) {
+export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onBack, onChanged, onCompose, onSent, onRead, onUnread }: Props) {
 	const [detail, setDetail] = useState<MailThreadDetail | null>(null);
 	const [drafts, setDrafts] = useState<MailDraft[]>([]);
 	const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
@@ -37,11 +46,14 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 	const [note, setNote] = useState('');
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const read = useRef(onRead);
+	read.current = onRead;
 
 	const load = useCallback(async () => {
 		try {
 			const next = await api<MailThreadDetail>('GET', `/mail/threads/${id}`);
 			setDetail(next);
+			read.current();
 			const last = next.messages[next.messages.length - 1];
 			setExpanded((current) => (last && !current.has(last.id) ? new Set([...current, last.id]) : current));
 		} catch (e) {
@@ -130,6 +142,7 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 				cc: targets.cc.map(formatAddress).join(', '),
 				subject: replySubject(detail.thread.subject),
 				text,
+				context: quoted(message),
 			}),
 		);
 	};
@@ -139,7 +152,7 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 			return;
 		}
 		// Le serveur ajoute lui-même le message d'origine sous le texte.
-		onCompose(newSeed({ mailboxId: detail.thread.mailboxId, forwardOf: message.id, subject: forwardSubject(message.subject || detail.thread.subject), text: '' }));
+		onCompose(newSeed({ mailboxId: detail.thread.mailboxId, forwardOf: message.id, subject: forwardSubject(message.subject || detail.thread.subject), text: '', context: quoted(message) }));
 	};
 
 	const addNote = (event: FormEvent) => {
@@ -216,6 +229,7 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 				onReply={(all) => reply(lastIncoming, all)}
 				onForward={() => forward(lastMessage)}
 				onNote={() => setNoting(true)}
+				onUnread={onUnread}
 			/>
 			<div className='mail-read-body'>
 				<header className='mail-read-title'>
@@ -228,6 +242,7 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 						{thread.snoozedUntil && thread.snoozedUntil > Date.now() && ` · rappel ${longDate(thread.snoozedUntil)}`}
 					</span>
 				</header>
+				{(messages.length >= 3 || messages.reduce((n, message) => n + message.body.length, 0) > LONG_THREAD) && <ThreadSummary key={thread.id} threadId={thread.id} />}
 				{aiOpen && <AiBox threadId={thread.id} onClose={() => setAiOpen(false)} />}
 				{error && <p className='notice notice-error'>{error}</p>}
 				{messages.map((message) => (
