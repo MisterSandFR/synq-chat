@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 
+import type { AiParsedEvent } from '../../../shared/ai-chat';
 import type { CalendarEvent, CalendarListing } from '../../../shared/calendar';
 import type { Channel } from '../../../shared/types';
 import { api, errorText } from '../../api';
-import { DAY, fromDateInput, fromLocalInput, HOUR, toLocalInput, userTimeZone, whenText } from '../../calendar/dates';
+import { EventDescribe } from '../../ai/EventDescribe';
+import { DAY, fromDateInput, fromLocalInput, HOUR, toDateInput, toLocalInput, userTimeZone, whenText } from '../../calendar/dates';
 import { Dialog, Icon } from '../../ui';
 import type { Lookup } from '../richText';
 import './events.css';
@@ -65,6 +67,27 @@ export function EventCardDialog({ workspaceId, channel, lookup, initialTitle, on
 			});
 	}, [tab, upcoming, workspaceId]);
 
+	const applyParsed = (p: AiParsedEvent) => {
+		if (p.title) setTitle(p.title);
+		if (p.description) setDescription(p.description);
+		if (p.location) setLocation(p.location);
+		if (p.channelId && voiceChannels.some((c) => c.id === p.channelId)) setChannelId(p.channelId);
+		if (typeof p.startsAt !== 'number') {
+			return;
+		}
+		if (p.allDay) {
+			setStart(`${toDateInput(p.startsAt)}T09:00`);
+			setDuration('day');
+			return;
+		}
+		setStart(toLocalInput(p.startsAt));
+		if (typeof p.endsAt === 'number' && p.endsAt > p.startsAt) {
+			const minutes = (p.endsAt - p.startsAt) / 60_000;
+			const nearest = DURATIONS.filter(([v]) => v !== 'day').reduce((best, [v]) => (Math.abs(Number(v) - minutes) < Math.abs(Number(best) - minutes) ? v : best), '60');
+			setDuration(nearest);
+		}
+	};
+
 	const submit = async (e: FormEvent) => {
 		e.preventDefault();
 		let body: unknown;
@@ -121,6 +144,7 @@ export function EventCardDialog({ workspaceId, channel, lookup, initialTitle, on
 				</div>
 				{tab === 'new' ? (
 					<>
+						<EventDescribe workspaceId={workspaceId} onParsed={applyParsed} />
 						<label className='field'>
 							Titre
 							<input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required autoFocus placeholder='Point d’équipe' />

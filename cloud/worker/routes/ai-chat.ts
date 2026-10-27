@@ -61,6 +61,9 @@ aiChatRoutes.post('/w/:wid/messages/:mid/ai/thread-summary', async (c) => {
 	return textReply(c, `${log}\n\n=== Tâche ===\nRésume ce fil de discussion en 3 à 6 puces commençant par « - » : sujet, décisions, actions et qui s’en charge.`);
 });
 
+const looksFrench = (text: string) =>
+	/[àâçéèêëîïôùûüÿœ]/i.test(text) || (text.match(/\b(le|la|les|des|du|est|et|une|pour|avec|dans|pas|vous|nous|je|tu|il|on|que|qui)\b/gi)?.length ?? 0) >= 2;
+
 aiChatRoutes.post('/w/:wid/messages/:mid/ai/:action{translate|summary|reply}', async (c) => {
 	const found = await stub(c).aiMessage(c.get('actor'), Number(c.req.param('mid')));
 	if (!found.ok) {
@@ -74,8 +77,10 @@ aiChatRoutes.post('/w/:wid/messages/:mid/ai/:action{translate|summary|reply}', a
 	const action = c.req.param('action');
 	if (action === 'translate') {
 		const { lang } = await readJson<{ lang: AiLang }>(c);
-		const target = typeof lang === 'string' && Object.hasOwn(LANGS, lang) ? `en ${LANGS[lang]}` : 'en français ; s’il est déjà en français, traduis-le en anglais';
-		return textReply(c, `${log}\n\n=== Tâche ===\nTraduis le texte de ce message ${target}. Renvoie seulement la traduction, mise en forme markdown et mentions conservées.`, 2000);
+		// Langue cible décidée ici : laissé au modèle, il renvoie souvent le texte tel quel.
+		const target = typeof lang === 'string' && Object.hasOwn(LANGS, lang) ? `en ${LANGS[lang]}` : looksFrench(message.body) ? 'en anglais' : 'en français';
+		// Texte seul : avec l'en-tête auteur et date, le modèle le recopie dans la traduction.
+		return textReply(c, `=== Texte ===\n${message.body}\n\n=== Tâche ===\nTraduis ce texte ${target}. Renvoie seulement la traduction, mise en forme markdown et mentions conservées.`, 2000);
 	}
 	if (action === 'summary') {
 		return textReply(c, `${log}\n\n=== Tâche ===\nRésume ce message en 2 à 5 puces commençant par « - ».`);

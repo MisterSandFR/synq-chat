@@ -2,10 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { ThreadView } from '../../../shared/dm-threads';
 import type { Channel, Grade, Message } from '../../../shared/types';
+import type { AiTextResult } from '../../../shared/ai';
 import { api, errorText, fileUrl } from '../../api';
+import { AiAssist } from '../../ai/AiAssist';
+import { AiBlock } from '../../ai/AiBlock';
+import { aiErrorText, isAbort } from '../../ai/parse';
 import { Avatar, Icon } from '../../ui';
 import { memberColor } from '../grades';
-import { RichText, toTokens, type Lookup } from '../richText';
+import { RichText, toDisplay, toTokens, type Lookup } from '../richText';
 import type { WorkspaceState } from '../useWorkspace';
 import { when } from './DirectAvatar';
 import { putReply, type DmThreadsAction } from './state';
@@ -35,6 +39,9 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 	const [alsoChannel, setAlsoChannel] = useState(false);
 	const [sending, setSending] = useState(false);
 	const bodyRef = useRef<HTMLDivElement>(null);
+	const replyRef = useRef<HTMLTextAreaElement>(null);
+	const [summary, setSummary] = useState<{ text: string | null; error: string | null } | null>(null);
+	const summaryCall = useRef<AbortController | null>(null);
 	const replies = state.dmThreads.threads[rootId];
 	const count = replies?.length ?? 0;
 	// Racine prise dans le salon si chargée : compteur et modifications à jour.
@@ -66,6 +73,24 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 			void api('POST', `/w/${workspaceId}/messages/${rootId}/thread/read`).catch(() => undefined);
 		}
 	}, [workspaceId, rootId, count, following]);
+
+	useEffect(() => () => summaryCall.current?.abort(), []);
+
+	const summarize = () => {
+		summaryCall.current?.abort();
+		const ctrl = new AbortController();
+		summaryCall.current = ctrl;
+		setSummary({ text: null, error: null });
+		bodyRef.current?.scrollTo({ top: 0 });
+		api<AiTextResult>('POST', `/w/${workspaceId}/messages/${rootId}/ai/thread-summary`, {}, ctrl.signal)
+			.then(({ text: result }) => setSummary({ text: result, error: null }))
+			.catch((e: unknown) => !isAbort(e) && setSummary({ text: null, error: aiErrorText(e) }));
+	};
+
+	const closeSummary = () => {
+		summaryCall.current?.abort();
+		setSummary(null);
+	};
 
 	useLayoutEffect(() => {
 		const el = bodyRef.current;
@@ -105,6 +130,13 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 				<h2 className='grow ellipsis'>
 					Fil <span className='thread-where'>{channelName}</span>
 				</h2>
+				{count > 0 && (
+					<button type='button' className='icon-btn' aria-label='Résumer le fil' title='Résumer le fil' disabled={summary !== null && summary.text === null && !summary.error} onClick={summarize}>
+						<span aria-hidden className='ai-glyph'>
+							✦
+						</span>
+					</button>
+				)}
 				<button type='button' className='btn thread-follow' aria-pressed={following} onClick={() => void toggleFollow()}>
 					{following ? 'Suivi' : 'Suivre'}
 				</button>
@@ -113,6 +145,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 				</button>
 			</header>
 			<div className='thread-body' ref={bodyRef}>
+				{summary && <AiBlock label='Résumé du fil' text={summary.text} error={summary.error} onCancel={closeSummary} onClose={closeSummary} onRetry={summarize} />}
 				{root && <ThreadMessage message={root} lookup={lookup} grades={grades} workspaceId={workspaceId} />}
 				{replies && (
 					<div className='thread-count' role='separator'>
@@ -137,6 +170,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 						</label>
 						<textarea
 							id='thread-reply'
+							ref={replyRef}
 							rows={2}
 							placeholder='Répondre…'
 							value={text}
@@ -148,6 +182,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 								}
 							}}
 						/>
+						<AiAssist textarea={replyRef} value={text} onChange={setText} context={root ? toDisplay(root.body, lookup) : undefined} align='end' />
 						<button type='submit' className='icon-btn' aria-label='Envoyer' disabled={sending || !text.trim()}>
 							<Icon name='send' />
 						</button>

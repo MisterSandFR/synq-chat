@@ -45,6 +45,7 @@ import { ProfileDialog } from './rc/ProfileDialog';
 import { SavedPanel } from './rc/SavedPanel';
 import { StatusDialog, StatusMenuItems } from './rc/status';
 import { presenceOf, useRc } from './rc/useRc';
+import { CatchupBanner } from '../ai/CatchupBanner';
 
 type Props = {
 	me: Me;
@@ -314,6 +315,14 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						onEditing={setAnnouncing}
 					/>
 				)}
+				<CatchupBanner
+					key={`catchup-${active.id}`}
+					workspaceId={workspaceId}
+					channelId={active.id}
+					unread={state.unread[active.id] ?? 0}
+					data={activeData}
+					onJump={(id) => setJump({ channelId: active.id, id })}
+				/>
 				<MessageList
 					key={`messages-${active.id}`}
 					workspaceId={workspaceId}

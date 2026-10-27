@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Channel, SearchHit } from '../../shared/types';
 import { api } from '../api';
+import { AskPanel } from '../ai/AskPanel';
 import { Icon } from '../ui';
 import { Snippet, type Lookup } from './richText';
 
@@ -25,6 +26,7 @@ export function SearchPalette({ open, onClose, workspaceId, channels, lookup, on
 	const [hits, setHits] = useState<SearchHit[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [selected, setSelected] = useState(0);
+	const [mode, setMode] = useState<'search' | 'ask'>('search');
 
 	useEffect(() => {
 		const dialog = ref.current;
@@ -33,6 +35,7 @@ export function SearchPalette({ open, onClose, workspaceId, channels, lookup, on
 			setQuery('');
 			setHits([]);
 			setSelected(0);
+			setMode('search');
 		} else if (!open && dialog?.open) {
 			dialog.close();
 		}
@@ -76,6 +79,27 @@ export function SearchPalette({ open, onClose, workspaceId, channels, lookup, on
 
 	return (
 		<dialog ref={ref} className='palette' aria-label='Recherche' onClose={onClose} onClick={(e) => e.target === ref.current && onClose()}>
+			<div className='tabs palette-tabs' role='tablist'>
+				<button type='button' role='tab' className='tab' aria-selected={mode === 'search'} onClick={() => setMode('search')}>
+					Rechercher
+				</button>
+				<button type='button' role='tab' className='tab' aria-selected={mode === 'ask'} onClick={() => setMode('ask')}>
+					Demander à Synq
+				</button>
+			</div>
+			{mode === 'ask' ? (
+				<AskPanel
+					key={workspaceId}
+					workspaceId={workspaceId}
+					channels={channels}
+					lookup={lookup}
+					onOpenMessage={(m) => {
+						onClose();
+						onOpenMessage(m.channelId, m.id);
+					}}
+				/>
+			) : (
+			<>
 			<div className='palette-input'>
 				<Icon name='search' />
 				<input
@@ -129,6 +153,8 @@ export function SearchPalette({ open, onClose, workspaceId, channels, lookup, on
 				{query.trim().length >= 2 && !loading && hits.length === 0 && <p className='drive-empty'>Aucun message ne correspond.</p>}
 				{loading && <div className='spinner' style={{ minHeight: 48 }} aria-busy />}
 			</div>
+			</>
+			)}
 		</dialog>
 	);
 }

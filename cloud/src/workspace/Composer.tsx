@@ -4,6 +4,7 @@ import { parseCommand } from '../../shared/commands';
 import { searchEmojis } from '../../shared/emoji';
 import { LIMITS, type Channel, type Message } from '../../shared/types';
 import { AiAssist } from '../ai/AiAssist';
+import { AI_REPLY_EVENT, type AiReplyDetail } from '../ai/parse';
 import { errorText } from '../api';
 import { Avatar, Icon } from '../ui';
 import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
@@ -79,6 +80,25 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		};
 		window.addEventListener(MENTION_EVENT, onMention);
 		return () => window.removeEventListener(MENTION_EVENT, onMention);
+	}, [text, channel.id]);
+
+	// Réponse rédigée par l'IA depuis le menu d'un message.
+	useEffect(() => {
+		const onAiReply = (e: Event) => {
+			const detail = (e as CustomEvent<AiReplyDetail>).detail;
+			if (detail.channelId !== channel.id) {
+				return;
+			}
+			const next = text.trim() ? `${text}${text.endsWith('\n') ? '' : '\n'}${detail.text}` : detail.text;
+			setText(next);
+			setCaret(next.length);
+			requestAnimationFrame(() => {
+				textarea.current?.focus();
+				textarea.current?.setSelectionRange(next.length, next.length);
+			});
+		};
+		window.addEventListener(AI_REPLY_EVENT, onAiReply);
+		return () => window.removeEventListener(AI_REPLY_EVENT, onAiReply);
 	}, [text, channel.id]);
 
 	const trigger = useMemo(() => {

@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 
+import type { AiParsedEvent } from '../../shared/ai-chat';
 import type { CalendarPerson, EventInput, RecurrenceFreq, RsvpResponse } from '../../shared/calendar';
 import { ACCENTS, type Channel, type Me, type WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
+import { EventDescribe } from '../ai/EventDescribe';
 import { navigate } from '../router';
 import { Avatar, Dialog, Icon } from '../ui';
 import { DAY, fromDateInput, fromLocalInput, HOUR, recurrenceText, reminderText, REMINDERS, toDateInput, toLocalInput, userTimeZone, whenText, type Placed } from './dates';
@@ -202,6 +204,29 @@ function EventForm({ me, workspaces, placed, draft, onCancel, onSaved }: FormPro
 		}
 	}, [workspaceId]);
 
+	const applyParsed = (p: AiParsedEvent) => {
+		if (p.title) setTitle(p.title);
+		if (p.description) setDescription(p.description);
+		if (p.location) setLocation(p.location);
+		if (p.channelId) setChannelId(p.channelId);
+		if (p.reminderMinutes !== undefined) setReminder(p.reminderMinutes === null ? '' : String(p.reminderMinutes));
+		if (p.recurrence) {
+			setFreq(p.recurrence.freq);
+			setEvery(p.recurrence.interval);
+		}
+		if (p.attendees?.length) {
+			const found = people.filter((person) => p.attendees!.includes(person.id));
+			setAttendees((current) => [...current, ...found.filter((person) => !current.some((a) => a.id === person.id))]);
+		}
+		if (typeof p.startsAt === 'number') {
+			const day = p.allDay ?? false;
+			const endsAt = typeof p.endsAt === 'number' && p.endsAt >= p.startsAt ? p.endsAt : p.startsAt + (day ? DAY : HOUR);
+			setAllDay(day);
+			setStart(day ? toDateInput(p.startsAt) : toLocalInput(p.startsAt));
+			setEnd(day ? toDateInput(Math.max(p.startsAt, endsAt - DAY)) : toLocalInput(endsAt));
+		}
+	};
+
 	const toggleAllDay = (on: boolean) => {
 		setStart(on ? start.slice(0, 10) : `${start.slice(0, 10)}T09:00`);
 		setEnd(on ? end.slice(0, 10) : `${end.slice(0, 10)}T10:00`);
@@ -248,6 +273,7 @@ function EventForm({ me, workspaces, placed, draft, onCancel, onSaved }: FormPro
 
 	return (
 		<form className='cal-form' onSubmit={submit}>
+			{!event && <EventDescribe workspaceId={workspaceId || null} onParsed={applyParsed} />}
 			<label className='field'>
 				Titre
 				<input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required autoFocus placeholder='Point d’équipe' />
