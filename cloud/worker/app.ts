@@ -867,18 +867,29 @@ app.post('/w/:wid/voice/join', async (c) => {
 	if (typeof channelId !== 'string' || typeof connId !== 'string') {
 		return fail(c, 400, 'Requête invalide');
 	}
-	// Deux sessions : publier et recevoir sur la même connexion fait collisionner les extensions RTP dans Chrome.
-	const [publish, receive] = await Promise.all([sfu(c.env, 'POST', '/sessions/new'), sfu(c.env, 'POST', '/sessions/new')]);
-	const sessionId = publish.data.sessionId;
-	const recvSessionId = receive.data.sessionId;
-	if (typeof sessionId !== 'string' || typeof recvSessionId !== 'string') {
-		return c.json({ error: 'Serveur vocal indisponible' }, 502);
-	}
-	const joined = await stub(c).voiceJoin(c.get('actor'), connId, channelId, sessionId, recvSessionId);
+	const joined = await stub(c).voiceJoin(c.get('actor'), connId, channelId);
 	if (!joined.ok) {
 		return fail(c, joined.status, joined.error);
 	}
-	return c.json({ sessionId, recvSessionId, iceServers: await iceServers(c.env, c.get('actor').id), participants: joined.value });
+	return c.json({ iceServers: await iceServers(c.env, c.get('actor').id), participants: joined.value });
+});
+
+// Créée juste avant sa première négociation : une session SFU jamais connectée expire.
+app.post('/w/:wid/voice/session', async (c) => {
+	const { connId, role } = await readJson<{ connId: string; role: 'publish' | 'receive' }>(c);
+	if (typeof connId !== 'string' || (role !== 'publish' && role !== 'receive')) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	const created = await sfu(c.env, 'POST', '/sessions/new');
+	const sessionId = created.data.sessionId;
+	if (typeof sessionId !== 'string') {
+		return c.json({ error: 'Serveur vocal indisponible' }, 502);
+	}
+	const stored = await stub(c).voiceSession(c.get('actor'), connId, role, sessionId);
+	if (!stored.ok) {
+		return fail(c, stored.status, stored.error);
+	}
+	return c.json({ sessionId });
 });
 
 app.post('/w/:wid/voice/leave', async (c) => {

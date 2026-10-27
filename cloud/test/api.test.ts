@@ -543,10 +543,14 @@ describe('vocal', () => {
 		expect((await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: general.id, connId: aliceConn })).status).toBe(404);
 		expect((await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn })).status).toBe(404);
 
-		const joined = await owner.req<{ sessionId: string; iceServers: unknown[] }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
+		expect((await owner.req('POST', `/api/w/${wid}/voice/session`, { connId: aliceConn, role: 'publish' })).status).toBe(404);
+		const callsBefore = sfuCalls.length;
+		const joined = await owner.req<{ iceServers: unknown[] }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
 		expect(joined.status).toBe(200);
 		expect(joined.data.iceServers).toEqual([{ urls: ['stun:stun.cloudflare.com:3478'] }]);
-		const aliceSession = joined.data.sessionId;
+		// Sessions SFU créées à la première négociation : une session jamais connectée expire.
+		expect(sfuCalls.slice(callsBefore).some((call) => call.path.endsWith('/sessions/new'))).toBe(false);
+		const aliceSession = await openSession(owner, wid, aliceConn, 'publish');
 
 		const offer = { type: 'offer', sdp: 'v=0' };
 		const stolen = await member.req('POST', `/api/w/${wid}/voice/tracks`, {
@@ -581,26 +585,28 @@ describe('vocal', () => {
 		});
 		expect(outsider.status).toBe(403);
 
-		const bobJoined = await member.req<{ sessionId: string; recvSessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn });
+		await member.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: bobConn });
+		const bobPublish = await openSession(member, wid, bobConn, 'publish');
+		const bobReceive = await openSession(member, wid, bobConn, 'receive');
 		const onPublishSession = await member.req('POST', `/api/w/${wid}/voice/tracks`, {
 			connId: bobConn,
-			sessionId: bobJoined.data.sessionId,
+			sessionId: bobPublish,
 			tracks: [{ location: 'remote', sessionId: aliceSession, trackName: 'mic' }],
 		});
 		expect(onPublishSession.status).toBe(403);
 		const pulled = await member.req<{ requiresImmediateRenegotiation: boolean }>('POST', `/api/w/${wid}/voice/tracks`, {
 			connId: bobConn,
-			sessionId: bobJoined.data.recvSessionId,
+			sessionId: bobReceive,
 			tracks: [{ location: 'remote', sessionId: aliceSession, trackName: 'mic' }],
 		});
 		expect(pulled.data.requiresImmediateRenegotiation).toBe(true);
 		const answer = await member.req('PUT', `/api/w/${wid}/voice/renegotiate`, {
 			connId: bobConn,
-			sessionId: bobJoined.data.recvSessionId,
+			sessionId: bobReceive,
 			sessionDescription: { type: 'answer', sdp: 'v=0' },
 		});
 		expect(answer.status).toBe(200);
-		expect(sfuCalls.at(-1)!.path).toBe(`/v1/apps/8da7b4df0958febdfb5af2d7f19b4238/sessions/${bobJoined.data.recvSessionId}/renegotiate`);
+		expect(sfuCalls.at(-1)!.path).toBe(`/v1/apps/8da7b4df0958febdfb5af2d7f19b4238/sessions/${bobReceive}/renegotiate`);
 
 		alice.ws.send(JSON.stringify({ t: 'voice_update', muted: true, video: true }));
 		bob.drain();
@@ -619,8 +625,8 @@ describe('vocal', () => {
 
 	it('publie des pistes numérotées et les retire à la fermeture', async () => {
 		const { owner, wid, voice, alice, bob, aliceConn } = await voiceSetup();
-		const joined = await owner.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
-		const sessionId = joined.data.sessionId;
+		await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
+		const sessionId = await openSession(owner, wid, aliceConn, 'publish');
 		const offer = { type: 'offer', sdp: 'v=0' };
 		for (const [mid, trackName] of [['0', 'mic'], ['1', 'cam-1']]) {
 			expect((await owner.req('POST', `/api/w/${wid}/voice/tracks`, { connId: aliceConn, sessionId, sessionDescription: offer, tracks: [{ location: 'local', mid, trackName }] })).status).toBe(200);
@@ -633,7 +639,32 @@ describe('vocal', () => {
 		expect(closed.status).toBe(200);
 		const state = (await bob.next('voice')) as Extract<ServerEvent, { t: 'voice' }>;
 		expect(state.participants[0]!.tracks).toEqual(['mic']);
+		const replaced = await owner.req('POST', `/api/w/${wid}/voice/session`, { connId: aliceConn, role: 'publish' });
+		expect(replaced.status).toBe(409);
 		expect((await owner.req('POST', `/api/w/${wid}/voice/diag`, { kind: 'pc_failed', ice: 'failed' })).status).toBe(200);
+		alice.ws.close(1000);
+		bob.ws.close(1000);
+	});
+
+	it('répond 504 quand le serveur vocal reste muet', async () => {
+		const { owner, wid, voice, alice, bob, aliceConn } = await voiceSetup();
+		await owner.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: aliceConn });
+		const sessionId = await openSession(owner, wid, aliceConn, 'publish');
+		const real = globalThis.fetch;
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+			const url = input instanceof Request ? input.url : String(input);
+			if (url.includes('/tracks/new')) {
+				throw new DOMException('Délai dépassé', 'TimeoutError');
+			}
+			return real(input, init);
+		});
+		const published = await owner.req('POST', `/api/w/${wid}/voice/tracks`, {
+			connId: aliceConn,
+			sessionId,
+			sessionDescription: { type: 'offer', sdp: 'v=0' },
+			tracks: [{ location: 'local', mid: '0', trackName: 'mic' }],
+		});
+		expect(published.status).toBe(504);
 		alice.ws.close(1000);
 		bob.ws.close(1000);
 	});
@@ -747,11 +778,11 @@ describe('grades et permissions', () => {
 		const bobSocket = await bob.socket(wid);
 		const hello = (await bobSocket.next('hello')) as Extract<ServerEvent, { t: 'hello' }>;
 		expect(hello.perms[voice.id]! & P.VOICE_SPEAK).toBe(0);
-		const joined = await bob.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: hello.connId });
+		const joined = await bob.req('POST', `/api/w/${wid}/voice/join`, { channelId: voice.id, connId: hello.connId });
 		expect(joined.status).toBe(200);
 		const mic = await bob.req('POST', `/api/w/${wid}/voice/tracks`, {
 			connId: hello.connId,
-			sessionId: joined.data.sessionId,
+			sessionId: await openSession(bob, wid, hello.connId, 'publish'),
 			sessionDescription: { type: 'offer', sdp: 'v=0' },
 			tracks: [{ location: 'local', mid: '0', trackName: 'mic' }],
 		});
@@ -768,6 +799,12 @@ describe('grades et permissions', () => {
 		vi.restoreAllMocks();
 	});
 });
+
+async function openSession(client: Client, wid: string, connId: string, role: 'publish' | 'receive') {
+	const created = await client.req<{ sessionId: string }>('POST', `/api/w/${wid}/voice/session`, { connId, role });
+	expect(created.status).toBe(200);
+	return created.data.sessionId;
+}
 
 function mockVoice() {
 	let n = 0;

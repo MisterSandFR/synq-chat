@@ -122,7 +122,8 @@ export interface SearchHit {
 
 export interface VoiceParticipant {
 	userId: string;
-	sessionId: string;
+	// Nul tant que rien n'est publié.
+	sessionId: string | null;
 	tracks: string[];
 	muted: boolean;
 	deafened: boolean;

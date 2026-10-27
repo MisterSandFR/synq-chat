@@ -25,8 +25,8 @@ import { err, ok, type Result } from './result';
 
 interface Voice {
 	channelId: string;
-	sessionId: string;
-	recvSessionId: string;
+	sessionId: string | null;
+	recvSessionId: string | null;
 	tracks: string[];
 	muted: boolean;
 	deafened: boolean;
@@ -734,7 +734,7 @@ export class Workspace extends DurableObject<Env> {
 		return file ? this.can(actor, file.channel_id, P.VIEW_CHANNEL) : uploadedBy === actor.id || actor.owner;
 	}
 
-	voiceJoin(actor: Actor, connId: string, channelId: string, sessionId: string, recvSessionId: string): Result<VoiceParticipant[]> {
+	voiceJoin(actor: Actor, connId: string, channelId: string): Result<VoiceParticipant[]> {
 		const ws = this.socketFor(actor.id, connId);
 		if (!ws) {
 			return err(404, 'Connexion temps réel introuvable, recharge la page');
@@ -762,7 +762,7 @@ export class Workspace extends DurableObject<Env> {
 		}
 		const conn = this.conn(ws)!;
 		const previous = conn.voice?.channelId;
-		this.setVoice(ws, conn, { channelId, sessionId, recvSessionId, tracks: [], muted: false, deafened: false, video: false, screen: false });
+		this.setVoice(ws, conn, { channelId, sessionId: null, recvSessionId: null, tracks: [], muted: false, deafened: false, video: false, screen: false });
 		if (previous && previous !== channelId) {
 			this.broadcastVoice(previous);
 		}
@@ -777,6 +777,20 @@ export class Workspace extends DurableObject<Env> {
 			this.setVoice(ws, conn, null);
 			this.broadcastVoice(channelId);
 		}
+	}
+
+	// Session publique remplacée seulement sans piste : ses abonnés la perdraient.
+	voiceSession(actor: Actor, connId: string, role: 'publish' | 'receive', sessionId: string): Result<null> {
+		const ws = this.socketFor(actor.id, connId);
+		const conn = ws && this.conn(ws);
+		if (!ws || !conn?.voice) {
+			return err(404, 'Pas connecté au vocal');
+		}
+		if (role === 'publish' && conn.voice.tracks.length) {
+			return err(409, 'Session de publication déjà active');
+		}
+		this.setVoice(ws, conn, { ...conn.voice, [role === 'publish' ? 'sessionId' : 'recvSessionId']: sessionId });
+		return ok(null);
 	}
 
 	voiceOwns(actor: Actor, connId: string, sessionId: string): boolean {

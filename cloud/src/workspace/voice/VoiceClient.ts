@@ -41,7 +41,7 @@ type TracksReply = { sessionDescription?: SessionDescription; requiresImmediateR
 type Wanted = { sessionId: string; userId: string; trackName: string };
 
 // Une connexion par sens : publier et recevoir sur la même fait collisionner les extensions RTP.
-type Link = { role: 'publish' | 'receive'; pc: RTCPeerConnection; sessionId: string; queue: Promise<unknown>; watchdog?: ReturnType<typeof setTimeout> };
+type Link = { role: 'publish' | 'receive'; pc: RTCPeerConnection; sessionId: string | null; queue: Promise<unknown>; watchdog?: ReturnType<typeof setTimeout> };
 
 const SPEAKING_LEVEL = 0.035;
 // Chrome met 15 à 30 s à déclarer l'échec ICE : on reconnecte plus tôt.
@@ -125,6 +125,8 @@ export class VoiceClient {
 	private meterTimer: ReturnType<typeof setInterval> | undefined;
 	private readonly disconnectTimers = new Map<Link, ReturnType<typeof setTimeout>>();
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
+	private iceServers: RTCIceServer[] = [];
+	private resets: number[] = [];
 	private disposed = false;
 	private failed = false;
 	private mutedBeforeDeafen = false;
@@ -173,20 +175,75 @@ export class VoiceClient {
 		void api('POST', this.path('diag'), { kind, ua: navigator.userAgent, ...detail }).catch(() => undefined);
 	}
 
-	private link(role: Link['role'], sessionId: string, iceServers: RTCIceServer[]): Link {
+	private link(role: Link['role'], iceServers: RTCIceServer[]): Link {
 		const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
-		const link: Link = { role, pc, sessionId, queue: Promise.resolve() };
+		const link: Link = { role, pc, sessionId: null, queue: Promise.resolve() };
 		pc.onconnectionstatechange = () => this.onConnectionState(link);
 		return link;
 	}
 
+	// Demandée juste avant la première négociation : une session inutilisée expire côté SFU.
+	private async session(link: Link): Promise<string> {
+		if (!link.sessionId) {
+			const created = await api<{ sessionId: string }>('POST', this.path('session'), { connId: this.opts.connId, role: link.role });
+			link.sessionId = created.sessionId;
+		}
+		return link.sessionId;
+	}
+
+	// 410 : session perdue ; 504 : réponse perdue, état SFU inconnu. Réessayer ne suffit pas.
+	private lost(link: Link, error: unknown): boolean {
+		if (!(error instanceof ApiError) || (error.status !== 410 && error.status !== 504)) {
+			return false;
+		}
+		if (link === this.receiver) {
+			this.resetReceiver(`http_${error.status}`);
+		} else if (link === this.publisher) {
+			void this.fail(link, `http_${error.status}`);
+		}
+		return true;
+	}
+
+	// Seule la réception est refaite : la publication continue, les autres ne voient pas de coupure.
+	private resetReceiver(reason: string): void {
+		const old = this.receiver;
+		if (!old || this.disposed) {
+			return;
+		}
+		const now = Date.now();
+		this.resets = [...this.resets.filter((at) => now - at < 60_000), now];
+		if (this.resets.length > 3) {
+			void this.fail(old, reason);
+			return;
+		}
+		this.diag('receiver_reset', { reason });
+		clearTimeout(old.watchdog);
+		clearTimeout(this.disconnectTimers.get(old));
+		clearTimeout(this.retryTimer);
+		this.retryTimer = undefined;
+		old.pc.onconnectionstatechange = null;
+		old.pc.ontrack = null;
+		old.pc.close();
+		for (const entry of this.pulled.values()) {
+			this.unmeter(entry.userId);
+		}
+		this.pulled.clear();
+		this.byMid.clear();
+		this.attempts.clear();
+		this.receiver = this.link('receive', this.iceServers);
+		this.receiver.pc.ontrack = (event) => this.onTrack(event);
+		this.update({ remotes: {} });
+		this.schedulePull();
+	}
+
 	async join(): Promise<VoiceParticipant[]> {
-		const joined = await api<{ sessionId: string; recvSessionId: string; iceServers: RTCIceServer[]; participants: VoiceParticipant[] }>('POST', this.path('join'), {
+		const joined = await api<{ iceServers: RTCIceServer[]; participants: VoiceParticipant[] }>('POST', this.path('join'), {
 			channelId: this.opts.channelId,
 			connId: this.opts.connId,
 		});
-		this.publisher = this.link('publish', joined.sessionId, joined.iceServers);
-		this.receiver = this.link('receive', joined.recvSessionId, joined.iceServers);
+		this.iceServers = joined.iceServers;
+		this.publisher = this.link('publish', joined.iceServers);
+		this.receiver = this.link('receive', joined.iceServers);
 		this.receiver.pc.ontrack = (event) => this.onTrack(event);
 		this.audio = new AudioContext();
 		this.meterTimer = setInterval(() => this.measure(), 150);
@@ -276,13 +333,14 @@ export class VoiceClient {
 				return;
 			}
 			await connected(pc);
+			const sessionId = await this.session(link);
 			const name = kind === 'mic' ? 'mic' : `${kind}-${++this.seq}`;
 			const transceiver = pc.addTransceiver(track, { direction: 'sendonly' });
 			await pc.setLocalDescription(await pc.createOffer());
 			await gathered(pc);
 			const reply = await api<TracksReply>('POST', this.path('tracks'), {
 				connId: this.opts.connId,
-				sessionId: link.sessionId,
+				sessionId,
 				sessionDescription: pc.localDescription,
 				tracks: [{ location: 'local', mid: transceiver.mid, trackName: name }],
 			});
@@ -296,6 +354,9 @@ export class VoiceClient {
 				throw new Error('Publication refusée par le serveur vocal');
 			}
 			this.published[kind] = { transceiver, name };
+		}).catch((error: unknown) => {
+			this.lost(link, error);
+			throw error;
 		});
 	}
 
@@ -337,7 +398,7 @@ export class VoiceClient {
 		}
 		const wanted = new Map<string, Wanted>();
 		for (const p of participants) {
-			if (p.userId === this.opts.myId) {
+			if (p.userId === this.opts.myId || !p.sessionId) {
 				continue;
 			}
 			for (const name of p.tracks) {
@@ -359,7 +420,9 @@ export class VoiceClient {
 			return;
 		}
 		void this.run(link, () => this.pull(link)).catch((error) => {
-			this.diag('pull_exception', { message: error instanceof Error ? error.message : String(error) });
+			if (!this.lost(link, error)) {
+				this.diag('pull_exception', { message: error instanceof Error ? error.message : String(error) });
+			}
 		});
 	}
 
@@ -370,11 +433,15 @@ export class VoiceClient {
 		}
 		const { pc } = link;
 		await connected(pc);
+		const sessionId = await this.session(link);
 		const reply = await api<TracksReply>('POST', this.path('tracks'), {
 			connId: this.opts.connId,
-			sessionId: link.sessionId,
+			sessionId,
 			tracks: todo.map(([, item]) => ({ location: 'remote', sessionId: item.sessionId, trackName: item.trackName })),
 		});
+		if (link !== this.receiver) {
+			return;
+		}
 		const retry: string[] = [];
 		(reply.tracks ?? []).forEach((result, i) => {
 			const entry = todo[i];

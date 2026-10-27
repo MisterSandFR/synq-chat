@@ -6,12 +6,21 @@ export type IceServer = { urls: string | string[]; username?: string; credential
 
 export const voiceEnabled = (env: Env) => Boolean(env.REALTIME_APP_ID && env.REALTIME_APP_SECRET);
 
+// Le SFU peut rester muet : sans borne, la file de négociation du client reste bloquée.
+const SFU_TIMEOUT = 8000;
+
 export async function sfu(env: Env, method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<SfuReply> {
-	const res = await fetch(`${SFU_BASE}/apps/${env.REALTIME_APP_ID}${path}`, {
-		method,
-		headers: { Authorization: `Bearer ${env.REALTIME_APP_SECRET}`, 'Content-Type': 'application/json' },
-		body: body === undefined ? undefined : JSON.stringify(body),
-	});
+	let res: Response;
+	try {
+		res = await fetch(`${SFU_BASE}/apps/${env.REALTIME_APP_ID}${path}`, {
+			method,
+			headers: { Authorization: `Bearer ${env.REALTIME_APP_SECRET}`, 'Content-Type': 'application/json' },
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: AbortSignal.timeout(SFU_TIMEOUT),
+		});
+	} catch {
+		return { status: 504, data: { errorCode: 'timeout_error', errorDescription: 'Serveur vocal sans réponse' } };
+	}
 	const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 	return { status: res.status, data };
 }
