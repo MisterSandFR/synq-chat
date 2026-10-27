@@ -24,6 +24,7 @@ import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
 import { notificationRoutes } from './routes/notifications';
 import { mediaRoutes } from './routes/media';
 import { categoryRoutes, cleanOverrides } from './routes/categories';
+import { commandRoutes } from './routes/commands';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -800,6 +801,7 @@ app.delete('/w/:wid/drive/files/:id', async (c) => unwrap(c, await stub(c).drive
 app.route('/', notificationRoutes);
 app.route('/', mediaRoutes);
 app.route('/', categoryRoutes);
+app.route('/', commandRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

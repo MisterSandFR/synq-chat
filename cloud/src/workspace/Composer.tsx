@@ -3,6 +3,8 @@ import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } fr
 import { LIMITS, type Channel, type Message } from '../../shared/types';
 import { errorText } from '../api';
 import { Avatar, Icon } from '../ui';
+import { EphemeralNotes, SlashHint, SlashMenu } from './commands/SlashMenu';
+import { useSlash } from './commands/useSlash';
 import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
 import { RecordButtons } from './media/Recorder';
@@ -38,6 +40,14 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const fileInput = useRef<HTMLInputElement>(null);
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	useOfferedFiles(canAttach ? uploads.add : null);
+	const slash = useSlash(workspaceId, channel, text, (next) => {
+		setText(next);
+		setCaret(next.length);
+		requestAnimationFrame(() => {
+			textarea.current?.focus();
+			textarea.current?.setSelectionRange(next.length, next.length);
+		});
+	});
 
 	const trigger = useMemo(() => {
 		const match = text.slice(0, caret).match(TRIGGER_RE);
@@ -94,7 +104,12 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		setSending(true);
 		setError(null);
 		try {
-			await onSend(toTokens(text, lookup), uploads.keys, replyTo?.id);
+			const command = await slash.run(text);
+			if (command === 'done') {
+				setText('');
+				return;
+			}
+			await onSend(toTokens(command ?? text, lookup), uploads.keys, replyTo?.id);
 			setText('');
 			uploads.clear();
 			onCancelReply();
@@ -111,6 +126,9 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+		if (slash.onKeyDown(e)) {
+			return;
+		}
 		if (suggestions.length) {
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
@@ -153,6 +171,8 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 				void submit();
 			}}
 		>
+			<EphemeralNotes notes={slash.notes} onDismiss={slash.dismissNote} />
+			<SlashMenu matches={slash.matches} index={slash.index} onPick={slash.accept} />
 			{suggestions.length > 0 && (
 				<div className='popover suggest' role='listbox' aria-label='Suggestions'>
 					{suggestions.map((s, i) => (
@@ -174,6 +194,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 				</div>
 			)}
 			<div className='composer-box'>
+				{slash.active && <SlashHint command={slash.active} />}
 				{replyTo && (
 					<div className='composer-context'>
 						<Icon name='reply' size={14} />

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { NotificationItem } from '../../shared/notifications';
 import { mentionedUsers, type Channel, type ClientEvent, type Message, type MessagePage, type ServerEvent, type VoiceParticipant, type WorkspaceDetail } from '../../shared/types';
 import { api } from '../api';
+import { COMMANDS_EVENT } from './commands/useSlash';
 
 export interface ChannelMessages {
 	items: Message[];
@@ -185,6 +186,7 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		case 'notifications_unread':
 			return { ...state, notificationsUnread: event.unread, notificationsVersion: state.notificationsVersion + 1 };
 		case 'members_changed':
+		case 'commands_changed':
 			return state;
 	}
 }
@@ -276,6 +278,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				const event = JSON.parse(message.data as string) as ServerEvent;
 				if (event.t === 'members_changed') {
 					void reloadInfo();
+				}
+				if (event.t === 'commands_changed') {
+					window.dispatchEvent(new CustomEvent(COMMANDS_EVENT, { detail: workspaceId }));
 				}
 				dispatch({ type: 'event', event, activeChannelId: activeRef.current, myId, focused: isFocused() });
 			};

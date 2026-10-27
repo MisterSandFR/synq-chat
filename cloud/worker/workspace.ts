@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
 import type { Category, Layout } from '../shared/categories';
+import { appUserId, type CommandConfig, type CommandInput, type SlashCommand } from '../shared/commands';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
 	LIMITS,
@@ -39,6 +40,7 @@ import {
 	validLayout,
 	writeCategoryOverrides,
 } from './categories';
+import { editCommand, findCommand, insertCommand, listCommandConfigs, listCommands, removeCommand, type CommandTarget } from './commands';
 import { err, ok, type Result } from './result';
 
 interface Voice {
@@ -216,6 +218,18 @@ const MIGRATIONS = [
 	UPDATE channels SET position = r.n
 		FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY category_id ORDER BY kind = 'voice', position, name) - 1 AS n FROM channels) AS r
 		WHERE r.id = channels.id;`,
+	// Secret HMAC stocké ici seulement ; jamais relu hors de l'appel sortant.
+	`CREATE TABLE commands (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL UNIQUE,
+		description TEXT NOT NULL DEFAULT '',
+		usage TEXT NOT NULL DEFAULT '',
+		url TEXT NOT NULL,
+		secret TEXT NOT NULL,
+		ephemeral INTEGER NOT NULL DEFAULT 0,
+		created_by TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	);`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body
@@ -1497,6 +1511,67 @@ export class Workspace extends DurableObject<Env> {
 
 	async webSocketError(ws: WebSocket): Promise<void> {
 		this.dropConnection(ws);
+	}
+
+	// Commandes slash
+	commandList(): SlashCommand[] {
+		return listCommands(this.sql);
+	}
+
+	commandConfigs(actor: Actor): Result<CommandConfig[]> {
+		return listCommandConfigs(this.sql, actor);
+	}
+
+	createCommand(actor: Actor, input: Partial<CommandInput>): Result<CommandConfig> {
+		return this.commandsChanged(insertCommand(this.sql, actor, input));
+	}
+
+	updateCommand(actor: Actor, id: string, input: Partial<CommandInput>): Result<CommandConfig> {
+		return this.commandsChanged(editCommand(this.sql, actor, id, input));
+	}
+
+	deleteCommand(actor: Actor, id: string): Result<null> {
+		return this.commandsChanged(removeCommand(this.sql, actor, id));
+	}
+
+	// Cible complète, secret compris : réservé au Worker, jamais transmis au client.
+	commandTarget(actor: Actor, channelId: string, name: string): Result<CommandTarget & { channelName: string }> {
+		const channel = this.channelRow(channelId);
+		if (!channel || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!this.can(actor, channelId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		const target = findCommand(this.sql, name);
+		return target ? ok({ ...target, channelName: channel.name }) : err(404, `Commande inconnue : /${name}`);
+	}
+
+	postCommandReply(actor: Actor, channelId: string, name: string, text: string): Result<Message> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		const body = text.trim().slice(0, LIMITS.messageLength);
+		if (!body) {
+			return err(400, 'Message vide');
+		}
+		const id = this.ctx.storage.transactionSync(() => {
+			const row = this.sql
+				.exec<{ id: number }>('INSERT INTO messages (channel_id, user_id, body, created_at) VALUES (?, ?, ?, ?) RETURNING id', channelId, appUserId(name), body, Date.now())
+				.one();
+			this.saveMentions(row.id, body);
+			return row.id;
+		});
+		const message = this.message(id)!;
+		this.broadcastIn(channelId, { t: 'message', message });
+		return ok(message);
+	}
+
+	private commandsChanged<T>(result: Result<T>): Result<T> {
+		if (result.ok) {
+			this.broadcast({ t: 'commands_changed' });
+		}
+		return result;
 	}
 
 	private dropConnection(ws: WebSocket): void {
