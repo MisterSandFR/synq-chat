@@ -15,7 +15,15 @@ export function StatusMenuItems({ current, onPick, onCustom, onProfile }: MenuPr
 	return (
 		<>
 			{USER_STATUSES.map((s) => (
-				<button key={s.value} type='button' role='menuitemradio' aria-checked={current === s.value} className='menu-item' title={s.hint} onClick={() => onPick(s.value)}>
+				<button
+					key={s.value}
+					type='button'
+					role='menuitemradio'
+					aria-checked={current === s.value}
+					className='menu-item'
+					title={s.hint}
+					onClick={() => onPick(s.value)}
+				>
 					<StatusDot presence={s.value} />
 					<span className='grow'>{s.label}</span>
 					{current === s.value && <Icon name='check' size={14} />}
@@ -92,7 +100,13 @@ function StatusForm({ profile, onSave, onClose }: { profile: Profile; onSave: Di
 		>
 			<label className='field'>
 				<span>Que fais-tu ?</span>
-				<input autoFocus maxLength={RC_LIMITS.statusText} value={text} placeholder='En réunion, en congé…' onChange={(e) => setText(e.target.value)} />
+				<input
+					autoFocus
+					maxLength={RC_LIMITS.statusText}
+					value={text}
+					placeholder='En réunion, en congé…'
+					onChange={(e) => setText(e.target.value)}
+				/>
 			</label>
 			<label className='field'>
 				<span>Effacer après</span>

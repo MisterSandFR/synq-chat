@@ -90,7 +90,13 @@ function ProfileForm({ me, profile, onSave, onAvatarChanged, onClose }: Omit<Pro
 			</div>
 			<label className='field'>
 				<span>Bio</span>
-				<textarea rows={3} maxLength={RC_LIMITS.bio} value={bio} placeholder='Ton rôle, tes sujets, comment te joindre…' onChange={(e) => setBio(e.target.value)} />
+				<textarea
+					rows={3}
+					maxLength={RC_LIMITS.bio}
+					value={bio}
+					placeholder='Ton rôle, tes sujets, comment te joindre…'
+					onChange={(e) => setBio(e.target.value)}
+				/>
 				<span className='rc-count'>
 					{bio.length} / {RC_LIMITS.bio}
 				</span>

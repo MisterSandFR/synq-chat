@@ -33,10 +33,16 @@ export function AnnouncementBanner({ workspaceId, channelId, live, canEdit, edit
 	const text = live ?? loaded;
 
 	if (editing && canEdit) {
-		return <AnnouncementEditor initial={text} onCancel={() => onEditing(false)} onSave={async (next) => {
-			await api('PUT', path, { text: next });
-			onEditing(false);
-		}} />;
+		return (
+			<AnnouncementEditor
+				initial={text}
+				onCancel={() => onEditing(false)}
+				onSave={async (next) => {
+					await api('PUT', path, { text: next });
+					onEditing(false);
+				}}
+			/>
+		);
 	}
 	if (!text) {
 		return null;
@@ -44,11 +50,23 @@ export function AnnouncementBanner({ workspaceId, channelId, live, canEdit, edit
 	return (
 		<div className={`announce${expanded ? ' announce-open' : ''}`} role='note' aria-label='Annonce du salon'>
 			<Icon name='megaphone' size={16} />
-			<button type='button' className='announce-text' aria-expanded={expanded} title={expanded ? 'Réduire' : 'Afficher tout'} onClick={() => setExpanded(!expanded)}>
+			<button
+				type='button'
+				className='announce-text'
+				aria-expanded={expanded}
+				title={expanded ? 'Réduire' : 'Afficher tout'}
+				onClick={() => setExpanded(!expanded)}
+			>
 				{text}
 			</button>
 			{canEdit && (
-				<button type='button' className='icon-btn icon-btn-sm' aria-label='Modifier l’annonce' title='Modifier l’annonce' onClick={() => onEditing(true)}>
+				<button
+					type='button'
+					className='icon-btn icon-btn-sm'
+					aria-label='Modifier l’annonce'
+					title='Modifier l’annonce'
+					onClick={() => onEditing(true)}
+				>
 					<Icon name='pencil' size={14} />
 				</button>
 			)}
@@ -56,7 +74,15 @@ export function AnnouncementBanner({ workspaceId, channelId, live, canEdit, edit
 	);
 }
 
-function AnnouncementEditor({ initial, onSave, onCancel }: { initial: string; onSave: (text: string) => Promise<void>; onCancel: () => void }) {
+function AnnouncementEditor({
+	initial,
+	onSave,
+	onCancel,
+}: {
+	initial: string;
+	onSave: (text: string) => Promise<void>;
+	onCancel: () => void;
+}) {
 	const [value, setValue] = useState(initial);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);

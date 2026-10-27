@@ -41,7 +41,13 @@ export function SavedPanel({ saved, lookup, onOpen, onRemove, onClose }: Props) 
 										</span>
 										<span className='saved-text'>{excerpt(message.body, lookup, 160) || 'Fichier joint'}</span>
 									</button>
-									<button type='button' className='icon-btn icon-btn-sm' aria-label='Retirer des enregistrés' title='Retirer' onClick={() => onRemove(message)}>
+									<button
+										type='button'
+										className='icon-btn icon-btn-sm'
+										aria-label='Retirer des enregistrés'
+										title='Retirer'
+										onClick={() => onRemove(message)}
+									>
 										<Icon name='close' size={14} />
 									</button>
 								</li>

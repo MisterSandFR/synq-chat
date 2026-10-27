@@ -68,6 +68,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	const [card, setCard] = useState<{ userId: string; rect: DOMRect } | null>(null);
 	const [rcDialog, setRcDialog] = useState<'status' | 'profile' | null>(null);
 	const [announcing, setAnnouncing] = useState(false);
+	const [copied, setCopied] = useState<number | null>(null);
 	const myProfile = rc.profiles.get(myId);
 	const [voiceChat, setVoiceChatState] = useState(() => readPref('voice_chat') !== '0' && window.innerWidth > 860);
 
@@ -112,6 +113,23 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 	useEffect(() => setReplyTo(null), [channelId]);
 
 	useEffect(() => setAnnouncing(false), [channelId]);
+
+	// Lien permanent : ?m=<id> ouvre le message puis disparaît de l'URL.
+	useEffect(() => {
+		const target = Number(new URLSearchParams(location.search).get('m'));
+		if (channelId && Number.isInteger(target) && target > 0) {
+			setJump({ channelId, id: target });
+			history.replaceState(history.state, '', location.pathname);
+		}
+	}, [channelId]);
+
+	useEffect(() => {
+		if (copied === null) {
+			return;
+		}
+		const timer = setTimeout(() => setCopied(null), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
 
 	useEffect(() => {
 		if (active && chatVisible && !state.messages[active.id] && state.status === 'live' && jump?.channelId !== active.id) {
@@ -244,7 +262,22 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 					extraActions={(message) => {
 						const saved = rc.savedIds.has(message.id);
 						return (
-							<button
+							<>
+								<button
+									type='button'
+									className='icon-btn icon-btn-sm'
+									aria-label='Copier le lien'
+									title={copied === message.id ? 'Lien copié' : 'Copier le lien'}
+									onClick={() =>
+										void navigator.clipboard
+											.writeText(`${location.origin}/w/${workspaceId}/${message.channelId}?m=${message.id}`)
+											.then(() => setCopied(message.id))
+											.catch(() => undefined)
+									}
+								>
+									<Icon name={copied === message.id ? 'check' : 'link'} size={16} />
+								</button>
+								<button
 								type='button'
 								className={`icon-btn icon-btn-sm${saved ? ' is-saved' : ''}`}
 								aria-pressed={saved}
@@ -252,8 +285,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged }: Props
 								title={saved ? 'Retirer des enregistrés' : 'Enregistrer'}
 								onClick={() => void rc.toggleSaved(message).catch(() => undefined)}
 							>
-								<Icon name='bookmark' size={16} />
-							</button>
+									<Icon name='bookmark' size={16} />
+								</button>
+							</>
 						);
 					}}
 					onEdit={async (id, body) => {
