@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 
+import { Floating } from '../floating';
 import { DEFAULT_GRADE, P, has, type Override, type PermGroup } from '../../shared/permissions';
 import { type Channel, type ChannelKind, type ChannelOverrides, type Grade, type Member, type WorkspaceDetail } from '../../shared/types';
 import { api, errorText } from '../api';
@@ -356,7 +357,7 @@ function GradePicker({ grades, onPick, label }: { grades: Grade[]; onPick: (id: 
 				<Icon name='plus' size={16} />
 			</button>
 			{open && (
-				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 200 }}>
+				<Floating anchor={ref} placement='bottom-end' className='popover' role='menu' style={{ minWidth: 200 }}>
 					{grades.map((grade) => (
 						<button
 							key={grade.id}
@@ -372,7 +373,7 @@ function GradePicker({ grades, onPick, label }: { grades: Grade[]; onPick: (id: 
 							{grade.name}
 						</button>
 					))}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

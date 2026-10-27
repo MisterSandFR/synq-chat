@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
 
+import { Floating } from '../floating';
 import { PRESENCE_LABEL, type Presence } from '../../shared/rc';
 
 import { P, has } from '../../shared/permissions';
@@ -263,7 +264,7 @@ function WorkspaceSwitcher({ me, workspaceId, name, accent }: { me: Me; workspac
 				<Icon name='chevron' size={16} />
 			</button>
 			{open && (
-				<div className='popover' role='menu' style={{ top: 'calc(100% + 4px)', left: 0, width: 280 }}>
+				<Floating anchor={ref} placement='bottom-start' className='popover' role='menu' style={{ width: 280 }}>
 					{me.workspaces.map((w) => (
 						<button
 							key={w.id}
@@ -294,7 +295,7 @@ function WorkspaceSwitcher({ me, workspaceId, name, accent }: { me: Me; workspac
 					>
 						<Icon name='plus' size={16} /> Créer ou rejoindre un espace
 					</button>
-				</div>
+				</Floating>
 			)}
 		</div>
 	);
@@ -319,7 +320,7 @@ function MeBar({ me, status, presence, presenceText, menu }: MeBarProps) {
 				<Icon name='more' />
 			</button>
 			{open && (
-				<div className='popover' role='menu' style={{ bottom: 'calc(100% + 4px)', right: 8 }}>
+				<Floating anchor={ref} placement='top-end' className='popover' role='menu'>
 					{menu?.(() => setOpen(false))}
 					<button
 						type='button'
@@ -343,7 +344,7 @@ function MeBar({ me, status, presence, presenceText, menu }: MeBarProps) {
 					>
 						<Icon name='logout' size={16} /> Se déconnecter
 					</button>
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

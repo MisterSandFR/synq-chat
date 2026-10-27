@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 
+import { Floating } from '../floating';
 import { P, has } from '../../shared/permissions';
 import { LIMITS, type Channel, type DriveFile, type DriveFolder, type DriveListing, type Member } from '../../shared/types';
 import { api, errorText, fileUrl, upload } from '../api';
@@ -201,7 +202,7 @@ function ItemMenu({ label, items }: { label: string; items: Array<{ label: strin
 				<Icon name='more' size={16} />
 			</button>
 			{open && (
-				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 190 }}>
+				<Floating anchor={ref} placement='bottom-end' className='popover' role='menu' style={{ minWidth: 190 }}>
 					{items.map((item) => (
 						<button
 							key={item.label}
@@ -216,7 +217,7 @@ function ItemMenu({ label, items }: { label: string; items: Array<{ label: strin
 							{item.label}
 						</button>
 					))}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 import type { AiRewriteInput, AiTextResult, RewriteAction } from '../../shared/ai';
 import { api, errorText } from '../api';
+import { Floating } from '../floating';
 import { useDismiss } from '../ui';
 import './ai.css';
 
@@ -103,7 +104,7 @@ export function AiAssist({ textarea, value, onChange, context, align }: Props) {
 				</span>
 			</button>
 			{open && (
-				<div className='popover ai-menu' role='menu' aria-label='Assistant IA'>
+				<Floating anchor={box} placement={align === 'end' ? 'top-end' : 'top-start'} className='popover ai-menu' role='menu' aria-label='Assistant IA'>
 					{ACTIONS.map(([action, label]) => (
 						<button key={action} type='button' role='menuitem' className='menu-item' onClick={() => start(action)}>
 							{label}
@@ -126,10 +127,10 @@ export function AiAssist({ textarea, value, onChange, context, align }: Props) {
 							<input autoFocus value={custom} maxLength={500} placeholder='Ex. : ajoute une formule de politesse' aria-label='Consigne libre' onChange={(e) => setCustom(e.target.value)} />
 						</form>
 					)}
-				</div>
+				</Floating>
 			)}
 			{run && (
-				<div className='popover ai-preview' role='dialog' aria-label='Proposition de l’IA'>
+				<Floating anchor={box} placement={align === 'end' ? 'top-end' : 'top-start'} className='popover ai-preview' role='dialog' aria-label='Proposition de l’IA'>
 					{error ? (
 						<p className='notice notice-error'>{error}</p>
 					) : result === null ? (
@@ -151,7 +152,7 @@ export function AiAssist({ textarea, value, onChange, context, align }: Props) {
 							Annuler
 						</button>
 					</div>
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

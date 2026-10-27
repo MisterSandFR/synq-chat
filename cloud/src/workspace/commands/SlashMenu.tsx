@@ -1,14 +1,17 @@
+import type { RefObject } from 'react';
+
 import type { SlashCommand } from '../../../shared/commands';
+import { Floating } from '../../floating';
 import { Icon } from '../../ui';
 import type { EphemeralNote } from './useSlash';
 import './commands.css';
 
-export function SlashMenu({ matches, index, onPick }: { matches: SlashCommand[]; index: number; onPick: (command: SlashCommand) => void }) {
+export function SlashMenu({ anchor, matches, index, onPick }: { anchor: RefObject<HTMLElement | null>; matches: SlashCommand[]; index: number; onPick: (command: SlashCommand) => void }) {
 	if (!matches.length) {
 		return null;
 	}
 	return (
-		<div className='popover suggest slash-menu' role='listbox' aria-label='Commandes'>
+		<Floating anchor={anchor} placement='top-start' className='popover suggest slash-menu' role='listbox' aria-label='Commandes'>
 			{matches.map((command, i) => (
 				<button
 					key={command.name}
@@ -26,7 +29,7 @@ export function SlashMenu({ matches, index, onPick }: { matches: SlashCommand[];
 					<span className='slash-desc ellipsis'>{command.description}</span>
 				</button>
 			))}
-		</div>
+		</Floating>
 	);
 }
 

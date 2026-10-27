@@ -1,5 +1,6 @@
 import { useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 
+import { Floating } from '../floating';
 import type { Me } from '../../shared/types';
 import { api } from '../api';
 import { navigate } from '../router';
@@ -16,6 +17,9 @@ const THEMES: Record<Theme, { next: Theme; label: string; icon: IconName }> = {
 	dark: { next: 'light', label: 'sombre', icon: 'moon' },
 	light: { next: 'system', label: 'clair', icon: 'sun' },
 };
+
+// Barre en bas sur mobile : le menu du profil s'ouvre vers le haut.
+const narrow = () => window.matchMedia('(max-width: 860px)').matches;
 
 const go = (href: string) => (event: MouseEvent) => {
 	if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
@@ -82,7 +86,7 @@ function SpaceMenu({ me, workspaceId }: { me: Me; workspaceId: string | null }) 
 				{current ? current.name.charAt(0).toUpperCase() : <Icon name='home' />}
 			</button>
 			{open && (
-				<div className='popover rail-pop' role='menu' style={{ top: 0, width: 280 }}>
+				<Floating anchor={ref} placement='right-start' offset={18} className='popover rail-pop' role='menu' style={{ width: 280 }}>
 					{me.workspaces.map((w) => (
 						<button
 							key={w.id}
@@ -113,7 +117,7 @@ function SpaceMenu({ me, workspaceId }: { me: Me; workspaceId: string | null }) 
 					>
 						<Icon name='plus' size={16} /> Créer ou rejoindre un espace
 					</button>
-				</div>
+				</Floating>
 			)}
 		</div>
 	);
@@ -130,7 +134,7 @@ function ProfileMenu({ me }: { me: Me }) {
 				<Avatar name={me.user.name} url={me.user.avatarUrl} size={34} square />
 			</button>
 			{open && (
-				<div className='popover rail-pop rail-pop-up' role='menu' style={{ width: 260 }}>
+				<Floating anchor={ref} placement={narrow() ? 'top-end' : 'right-end'} offset={narrow() ? 8 : 18} className='popover rail-pop' role='menu' style={{ width: 260 }}>
 					<div className='rail-pop-head'>
 						<Avatar name={me.user.name} url={me.user.avatarUrl} size={36} />
 						<span style={{ minWidth: 0 }}>
@@ -163,7 +167,7 @@ function ProfileMenu({ me }: { me: Me }) {
 					>
 						<Icon name='logout' size={16} /> Se déconnecter
 					</button>
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

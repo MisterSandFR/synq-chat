@@ -1,5 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react';
 
+import { Floating } from '../../floating';
 import { DEFAULT_GRADE, P, PERMISSIONS, has } from '../../../shared/permissions';
 import type { Grade, Member, WorkspaceDetail } from '../../../shared/types';
 import { api, errorText } from '../../api';
@@ -291,7 +292,7 @@ function GradeMembers({ info, grade, myId, run, onChanged }: { info: WorkspaceDe
 						<Icon name='user-plus' size={16} /> Ajouter des membres
 					</button>
 					{open && (
-						<div className='popover roles-picker-pop' role='menu'>
+						<Floating anchor={ref} placement='bottom-start' className='popover roles-picker-pop' role='menu'>
 							<input type='search' value={query} onChange={(e) => setQuery(e.target.value)} placeholder='Rechercher un membre' aria-label='Rechercher un membre' autoFocus />
 							{candidates.length === 0 && <p className='muted' style={{ padding: 8, fontSize: 13 }}>Aucun membre à ajouter.</p>}
 							{candidates.map((member) => (
@@ -300,7 +301,7 @@ function GradeMembers({ info, grade, myId, run, onChanged }: { info: WorkspaceDe
 									<span className='ellipsis'>{member.name}</span>
 								</button>
 							))}
-						</div>
+						</Floating>
 					)}
 				</div>
 			)}

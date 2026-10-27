@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 
+import { Floating } from '../floating';
 import { parseCommand } from '../../shared/commands';
 import { searchEmojis } from '../../shared/emoji';
 import { LIMITS, type Channel, type Message } from '../../shared/types';
@@ -52,6 +53,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const [eventDraft, setEventDraft] = useState<string | null>(null);
 	const lastTyping = useRef(0);
 	const fileInput = useRef<HTMLInputElement>(null);
+	const form = useRef<HTMLFormElement>(null);
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	useOfferedFiles(canAttach ? uploads.add : null);
 	const slash = useSlash(workspaceId, channel, text, (next) => {
@@ -264,6 +266,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 
 	return (
 		<form
+			ref={form}
 			className='composer'
 			onSubmit={(e) => {
 				e.preventDefault();
@@ -271,9 +274,9 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 			}}
 		>
 			<EphemeralNotes notes={slash.notes} onDismiss={slash.dismissNote} />
-			<SlashMenu matches={slash.matches} index={slash.index} onPick={slash.accept} />
+			<SlashMenu anchor={form} matches={slash.matches} index={slash.index} onPick={slash.accept} />
 			{suggestions.length > 0 && (
-				<div className='popover suggest' role='listbox' aria-label='Suggestions'>
+				<Floating anchor={form} placement='top-start' className='popover suggest' role='listbox' aria-label='Suggestions'>
 					{suggestions.map((s, i) => (
 						<button
 							key={s.key}
@@ -296,7 +299,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 							<span className='ellipsis'>{s.label}</span>
 						</button>
 					))}
-				</div>
+				</Floating>
 			)}
 			<div className='composer-box'>
 				{slash.active && <SlashHint command={slash.active} />}

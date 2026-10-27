@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
+import { Floating } from '../floating';
 import { MAIL_LIMITS, type MailTemplate, type MailTemplateInput } from '../../shared/mail';
 import { api, errorText } from '../api';
 import { Icon, useDismiss } from '../ui';
@@ -61,7 +62,7 @@ export function Templates({ text, onInsert }: Props) {
 				<Icon name='bookmark' size={16} />
 			</button>
 			{open && (
-				<div className='popover mail-pop mail-pop-up mail-templates'>
+				<Floating anchor={ref} placement='top-start' className='popover mail-pop mail-pop-up mail-templates'>
 					<div className='menu-label'>Modèles</div>
 					{list === null ? (
 						<div className='spinner' aria-busy />
@@ -96,7 +97,7 @@ export function Templates({ text, onInsert }: Props) {
 						</button>
 					)}
 					{error && <p className='notice notice-error'>{error}</p>}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

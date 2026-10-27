@@ -1845,10 +1845,8 @@ kbd {
 }
 
 .suggest {
-	bottom: calc(100% - 4px);
-	left: 20px;
-	right: 20px;
-	max-width: 360px;
+	width: 360px;
+	max-width: calc(100vw - 32px);
 	max-height: 280px;
 	overflow-y: auto;
 }

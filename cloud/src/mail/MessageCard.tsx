@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 
+import { Floating } from '../floating';
 import type { MailMessage, MailTranslateInput } from '../../shared/mail';
 import type { AiTextResult } from '../../shared/ai';
 import { api } from '../api';
@@ -72,7 +73,7 @@ export function MessageCard({ message, expanded, canReply, onToggle, onReply, on
 						<Icon name='more' size={16} />
 					</button>
 					{menu && (
-						<div className='popover mail-pop mail-pop-right'>
+						<Floating anchor={menuRef} placement='bottom-end' className='popover mail-pop mail-pop-right'>
 							{canReply && (
 								<>
 									<button className='menu-item' onClick={() => (setMenu(false), onReply(message, false))}>
@@ -107,7 +108,7 @@ export function MessageCard({ message, expanded, canReply, onToggle, onReply, on
 								<Icon name='mail' size={16} />
 								{message.fromAddr}
 							</a>
-						</div>
+						</Floating>
 					)}
 				</div>
 			</header>

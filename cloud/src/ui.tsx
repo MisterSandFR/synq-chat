@@ -57,7 +57,9 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, on
 			return;
 		}
 		const onPointer = (event: PointerEvent) => {
-			if (ref.current && !ref.current.contains(event.target as Node)) {
+			const target = event.target as Element;
+			// Menu rendu hors de son parent (Floating) : un clic dedans n'est pas un clic extérieur.
+			if (ref.current && !ref.current.contains(target) && !target.closest?.('[data-floating]')) {
 				onClose();
 			}
 		};

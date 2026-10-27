@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
+import { Floating } from '../floating';
 import type { MailAiInput, MailAiResult, MailboxInfo, MailDraft, MailScheduleInput, MailSendInput, MailThreadDetail, MailUpload } from '../../shared/mail';
 import { api, errorText, upload } from '../api';
 import { Icon, fileIcon, formatSize, useDismiss } from '../ui';
@@ -469,7 +470,7 @@ function SchedulePop({ disabled, scheduled, onPick, onCancel }: { disabled: bool
 				<Icon name='clock' size={16} />
 			</button>
 			{open && (
-				<div className='popover mail-pop mail-pop-up mail-pop-right'>
+				<Floating anchor={ref} placement='top-end' className='popover mail-pop mail-pop-up mail-pop-right'>
 					<div className='menu-label'>Envoyer plus tard</div>
 					{snoozeChoices().map((choice) => (
 						<button key={choice.key} type='button' className='menu-item' onClick={() => (setOpen(false), onPick(choice.at))}>
@@ -501,7 +502,7 @@ function SchedulePop({ disabled, scheduled, onPick, onCancel }: { disabled: bool
 							</button>
 						</>
 					)}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

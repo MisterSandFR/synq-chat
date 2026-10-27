@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
+import { Floating } from '../floating';
 import type { MailThread } from '../../shared/mail';
 import type { Channel, WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
@@ -38,7 +39,11 @@ function Pop({ icon, label, text, children, align = 'left' }: { icon: IconName; 
 				<Icon name={icon} size={17} />
 				{text && <span>{text}</span>}
 			</button>
-			{open && <div className={`popover mail-pop${align === 'right' ? ' mail-pop-right' : ''}`}>{children(() => setOpen(false))}</div>}
+			{open && (
+				<Floating anchor={ref} placement={align === 'right' ? 'bottom-end' : 'bottom-start'} className='popover mail-pop'>
+					{children(() => setOpen(false))}
+				</Floating>
+			)}
 		</div>
 	);
 }

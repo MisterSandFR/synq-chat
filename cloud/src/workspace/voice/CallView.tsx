@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { Floating } from '../../floating';
 import { P, has } from '../../../shared/permissions';
 import type { Channel, Grade, Member, VoiceParticipant } from '../../../shared/types';
 import { api, errorText } from '../../api';
@@ -195,7 +196,7 @@ function TileMenu({ name, onMute, onKick, targets, onMove }: TileMenuProps) {
 				<Icon name='shield' size={16} />
 			</button>
 			{open && (
-				<div className='popover' role='menu' style={{ right: 0, top: 'calc(100% + 4px)', minWidth: 220, maxHeight: 360, overflowY: 'auto' }}>
+				<Floating anchor={ref} placement='bottom-end' className='popover' role='menu' style={{ minWidth: 220, maxHeight: 360, overflowY: 'auto' }}>
 					{onMute && (
 						<button
 							type='button'
@@ -242,7 +243,7 @@ function TileMenu({ name, onMute, onKick, targets, onMove }: TileMenuProps) {
 							))}
 						</>
 					)}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);
