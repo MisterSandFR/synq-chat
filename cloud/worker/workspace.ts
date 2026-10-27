@@ -111,6 +111,7 @@ type MessageRow = {
 	thread_root?: number | null;
 	thread_count?: number;
 	thread_last?: number | null;
+	event_id?: string | null;
 };
 
 type FolderRow = { id: string; channel_id: string; parent_id: string | null; name: string; created_by: string; created_at: number };
@@ -303,6 +304,8 @@ const MIGRATIONS = [
 		last_read_id INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (user_id, root_id)
 	);`,
+	`ALTER TABLE messages ADD COLUMN event_id TEXT;
+	CREATE INDEX messages_event ON messages (event_id) WHERE event_id IS NOT NULL;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -347,6 +350,7 @@ const toMessage = (row: MessageRow): Message => ({
 	editedAt: row.edited_at,
 	threadRoot: row.thread_root ?? null,
 	thread: row.thread_count ? { count: row.thread_count, lastAt: row.thread_last ?? row.created_at } : null,
+	...(row.event_id ? { eventId: row.event_id } : {}),
 });
 
 const toFolder = (row: FolderRow): DriveFolder => ({
@@ -723,7 +727,7 @@ export class Workspace extends DurableObject<Env> {
 		return ok({ messages: decorate(this.sql, rows.slice(0, PAGE_SIZE).reverse().map(toMessage)), hasMore: rows.length > PAGE_SIZE, hasNewer: false });
 	}
 
-	postMessage(actor: Actor, channelId: string, body: string, attachments: Attachment[], replyTo: number | null = null): Result<Message> {
+	postMessage(actor: Actor, channelId: string, body: string, attachments: Attachment[], replyTo: number | null = null, eventId: string | null = null): Result<Message> {
 		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Salon introuvable');
 		}
@@ -734,7 +738,7 @@ export class Workspace extends DurableObject<Env> {
 			return err(403, 'Tu ne peux pas joindre de fichier ici');
 		}
 		const text = body.trim();
-		if (!text && !attachments.length) {
+		if (!text && !attachments.length && !eventId) {
 			return err(400, 'Message vide');
 		}
 		if (text.length > LIMITS.messageLength) {
@@ -752,13 +756,14 @@ export class Workspace extends DurableObject<Env> {
 		const id = this.ctx.storage.transactionSync(() => {
 			const row = this.sql
 				.exec<{ id: number }>(
-					'INSERT INTO messages (channel_id, user_id, body, attachments, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
+					'INSERT INTO messages (channel_id, user_id, body, attachments, reply_to, created_at, event_id) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
 					channelId,
 					actor.id,
 					text,
 					attachments.length ? JSON.stringify(attachments) : null,
 					replyTo,
 					now,
+					eventId,
 				)
 				.one();
 			this.saveMentions(row.id, text);
@@ -2091,6 +2096,14 @@ export class Workspace extends DurableObject<Env> {
 					this.can(conn.actor, channel.id, P.VIEW_CHANNEL) ? { t: 'channel_upsert', channel, perms: this.permsIn(conn.actor, channel.id) } : { t: 'channel_deleted', id: channel.id },
 				);
 			}
+		}
+	}
+
+	// --- Cartes d'événement ---
+
+	eventCardChanged(eventId: string): void {
+		for (const { channel_id } of this.sql.exec<{ channel_id: string }>('SELECT DISTINCT channel_id FROM messages WHERE event_id = ?', eventId).toArray()) {
+			this.broadcastIn(channel_id, { t: 'event_card', eventId });
 		}
 	}
 }

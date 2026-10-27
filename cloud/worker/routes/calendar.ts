@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { CALENDAR_LIMITS, DAY, type EventInput } from '../../shared/calendar';
 import { createEvent, deleteEvent, feedIcs, feedStatus, getEvent, importIcs, listEvents, listPeople, respond, revokeFeed, rotateFeed, updateEvent } from '../calendar';
+import { eventWorkspace, touchCards } from '../event-cards';
 import { fail, readJson, unwrap, type AppEnv } from '../http';
 
 // Monté avant le middleware de session : un agenda externe s'abonne sans cookie.
@@ -46,7 +47,13 @@ calendarRoutes.post('/calendar/events', async (c) => {
 
 calendarRoutes.get('/calendar/events/:id', async (c) => unwrap(c, await getEvent(c.env.DB, c.get('user').id, c.req.param('id'))));
 
-calendarRoutes.patch('/calendar/events/:id', async (c) => unwrap(c, await updateEvent(c.env, c.get('user').id, c.req.param('id'), await readJson<EventInput>(c))));
+calendarRoutes.patch('/calendar/events/:id', async (c) => {
+	const updated = await updateEvent(c.env, c.get('user').id, c.req.param('id'), await readJson<EventInput>(c));
+	if (updated.ok) {
+		await touchCards(c.env, updated.value.id, updated.value.workspaceId);
+	}
+	return unwrap(c, updated);
+});
 
 calendarRoutes.delete('/calendar/events/:id', async (c) => {
 	const raw = c.req.query('occurrence');
@@ -55,12 +62,21 @@ calendarRoutes.delete('/calendar/events/:id', async (c) => {
 	if (raw !== undefined && occurrence === null) {
 		return fail(c, 400, 'Occurrence invalide');
 	}
-	return unwrap(c, await deleteEvent(c.env.DB, c.get('user').id, c.req.param('id'), occurrence));
+	const workspaceId = await eventWorkspace(c.env.DB, c.req.param('id'));
+	const deleted = await deleteEvent(c.env.DB, c.get('user').id, c.req.param('id'), occurrence);
+	if (deleted.ok) {
+		await touchCards(c.env, c.req.param('id'), workspaceId);
+	}
+	return unwrap(c, deleted);
 });
 
 calendarRoutes.put('/calendar/events/:id/response', async (c) => {
 	const { response } = await readJson<{ response: string }>(c);
-	return unwrap(c, await respond(c.env.DB, c.get('user').id, c.req.param('id'), response));
+	const answered = await respond(c.env.DB, c.get('user').id, c.req.param('id'), response);
+	if (answered.ok) {
+		await touchCards(c.env, c.req.param('id'), await eventWorkspace(c.env.DB, c.req.param('id')));
+	}
+	return unwrap(c, answered);
 });
 
 calendarRoutes.get('/calendar/people', async (c) => unwrap(c, await listPeople(c.env.DB, c.get('user').id, c.req.query('workspace') || null)));

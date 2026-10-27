@@ -10,6 +10,7 @@ import { Reactions } from './chat/Reactions';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { memberColor, memberLabel } from './grades';
 import { MessageMedia } from './media/MessageMedia';
+import { EventCard } from './events/EventCard';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import { ThreadLink } from './dm-threads/ThreadLink';
 import type { ChannelMessages } from './useWorkspace';
@@ -294,6 +295,7 @@ export function MessageList({
 									)
 								)}
 								<MessageMedia workspaceId={workspaceId} message={message} onLoad={keepBottom} />
+								{message.eventId && <EventCard workspaceId={workspaceId} eventId={message.eventId} lookup={lookup} />}
 								{message.reactions && message.reactions.length > 0 && (
 									<Reactions
 										reactions={message.reactions}

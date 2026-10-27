@@ -5,6 +5,7 @@ import { mentionedUsers, type Channel, type ClientEvent, type Message, type Mess
 import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
+import { EVENT_CARD_EVENT } from './events/store';
 import { initialDmThreads, reduceDmThreads, type DmThreadsAction, type DmThreadsState } from './dm-threads/state';
 
 export interface ChannelMessages {
@@ -224,6 +225,7 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return withMessage(state, event.root, 'update');
 		case 'dm':
 		case 'call_ring':
+		case 'event_card':
 			return state;
 	}
 }
@@ -323,6 +325,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				}
 				if (event.t === 'commands_changed') {
 					window.dispatchEvent(new CustomEvent(COMMANDS_EVENT, { detail: workspaceId }));
+				}
+				if (event.t === 'event_card') {
+					window.dispatchEvent(new CustomEvent(EVENT_CARD_EVENT, { detail: event.eventId }));
 				}
 				dispatch({ type: 'event', event, activeChannelId: activeRef.current, myId, focused: isFocused() });
 			};
