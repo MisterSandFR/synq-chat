@@ -2,6 +2,7 @@ import type { NotificationItem } from './notifications';
 import type { PinInfo, Reaction } from './chat';
 import type { DirectConversation, ThreadSummary } from './dm-threads';
 import type { CalendarReminder } from './calendar';
+import type { MailCard } from './mail';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -124,6 +125,7 @@ export interface Message {
 	threadRoot?: number | null;
 	thread?: ThreadSummary | null;
 	eventId?: string | null;
+	mailCard?: MailCard;
 }
 
 export interface MessagePage {

@@ -90,19 +90,46 @@ export function buildMessage(m: {
 	inReplyTo?: string | null;
 	references?: string[];
 	date?: Date;
+	cc?: string[];
+	attachments?: OutgoingAttachment[];
 }): string {
 	const headers = [
 		`From: ${sender(oneLine(m.fromName), m.fromAddr)}`,
-		`To: ${m.to.map((to) => `<${to}>`).join(', ')}`,
+		...(m.to.length ? [`To: ${m.to.map((to) => `<${to}>`).join(', ')}`] : []),
+		...(m.cc?.length ? [`Cc: ${m.cc.map((cc) => `<${cc}>`).join(', ')}`] : []),
 		`Subject: ${word(oneLine(m.subject))}`,
 		`Date: ${(m.date ?? new Date()).toUTCString()}`,
 		`Message-ID: ${m.messageId}`,
 		...(m.inReplyTo ? [`In-Reply-To: ${m.inReplyTo}`] : []),
 		...(m.references?.length ? [`References: ${m.references.join('\r\n ')}`] : []),
 		'MIME-Version: 1.0',
-		'Content-Type: text/plain; charset=utf-8',
-		'Content-Transfer-Encoding: base64',
 	];
-	const body = b64(m.text.replace(/\r?\n/g, '\r\n')).replace(/.{1,76}/g, '$&\r\n');
-	return `${headers.join('\r\n')}\r\n\r\n${body}`;
+	const text = wrap76(b64(m.text.replace(/\r?\n/g, '\r\n')));
+	if (!m.attachments?.length) {
+		return `${[...headers, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64'].join('\r\n')}\r\n\r\n${text}`;
+	}
+	const boundary = `synq-${crypto.randomUUID()}`;
+	const parts = [
+		`Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${text}`,
+		...m.attachments.map((a) => {
+			const type = MIME_TYPE_RE.test(a.type) ? a.type : 'application/octet-stream';
+			const ascii = oneLine(a.name).replace(/[^\x20-\x7e]|["\\]/g, '_');
+			return [
+				`Content-Type: ${type}; name="${ascii}"`,
+				`Content-Disposition: attachment; filename="${ascii}"; filename*=UTF-8''${rfc5987(a.name)}`,
+				'Content-Transfer-Encoding: base64',
+				'',
+				wrap76(btoa(binary(a.content))),
+			].join('\r\n');
+		}),
+	];
+	return `${[...headers, `Content-Type: multipart/mixed; boundary="${boundary}"`].join('\r\n')}\r\n\r\n${parts.map((part) => `--${boundary}\r\n${part}`).join('\r\n')}\r\n--${boundary}--\r\n`;
 }
+
+export type OutgoingAttachment = { name: string; type: string; content: Uint8Array };
+
+const MIME_TYPE_RE = /^[\w.+-]+\/[\w.+-]+$/;
+
+const wrap76 = (value: string) => value.replace(/.{1,76}/g, '$&\r\n');
+
+const rfc5987 = (value: string) => encodeURIComponent(oneLine(value)).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);

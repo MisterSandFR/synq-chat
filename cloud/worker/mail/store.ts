@@ -3,7 +3,7 @@ import type { User } from '../../shared/types';
 import { ImapClient } from './imap';
 import { formatAddresses, parseMail } from './mime';
 import { unseal } from './secret';
-import { buildMessage, smtpSend } from './smtp';
+import { buildMessage, smtpSend, type OutgoingAttachment } from './smtp';
 import type { Opener } from './wire';
 
 export interface BoxRow {
@@ -35,6 +35,11 @@ export const bodyKey = (boxId: string, messageId: string) => `mail/${boxId}/${me
 
 export const attachmentKey = (boxId: string, messageId: string, index: number) => `mail/${boxId}/${messageId}/${index}`;
 
+// HTML brut, assaini à la lecture : les règles peuvent évoluer sans relève.
+export const htmlKey = (boxId: string, messageId: string) => `mail/${boxId}/${messageId}/html`;
+
+const MAX_HTML = 2 * 1024 * 1024;
+
 export const loadBox = (db: D1Database, id: string) => db.prepare('SELECT * FROM mailboxes WHERE id = ?').bind(id).first<BoxRow>();
 
 const snippet = (text: string) => text.replace(/\s+/g, ' ').trim().slice(0, 200);
@@ -62,8 +67,10 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 	const now = Date.now();
 	const date = mail.date ?? now;
 	const attachments = mail.attachments.slice(0, MAX_ATTACHMENTS);
+	const html = mail.html.length <= MAX_HTML ? mail.html : '';
 	await Promise.all([
 		env.FILES.put(bodyKey(box.id, id), mail.text, { httpMetadata: { contentType: 'text/plain; charset=utf-8' } }),
+		...(html ? [env.FILES.put(htmlKey(box.id, id), html, { httpMetadata: { contentType: 'text/html; charset=utf-8' } })] : []),
 		...attachments.map((a, i) => env.FILES.put(attachmentKey(box.id, id, i), a.content, { httpMetadata: { contentType: a.type }, customMetadata: { name: a.name } })),
 	]);
 	const threadId = existing ?? crypto.randomUUID();
@@ -72,7 +79,9 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 	const subject = mail.subject.slice(0, 300);
 	await env.DB.batch([
 		existing
-			? env.DB.prepare("UPDATE mail_threads SET snippet = ?, participants = ?, message_count = message_count + 1, last_at = MAX(last_at, ?), status = 'open' WHERE id = ?").bind(
+			? env.DB.prepare(
+					"UPDATE mail_threads SET snippet = ?, participants = ?, message_count = message_count + 1, last_at = MAX(last_at, ?), status = 'open', snoozed_until = NULL, deleted_at = NULL WHERE id = ?",
+				).bind(
 					text,
 					from,
 					date,
@@ -82,7 +91,7 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 					"INSERT INTO mail_threads (id, mailbox_id, subject, snippet, participants, status, message_count, last_at, created_at) VALUES (?, ?, ?, ?, ?, 'open', 1, ?, ?)",
 				).bind(threadId, box.id, subject, text, from, date, now),
 		env.DB.prepare(
-			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, date, created_at, has_html) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		).bind(
 			id,
 			box.id,
@@ -98,12 +107,97 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 			formatAddresses(mail.cc),
 			subject,
 			text,
-			JSON.stringify(attachments.map((a, index) => ({ index, name: a.name, size: a.content.byteLength, type: a.type }))),
+			JSON.stringify(attachments.map((a, index) => ({ index, name: a.name, size: a.content.byteLength, type: a.type, ...(a.cid ? { cid: a.cid } : {}) }))),
 			date,
 			now,
+			html ? 1 : 0,
 		),
 	]);
 	return true;
+}
+
+// Cron : fils en rappel échus de nouveau ouverts.
+export async function wakeSnoozed(env: Env, now: number): Promise<void> {
+	await env.DB.prepare("UPDATE mail_threads SET snoozed_until = NULL, status = 'open' WHERE snoozed_until IS NOT NULL AND snoozed_until <= ?").bind(now).run();
+}
+
+export interface Outgoing {
+	// Fil existant de la même boîte, déjà vérifié par la route.
+	threadId: string | null;
+	to: string[];
+	cc: string[];
+	bcc: string[];
+	subject: string;
+	text: string;
+	attachments: OutgoingAttachment[];
+}
+
+export async function sendMail(env: Env, box: BoxRow, user: User, out: Outgoing, opener: Opener): Promise<string> {
+	const last = out.threadId
+		? await env.DB.prepare('SELECT message_id, refs FROM mail_messages WHERE thread_id = ? ORDER BY date DESC, created_at DESC LIMIT 1')
+				.bind(out.threadId)
+				.first<{ message_id: string; refs: string }>()
+		: null;
+	const recipients = [...new Set([...out.to, ...out.cc, ...out.bcc])];
+	if (!recipients.length) {
+		throw new MailError('Destinataire requis');
+	}
+	const messageId = `<${crypto.randomUUID()}@${box.address.split('@')[1] ?? 'synq.invalid'}>`;
+	const references = last ? [...last.refs.split(/\s+/).filter(Boolean), last.message_id].slice(-20) : [];
+	const data = buildMessage({
+		fromName: box.name,
+		fromAddr: box.address,
+		to: out.to,
+		cc: out.cc,
+		subject: out.subject,
+		text: out.text,
+		messageId,
+		inReplyTo: last?.message_id ?? null,
+		references,
+		attachments: out.attachments,
+	});
+	await smtpSend(
+		opener,
+		{ host: box.smtp_host, port: box.smtp_port, username: box.username, password: await unseal(env.MAIL_KEY, box.secret) },
+		Date.now() + 30_000,
+		{ from: box.address, to: recipients, data },
+	);
+	const id = crypto.randomUUID();
+	const now = Date.now();
+	const threadId = out.threadId ?? crypto.randomUUID();
+	const text = snippet(out.text);
+	await Promise.all([
+		env.FILES.put(bodyKey(box.id, id), out.text, { httpMetadata: { contentType: 'text/plain; charset=utf-8' } }),
+		...out.attachments.map((a, i) => env.FILES.put(attachmentKey(box.id, id, i), a.content, { httpMetadata: { contentType: a.type }, customMetadata: { name: a.name } })),
+	]);
+	await env.DB.batch([
+		out.threadId
+			? env.DB.prepare('UPDATE mail_threads SET snippet = ?, message_count = message_count + 1, last_at = ?, deleted_at = NULL WHERE id = ?').bind(text, now, threadId)
+			: env.DB.prepare(
+					"INSERT INTO mail_threads (id, mailbox_id, subject, snippet, participants, status, message_count, last_at, created_at) VALUES (?, ?, ?, ?, ?, 'open', 1, ?, ?)",
+				).bind(threadId, box.id, out.subject.slice(0, 300), text, recipients[0]!, now, now),
+		env.DB.prepare(
+			"INSERT INTO mail_messages (id, mailbox_id, thread_id, uid, message_id, in_reply_to, refs, reply_to, direction, from_name, from_addr, to_addrs, cc_addrs, subject, snippet, attachments, sent_by, date, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, 'out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		).bind(
+			id,
+			box.id,
+			threadId,
+			messageId,
+			last?.message_id ?? null,
+			references.join(' '),
+			box.name,
+			box.address,
+			out.to.join(', '),
+			out.cc.join(', '),
+			out.subject.slice(0, 300),
+			text,
+			JSON.stringify(out.attachments.map((a, index) => ({ index, name: a.name, size: a.content.byteLength, type: a.type }))),
+			user.id,
+			now,
+			now,
+		),
+	]);
+	return threadId;
 }
 
 // Null : boîte supprimée, l'alarme s'arrête.
@@ -180,5 +274,20 @@ export async function sendReply(env: Env, box: BoxRow, threadId: string, user: U
 		).bind(id, box.id, threadId, messageId, last.message_id, references.join(' '), box.name, box.address, to, subject, snippet(text), user.id, now, now),
 		env.DB.prepare('UPDATE mail_threads SET snippet = ?, message_count = message_count + 1, last_at = ? WHERE id = ?').bind(snippet(text), now, threadId),
 	]);
-	return { id, direction: 'out', fromName: box.name, fromAddr: box.address, to, cc: '', subject, date: now, body: text, attachments: [], sentBy: user.id };
+	return {
+		id,
+		direction: 'out',
+		fromName: box.name,
+		fromAddr: box.address,
+		to,
+		cc: '',
+		subject,
+		date: now,
+		body: text,
+		attachments: [],
+		sentBy: user.id,
+		hasHtml: false,
+		toList: [{ name: '', addr: to }],
+		ccList: [],
+	};
 }

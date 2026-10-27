@@ -26,6 +26,7 @@ import {
 	type VoiceFlags,
 	type VoiceParticipant,
 } from '../shared/types';
+import type { MailCard } from '../shared/mail';
 import { NOTIFICATIONS_MIGRATION, forgetNotifications, listNotifications, markChannelNotificationsRead, markNotificationsRead, messageRecipients, notificationPrefs, notify, setNotifyLevel, unreadCount } from './notifications';
 import type { NotificationFilter, NotificationItem, NotificationPage, NotifyInput, NotifyLevel } from '../shared/notifications';
 import { parseAttachments } from './media';
@@ -128,6 +129,7 @@ type MessageRow = {
 	thread_last?: number | null;
 	event_id?: string | null;
 	forward?: string | null;
+	mail_card?: string | null;
 };
 
 type FolderRow = { id: string; channel_id: string; parent_id: string | null; name: string; created_by: string; created_at: number };
@@ -337,6 +339,7 @@ const MIGRATIONS = [
 		DELETE FROM webhooks WHERE channel_id = old.id;
 	END;`,
 	`CREATE TABLE guests (user_id TEXT PRIMARY KEY);`,
+	`ALTER TABLE messages ADD COLUMN mail_card TEXT;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -383,6 +386,7 @@ const toMessage = (row: MessageRow): Message => ({
 	thread: row.thread_count ? { count: row.thread_count, lastAt: row.thread_last ?? row.created_at } : null,
 	...(row.event_id ? { eventId: row.event_id } : {}),
 	...(row.forward ? { forward: JSON.parse(row.forward) as ForwardRef } : {}),
+	...(row.mail_card ? { mailCard: JSON.parse(row.mail_card) as MailCard } : {}),
 });
 
 const toFolder = (row: FolderRow): DriveFolder => ({
@@ -2316,5 +2320,34 @@ export class Workspace extends DurableObject<Env> {
 		}
 		const contacts = new Set(this.guestContacts(actor.id));
 		return this.onlineIds().filter((id) => contacts.has(id));
+	}
+
+	// --- Partage de mail ---
+
+	// Accès au fil vérifié par le Worker ; ici seulement le droit d'écrire.
+	mailShare(actor: Actor, channelId: string, card: MailCard, comment: string): Result<Message> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!this.can(actor, channelId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		const text = comment.trim();
+		if (text.length > LIMITS.messageLength) {
+			return err(400, `Message trop long (${LIMITS.messageLength} caractères max)`);
+		}
+		const newId = this.ctx.storage.transactionSync(() => {
+			const row = this.sql
+				.exec<{ id: number }>('INSERT INTO messages (channel_id, user_id, body, mail_card, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id', channelId, actor.id, text, JSON.stringify(card), Date.now())
+				.one();
+			this.saveMentions(row.id, text);
+			this.saveEveryone(actor, channelId, row.id, text);
+			return row.id;
+		});
+		this.setRead(actor.id, channelId, newId);
+		const message = this.message(newId)!;
+		this.broadcastIn(channelId, { t: 'message', message });
+		this.notifyMessage(actor, message, mentionedUsers(text));
+		return ok(message);
 	}
 }
