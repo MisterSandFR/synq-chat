@@ -12,7 +12,9 @@
 	flex-direction: column;
 }
 
-.shell-main > .app {
+.shell-main > .app,
+.shell-main > .cal,
+.shell-main > .mail {
 	flex: 1;
 	min-height: 0;
 	height: auto;

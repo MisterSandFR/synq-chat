@@ -6,6 +6,7 @@ import { AuthScreen } from './AuthScreen';
 import { CalendarView } from './calendar/CalendarView';
 import { HomeScreen } from './HomeScreen';
 import { InviteScreen } from './InviteScreen';
+import { MailView } from './mail/MailView';
 import { lastWorkspace, navigate, takeReturn, takeSsoNotice, usePath } from './router';
 import { Shell, type RailItem } from './shell/Shell';
 import { WorkspaceView } from './workspace/WorkspaceView';
@@ -57,13 +58,6 @@ export function App() {
 		return <AuthScreen notice={notice} onSignedIn={refresh} />;
 	}
 
-	if (path === '/calendrier') {
-		return (
-			<div className='cal-page'>
-				<CalendarView me={me} workspaces={me.workspaces} />
-			</div>
-		);
-	}
 	const invite = path.match(/^\/invite\/([\w-]+)$/);
 	if (invite) {
 		return <InviteScreen code={invite[1]!} onJoined={refresh} />;
@@ -73,9 +67,23 @@ export function App() {
 	const last = lastWorkspace();
 	const currentId = inWorkspace ? workspace![1]! : me.workspaces.some((w) => w.id === last) ? last : (me.workspaces[0]?.id ?? null);
 	const page = inWorkspace ? workspace![2] : undefined;
-	const items: RailItem[] = [{ key: 'home', label: 'Accueil', icon: 'home', href: currentId ? `/w/${currentId}` : '/espaces', active: inWorkspace && page !== 'activite' }];
+	const items: RailItem[] = [{ key: 'home', label: 'Accueil', icon: 'home', href: currentId ? `/w/${currentId}` : '/espaces', active: inWorkspace && page !== 'activite' && page !== 'messages' }];
 	if (currentId) {
-		items.push({ key: 'activity', label: 'Activité', icon: 'bell', href: `/w/${currentId}/activite`, active: page === 'activite', badge: badges.activity });
+		items.push(
+			{ key: 'dms', label: 'Messages', icon: 'chat', href: `/w/${currentId}/messages`, active: page === 'messages', badge: badges.dms },
+			{ key: 'activity', label: 'Activité', icon: 'bell', href: `/w/${currentId}/activite`, active: page === 'activite', badge: badges.activity },
+		);
+	}
+	items.push(
+		{ key: 'calendar', label: 'Calendrier', icon: 'calendar', href: '/calendrier', active: path === '/calendrier' },
+		{ key: 'mail', label: 'Mail', icon: 'mail', href: '/mail', active: path === '/mail' },
+	);
+	if (path === '/calendrier' || path === '/mail') {
+		return (
+			<Shell me={me} workspaceId={currentId} items={items}>
+				{path === '/calendrier' ? <CalendarView me={me} workspaces={me.workspaces} /> : <MailView me={me} workspaces={me.workspaces} />}
+			</Shell>
+		);
 	}
 	if (inWorkspace) {
 		return (

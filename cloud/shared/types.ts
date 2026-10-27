@@ -219,7 +219,8 @@ export type ServerEvent =
 	| { t: 'dm'; conversation: DirectConversation }
 	| { t: 'thread'; channelId: string; rootId: number; message: Message; root: Message }
 	| { t: 'call_ring'; channelId: string; by: string }
-	| { t: 'calendar_reminder'; reminder: CalendarReminder };
+	| { t: 'calendar_reminder'; reminder: CalendarReminder }
+	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

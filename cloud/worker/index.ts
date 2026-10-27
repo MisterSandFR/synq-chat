@@ -2,6 +2,7 @@ import app from './app';
 import { sendReminders } from './calendar';
 
 export { Workspace } from './workspace';
+export { Mailbox } from './mail/mailbox';
 
 const HASHED = /^\/assets\//;
 

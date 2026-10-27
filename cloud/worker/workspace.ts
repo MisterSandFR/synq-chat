@@ -1772,6 +1772,16 @@ export class Workspace extends DurableObject<Env> {
 		return has(actor.perms, P.MANAGE_CHANNELS) ? null : err(403, DENIED);
 	}
 
+	// Mail
+
+	mailNotify(userId: string, event: ServerEvent): void {
+		for (const ws of this.ctx.getWebSockets(userId)) {
+			if (this.conn(ws)) {
+				this.send(ws, event);
+			}
+		}
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		const actor = JSON.parse(request.headers.get('x-synq-actor') ?? 'null') as Actor | null;
 		if (!actor || request.headers.get('Upgrade') !== 'websocket') {

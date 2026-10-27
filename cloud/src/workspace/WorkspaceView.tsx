@@ -92,7 +92,6 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const [copied, setCopied] = useState<number | null>(null);
 	const myProfile = rc.profiles.get(myId);
 	const [voiceChat, setVoiceChatState] = useState(() => readPref('voice_chat') !== '0' && window.innerWidth > 860);
-	const [view, setView] = useState<ContentView>(null);
 	const [thread, setThread] = useState<{ channelId: string; id: number } | null>(null);
 	const [newDirect, setNewDirect] = useState(false);
 	const [groupOpen, setGroupOpen] = useState(false);
@@ -110,7 +109,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const channels = state.channels;
 	const active = channels?.find((c) => c.id === channelId);
 	// Pages de l'espace hors salon, ouvertes depuis la barre d'apps.
-	const page = channelId === 'activite' ? 'activity' : null;
+	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : null;
+	const view: ContentView = page === 'dms' || page === 'threads' ? page : null;
+	const openView = (next: Exclude<ContentView, null>) => navigate(`/w/${workspaceId}/${next === 'dms' ? 'messages' : 'fils'}`);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
 	const grades = state.info?.grades ?? [];
 	const dms = state.dmThreads.dms;
@@ -128,7 +129,6 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const openChannel = useCallback(
 		(id: string) => {
 			setNavOpen(false);
-			setView(null);
 			navigate(`/w/${workspaceId}/${id}`);
 		},
 		[workspaceId],
@@ -148,7 +148,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 
 	useEffect(() => rememberWorkspace(workspaceId), [workspaceId]);
 
-	useEffect(() => onBadges?.({ activity: state.notificationsUnread }), [onBadges, state.notificationsUnread]);
+	const dmUnread = (channels ?? []).reduce((sum, c) => sum + (c.kind === 'dm' ? (state.unread[c.id] ?? 0) : 0), 0);
+	useEffect(() => onBadges?.({ activity: state.notificationsUnread, dms: dmUnread }), [onBadges, state.notificationsUnread, dmUnread]);
 
 	useEffect(() => {
 		const first = channels?.find((c) => c.kind === 'text') ?? channels?.[0];
@@ -404,10 +405,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				width={width}
 				onOpenSettings={() => setSettingsOpen(true)}
 				onOpenSearch={() => setSearchOpen(true)}
-				onNavigate={() => {
-					setNavOpen(false);
-					setView(null);
-				}}
+				onNavigate={() => setNavOpen(false)}
 				onCreateChannel={setCreateKind}
 				presence={myProfile && presenceOf(myProfile, true)}
 				presenceText={myProfile?.statusText}
@@ -436,7 +434,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						myId={myId}
 						view={view}
 						onOpenView={(next) => {
-							setView(next);
+							openView(next);
 							setNavOpen(false);
 						}}
 						onOpenDirect={openChannel}
@@ -450,19 +448,19 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					<button type='button' className='icon-btn only-mobile' aria-label='Salons' onClick={() => setNavOpen(!navOpen)}>
 						<Icon name='menu' />
 					</button>
-					{page === 'activity' && (
+					{page && (
 						<h1>
-							<Icon name='bell' />
-							<span className='ellipsis'>Activité</span>
+							<Icon name={page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : 'thread'} />
+							<span className='ellipsis'>{page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
 						<>
 							<h1>
-								<Icon name={view === 'dms' ? 'chat' : view === 'threads' ? 'thread' : active.kind === 'voice' ? 'speaker' : active.kind === 'dm' ? 'chat' : active.readOnly ? 'megaphone' : 'hash'} />
-								<span className='ellipsis'>{view === 'dms' ? 'Messages directs' : view === 'threads' ? 'Fils' : shown!.name}</span>
+								<Icon name={active.kind === 'voice' ? 'speaker' : active.kind === 'dm' ? 'chat' : active.readOnly ? 'megaphone' : 'hash'} />
+								<span className='ellipsis'>{shown!.name}</span>
 							</h1>
-							<p className='topbar-topic'>{view ? null : shown!.topic}</p>
+							<p className='topbar-topic'>{shown!.topic}</p>
 						</>
 					)}
 					<span className='grow' />

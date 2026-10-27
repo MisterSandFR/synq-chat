@@ -13,6 +13,7 @@ export default defineConfig({
 					RECUBE_CLIENT_ID: 'synq-test',
 					RECUBE_CLIENT_SECRET: 'secret-test',
 					REALTIME_APP_SECRET: 'sfu-test',
+					MAIL_KEY: 'mail-test-key',
 				},
 			},
 		})),

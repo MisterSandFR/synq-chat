@@ -205,6 +205,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			const next = patchMessage(state, event.channelId, event.messageId, { pinned: event.pinned });
 			return { ...next, pins: { ...next.pins, [event.channelId]: (next.pins[event.channelId] ?? 0) + 1 } };
 		}
+		case 'mail_assigned':
+			return state;
 		case 'workspace_deleted':
 			return { ...state, closed: 'Cet espace a été supprimé.' };
 		case 'notification':

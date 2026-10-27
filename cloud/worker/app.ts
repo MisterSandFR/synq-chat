@@ -29,6 +29,7 @@ import { rcRoutes } from './routes/rc';
 import { chatRoutes } from './routes/chat';
 import { dmThreadsRoutes } from './routes/dm-threads';
 import { calendarRoutes, icsRoutes } from './routes/calendar';
+import { mailRoutes } from './routes/mail';
 import { voiceRoutes } from './routes/voice';
 
 const SESSION_COOKIE = 'synq_session';
@@ -815,6 +816,7 @@ app.route('/', rcRoutes);
 app.route('/', chatRoutes);
 app.route('/', dmThreadsRoutes);
 app.route('/', calendarRoutes);
+app.route('/', mailRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
