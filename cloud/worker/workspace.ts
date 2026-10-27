@@ -1106,7 +1106,12 @@ export class Workspace extends DurableObject<Env> {
 	// Calendrier
 
 	// Rappel poussé par le cron sur les sockets de l'utilisateur dans cet espace.
-	calendarReminder(userId: string, reminder: CalendarReminder): void {
+	// `store` : une seule notification par personne, même membre de plusieurs espaces.
+	calendarReminder(userId: string, reminder: CalendarReminder, store = false): void {
+		if (store) {
+			const at = new Date(reminder.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
+			this.pushNotification({ userId, kind: 'calendar', channelId: null, title: `Rappel : ${reminder.title}`, body: reminder.location ? `${at}, ${reminder.location}` : at, link: '/calendrier' });
+		}
 		for (const ws of this.ctx.getWebSockets(userId)) {
 			if (this.conn(ws)) {
 				this.send(ws, { t: 'calendar_reminder', reminder });
@@ -1319,6 +1324,9 @@ export class Workspace extends DurableObject<Env> {
 		const result = toggleReaction(this.sql, messageId, actor.id, emoji, add);
 		if (result.ok) {
 			this.broadcastIn(current.channelId, { t: 'reactions', channelId: current.channelId, messageId, reactions: result.value });
+			if (add && current.userId !== actor.id && !current.userId.startsWith('app:')) {
+				this.pushNotification({ userId: current.userId, kind: 'reaction', channelId: current.channelId, messageId, actorId: actor.id, title: `${actor.name} a réagi ${emoji}`, body: current.body });
+			}
 		}
 		return result;
 	}
@@ -1427,11 +1435,11 @@ export class Workspace extends DurableObject<Env> {
 		const id = this.ctx.storage.transactionSync(() => {
 			const row = this.sql
 				.exec<{ id: number }>(
-					'INSERT INTO messages (channel_id, user_id, body, attachment, thread_root, thread_broadcast, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
+					'INSERT INTO messages (channel_id, user_id, body, attachments, thread_root, thread_broadcast, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
 					channelId,
 					actor.id,
 					text,
-					attachment ? JSON.stringify(attachment) : null,
+					attachment ? JSON.stringify([attachment]) : null,
 					rootId,
 					broadcast ? 1 : 0,
 					Date.now(),
@@ -1447,6 +1455,10 @@ export class Workspace extends DurableObject<Env> {
 		});
 		const message = this.message(id)!;
 		this.broadcastIn(channelId, { t: 'thread', channelId, rootId, message, root: this.message(rootId)! });
+		const followers = this.sql.exec<{ user_id: string }>('SELECT user_id FROM thread_follows WHERE root_id = ? AND user_id != ?', rootId, actor.id).toArray();
+		for (const { user_id: userId } of followers) {
+			this.pushNotification({ userId, kind: 'thread', channelId, messageId: rootId, actorId: actor.id, title: `${actor.name} a répondu dans un fil`, body: text || attachment?.name || '' });
+		}
 		if (broadcast) {
 			this.setRead(actor.id, channelId, id);
 			this.broadcastIn(channelId, { t: 'message', message });
@@ -1584,6 +1596,14 @@ export class Workspace extends DurableObject<Env> {
 	private notifyMessage(actor: Actor, message: Message, mentioned: string[], mentionsOnly = false): void {
 		const channel = this.channelRow(message.channelId);
 		if (!channel) {
+			return;
+		}
+		const participants = channel.kind === 'dm' ? this.dmMembers(message.channelId) : null;
+		if (participants) {
+			const group = participants.length > 2;
+			for (const userId of participants.filter((id) => id !== actor.id)) {
+				this.pushNotification({ userId, kind: 'dm', channelId: message.channelId, messageId: message.id, actorId: actor.id, title: group ? `${actor.name} dans un groupe` : actor.name, body: message.body || message.attachments[0]?.name || '' });
+			}
 			return;
 		}
 		const where = channel.kind === 'text' ? `#${channel.name}` : channel.name;
@@ -1774,7 +1794,10 @@ export class Workspace extends DurableObject<Env> {
 
 	// Mail
 
-	mailNotify(userId: string, event: ServerEvent): void {
+	mailNotify(userId: string, event: ServerEvent, store = false): void {
+		if (store && event.t === 'mail_assigned') {
+			this.pushNotification({ userId, kind: 'mail', channelId: null, title: 'Mail assigné', body: event.subject, link: '/mail' });
+		}
 		for (const ws of this.ctx.getWebSockets(userId)) {
 			if (this.conn(ws)) {
 				this.send(ws, event);

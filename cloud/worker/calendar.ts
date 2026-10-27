@@ -579,7 +579,16 @@ export async function sendReminders(env: Env, now: number): Promise<number> {
 			workspaceId: row.workspace_id,
 			location: row.location,
 		};
-		await Promise.all(links.map((link) => workspaceStub(env, link.workspace_id).calendarReminder(link.user_id, reminder)));
+		const stored = new Set<string>();
+		// Espace de l'événement s'il est partagé, sinon le premier espace de la personne.
+		const primary = (link: { workspace_id: string; user_id: string }) => {
+			const own = row.workspace_id ? link.workspace_id === row.workspace_id : !stored.has(link.user_id);
+			if (own) {
+				stored.add(link.user_id);
+			}
+			return own;
+		};
+		await Promise.all(links.map((link) => workspaceStub(env, link.workspace_id).calendarReminder(link.user_id, reminder, primary(link))));
 		sent++;
 	}
 	return sent;

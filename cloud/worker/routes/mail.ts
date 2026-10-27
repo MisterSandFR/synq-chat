@@ -501,8 +501,8 @@ mailRoutes.patch('/mail/threads/:tid', async (c) => {
 			.bind(target, access.box.id)
 			.all<{ workspace_id: string }>();
 		await Promise.all(
-			results.map((row) =>
-				workspaceStub(c.env, row.workspace_id).mailNotify(target, { t: 'mail_assigned', mailboxId: access.box.id, threadId: thread.id, subject: thread.subject, by: userId }),
+			results.map((row, i) =>
+				workspaceStub(c.env, row.workspace_id).mailNotify(target, { t: 'mail_assigned', mailboxId: access.box.id, threadId: thread.id, subject: thread.subject, by: userId }, i === 0),
 			),
 		);
 	}
