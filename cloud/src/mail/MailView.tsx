@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { MailboxInfo, MailThread, MailThreadDetail } from '../../shared/mail';
 import type { Me, WorkspaceSummary } from '../../shared/types';
+import { AiAssist } from '../ai/AiAssist';
 import { api, errorText } from '../api';
 import { Icon } from '../ui';
 import { BoxDialog } from './BoxDialog';
@@ -247,6 +248,7 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 							onMaximize={() => patchComposer(item.seed.id, (open) => ({ maximized: !open.maximized }))}
 							onClose={() => closeComposer(item.seed.id)}
 							onSent={(detail) => sent(item.seed.id, detail)}
+							aiSlot={(field) => <AiAssist textarea={field.textarea} value={field.value} onChange={field.onChange} context={item.seed.subject} />}
 						/>
 					))}
 				</div>
