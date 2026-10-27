@@ -1,58 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { MailboxInfo, MailThread, MailThreadDetail } from '../../shared/mail';
+import type { MailboxInfo, MailDraft, MailScheduleInput, MailThread, MailThreadDetail } from '../../shared/mail';
 import type { Me, WorkspaceSummary } from '../../shared/types';
 import { AiAssist } from '../ai/AiAssist';
 import { api, errorText } from '../api';
 import { Icon } from '../ui';
 import { BoxDialog } from './BoxDialog';
-import { Composer, newSeed, type ComposeSeed } from './Composer';
-import { ThreadList, type MailTab } from './ThreadList';
+import { Composer, newSeed, seedFromDraft, type ComposeSeed } from './Composer';
+import { longDate } from './format';
+import { searchTerms } from './Highlight';
+import { ThreadList, ordered, type MailTab } from './ThreadList';
 import { ThreadView } from './ThreadView';
 import './mail.css';
 
 type Filter = { workspaceId: string; boxId: string; tab: MailTab };
 type Open = { seed: ComposeSeed; minimized: boolean; maximized: boolean };
-type Seen = { since: number; threads: Record<string, number> };
-
-const SEEN_KEY = 'synq:mail-seen';
-const SEEN_MAX = 500;
-
-// Lu/non lu propre à ce navigateur : le serveur ne suit pas la lecture.
-function readSeen(): Seen {
-	try {
-		const raw = localStorage.getItem(SEEN_KEY);
-		if (raw) {
-			return JSON.parse(raw) as Seen;
-		}
-	} catch {
-		// Stockage indisponible.
-	}
-	const fresh = { since: Date.now(), threads: {} };
-	writeSeen(fresh);
-	return fresh;
-}
-
-function writeSeen(seen: Seen) {
-	try {
-		const entries = Object.entries(seen.threads).sort((a, b) => b[1] - a[1]).slice(0, SEEN_MAX);
-		localStorage.setItem(SEEN_KEY, JSON.stringify({ since: seen.since, threads: Object.fromEntries(entries) }));
-	} catch {
-		// Stockage indisponible.
-	}
-}
 
 const initialThread = () => new URLSearchParams(location.search).get('thread');
+
+const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSummary[] }) {
 	const [boxes, setBoxes] = useState<MailboxInfo[] | null>(null);
 	const [filter, setFilter] = useState<Filter>({ workspaceId: '', boxId: '', tab: 'open' });
 	const [threads, setThreads] = useState<MailThread[] | null>(null);
+	const [drafts, setDrafts] = useState<MailDraft[] | null>(null);
+	const [query, setQuery] = useState('');
+	const [results, setResults] = useState<MailThread[] | null>(null);
 	const [selected, setSelected] = useState<string | null>(initialThread);
 	const [editing, setEditing] = useState<MailboxInfo | 'new' | null>(null);
 	const [composers, setComposers] = useState<Open[]>([]);
 	const [version, setVersion] = useState(0);
-	const [seen, setSeen] = useState(readSeen);
+	const [flash, setFlash] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	const loadBoxes = useCallback(async () => {
@@ -64,6 +43,9 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 	}, []);
 
 	const loadThreads = useCallback(async () => {
+		if (filter.tab === 'drafts') {
+			return;
+		}
 		const query = new URLSearchParams({ status: filter.tab === 'mine' ? 'open' : filter.tab });
 		if (filter.boxId) {
 			query.set('box', filter.boxId);
@@ -82,48 +64,137 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 		}
 	}, [filter]);
 
+	const loadDrafts = useCallback(async () => {
+		try {
+			setDrafts(await api<MailDraft[]>('GET', '/mail/drafts'));
+		} catch (e) {
+			setError(errorText(e));
+		}
+	}, []);
+
 	useEffect(() => {
 		void loadBoxes();
 	}, [loadBoxes]);
 
-	// Relève serveur toutes les 60 s : la liste suit le même rythme.
+	// Relève serveur toutes les 60 s : la liste et les compteurs suivent le même rythme.
 	useEffect(() => {
 		setThreads(null);
 		void loadThreads();
-		const timer = setInterval(() => void loadThreads(), 60_000);
+		const timer = setInterval(() => (void loadThreads(), void loadBoxes()), 60_000);
 		return () => clearInterval(timer);
-	}, [loadThreads]);
-
-	const markSeen = useCallback((id: string) => {
-		setSeen((current) => {
-			const next = { since: current.since, threads: { ...current.threads, [id]: Date.now() } };
-			writeSeen(next);
-			return next;
-		});
-	}, []);
-
-	const select = useCallback(
-		(id: string | null) => {
-			setSelected(id);
-			history.replaceState(null, '', id ? `/mail?thread=${encodeURIComponent(id)}` : '/mail');
-			if (id) {
-				markSeen(id);
-			}
-		},
-		[markSeen],
-	);
+	}, [loadThreads, loadBoxes]);
 
 	useEffect(() => {
-		if (selected) {
-			markSeen(selected);
+		if (filter.tab === 'drafts') {
+			setDrafts(null);
+			void loadDrafts();
 		}
-	}, [selected, version, markSeen]);
+	}, [filter.tab, loadDrafts]);
+
+	const terms = useMemo(() => searchTerms(query), [query]);
+	const searching = query.trim().length >= 2;
+
+	useEffect(() => {
+		if (!searching) {
+			setResults(null);
+			return;
+		}
+		let cancelled = false;
+		const timer = setTimeout(() => {
+			const params = new URLSearchParams({ q: query.trim() });
+			if (filter.boxId) {
+				params.set('box', filter.boxId);
+			}
+			if (filter.workspaceId) {
+				params.set('workspace', filter.workspaceId);
+			}
+			api<MailThread[]>('GET', `/mail/search?${params}`)
+				.then((found) => !cancelled && (setResults(found), setError(null)))
+				.catch((e) => !cancelled && setError(errorText(e)));
+		}, 300);
+		setResults(null);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [query, searching, filter.boxId, filter.workspaceId]);
+
+	useEffect(() => {
+		if (!flash) {
+			return;
+		}
+		const timer = setTimeout(() => setFlash(null), 4000);
+		return () => clearTimeout(timer);
+	}, [flash]);
+
+	const setUnread = (id: string, unread: boolean) => {
+		const patch = (list: MailThread[] | null) => list?.map((thread) => (thread.id === id ? { ...thread, unread } : thread)) ?? null;
+		setThreads(patch);
+		setResults(patch);
+	};
+
+	const select = useCallback((id: string | null) => {
+		setSelected(id);
+		history.replaceState(null, '', id ? `/mail?thread=${encodeURIComponent(id)}` : '/mail');
+	}, []);
+
+	// Le serveur marque lu à la lecture du fil : liste locale et compteurs suivent.
+	const onRead = useCallback(
+		(id: string) => {
+			setUnread(id, false);
+			void loadBoxes();
+		},
+		[loadBoxes],
+	);
+
+	const markUnread = useCallback(
+		async (id: string) => {
+			try {
+				await api<MailThread>('POST', `/mail/threads/${id}/read`, { read: false });
+				setUnread(id, true);
+				select(null);
+				void loadBoxes();
+			} catch (e) {
+				setError(errorText(e));
+			}
+		},
+		[loadBoxes, select],
+	);
 
 	const boxById = useMemo(() => new Map((boxes ?? []).map((box) => [box.id, box])), [boxes]);
 	const visible = (boxes ?? []).filter((box) => !filter.workspaceId || box.shares.some((share) => share.workspaceId === filter.workspaceId));
 	const senders = (boxes ?? []).filter((box) => box.access.reply);
 	const update = (patch: Partial<Filter>) => setFilter((current) => ({ ...current, ...patch }));
-	const isUnread = (thread: MailThread) => thread.lastAt > (seen.threads[thread.id] ?? seen.since);
+	const totalUnread = visible.reduce((sum, box) => sum + (box.unread ?? 0), 0);
+	const shown = searching ? results : filter.tab === 'drafts' ? null : threads;
+
+	const keys = useRef({ shown, selected, select, markUnread });
+	keys.current = { shown, selected, select, markUnread };
+
+	// j / k : fil suivant ou précédent ; u : non lu.
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target) || document.querySelector('dialog[open], .mail-pop')) {
+				return;
+			}
+			const k = keys.current;
+			if (event.key === 'u' && k.selected) {
+				event.preventDefault();
+				void k.markUnread(k.selected);
+				return;
+			}
+			if ((event.key === 'j' || event.key === 'k') && k.shown?.length) {
+				const list = searching ? k.shown : ordered(k.shown);
+				const index = list.findIndex((thread) => thread.id === k.selected);
+				const next = index < 0 ? 0 : Math.min(list.length - 1, Math.max(0, index + (event.key === 'j' ? 1 : -1)));
+				event.preventDefault();
+				k.select(list[next]!.id);
+				document.querySelector(`.mail-thread[aria-selected='true']`)?.scrollIntoView({ block: 'nearest' });
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [searching]);
 
 	const compose = (seed: ComposeSeed) =>
 		setComposers((current) => {
@@ -140,6 +211,9 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 	const closeComposer = (id: string) => {
 		setComposers((current) => current.filter((item) => item.seed.id !== id));
 		setVersion((v) => v + 1);
+		if (filter.tab === 'drafts') {
+			void loadDrafts();
+		}
 	};
 
 	const sent = (id: string | null, detail: MailThreadDetail) => {
@@ -148,7 +222,20 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 		}
 		setVersion((v) => v + 1);
 		void loadThreads();
+		if (filter.tab === 'drafts') {
+			void loadDrafts();
+		}
 		select(detail.thread.id);
+	};
+
+	const unschedule = async (draft: MailDraft) => {
+		try {
+			await api<MailDraft>('POST', `/mail/drafts/${draft.id}/schedule`, { sendAt: null } satisfies MailScheduleInput);
+			await loadDrafts();
+			setFlash('Envoi prévu annulé.');
+		} catch (e) {
+			setError(errorText(e));
+		}
 	};
 
 	const startNew = () => {
@@ -180,12 +267,18 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 				</select>
 				<div className='mail-boxes'>
 					<button className='mail-box' aria-selected={!filter.boxId} onClick={() => update({ boxId: '' })}>
-						<span className='mail-box-name'>Toutes les boîtes</span>
+						<span className='mail-box-name'>
+							Toutes les boîtes
+							{totalUnread > 0 && <span className='mail-box-count' aria-label={`${totalUnread} non lus`}>{totalUnread}</span>}
+						</span>
 					</button>
 					{visible.map((box) => (
 						<div key={box.id} className='mail-box-row'>
 							<button className='mail-box' aria-selected={filter.boxId === box.id} onClick={() => update({ boxId: box.id })}>
-								<span className='mail-box-name'>{box.name}</span>
+								<span className='mail-box-name'>
+									{box.name}
+									{box.unread > 0 && <span className='mail-box-count' aria-label={`${box.unread} non lus`}>{box.unread}</span>}
+								</span>
 								<span className='mail-box-addr'>{box.address}</span>
 								{box.syncError && (
 									<span className='mail-box-error' title={box.syncError}>
@@ -205,16 +298,22 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 			<ThreadList
 				title={title}
 				tab={filter.tab}
-				threads={threads}
+				threads={shown}
+				drafts={drafts}
 				boxes={boxById}
 				selected={selected}
-				error={error}
+				error={error ?? null}
 				empty={empty}
 				canCompose={senders.length > 0}
-				isUnread={isUnread}
+				query={query}
+				terms={searching ? terms : []}
+				searching={searching}
+				onQuery={setQuery}
 				onTab={(tab) => update({ tab })}
 				onSelect={select}
 				onCompose={startNew}
+				onDraft={(draft) => compose(seedFromDraft(draft))}
+				onUnschedule={(draft) => void unschedule(draft)}
 			/>
 			<section className='mail-reader'>
 				{selected ? (
@@ -230,11 +329,19 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 						onChanged={loadThreads}
 						onCompose={compose}
 						onSent={(detail) => sent(null, detail)}
+						onRead={() => onRead(selected)}
+						onUnread={() => void markUnread(selected)}
 					/>
 				) : (
 					<p className='mail-empty'>Sélectionne une conversation.</p>
 				)}
 			</section>
+			{flash && (
+				<p className='mail-flash' role='status'>
+					<Icon name='clock' size={15} />
+					{flash}
+				</p>
+			)}
 			{composers.length > 0 && (
 				<div className='mail-composers'>
 					{composers.map((item) => (
@@ -248,7 +355,8 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 							onMaximize={() => patchComposer(item.seed.id, (open) => ({ maximized: !open.maximized }))}
 							onClose={() => closeComposer(item.seed.id)}
 							onSent={(detail) => sent(item.seed.id, detail)}
-							aiSlot={(field) => <AiAssist textarea={field.textarea} value={field.value} onChange={field.onChange} context={item.seed.subject} />}
+							onScheduled={(at) => setFlash(`Envoi prévu ${longDate(at)}.`)}
+							aiSlot={(field) => <AiAssist textarea={field.textarea} value={field.value} onChange={field.onChange} context={item.seed.context ?? item.seed.subject} />}
 						/>
 					))}
 				</div>

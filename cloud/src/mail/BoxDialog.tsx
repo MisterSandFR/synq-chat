@@ -16,6 +16,7 @@ export function BoxDialog({ box, workspaces, onClose, onSaved }: { box: MailboxI
 		smtpPort: box?.config?.smtpPort ?? 465,
 		username: box?.config?.username ?? '',
 		password: '',
+		signature: box?.signature ?? '',
 	}));
 	const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -118,6 +119,10 @@ export function BoxDialog({ box, workspaces, onClose, onSaved }: { box: MailboxI
 						</label>
 					</div>
 					<p className='field-hint'>Mot de passe chiffré côté serveur, jamais réaffiché. Relève toutes les minutes.</p>
+				<label className='field'>
+					<span>Signature</span>
+					<textarea className='mail-textarea' value={form.signature ?? ''} onChange={(e) => set('signature', e.target.value)} maxLength={2000} rows={3} placeholder='Ajoutée sous chaque message envoyé depuis cette boîte' />
+				</label>
 					{status ? (
 						<p className={`notice notice-${status.tone}`}>{status.text}</p>
 					) : (
