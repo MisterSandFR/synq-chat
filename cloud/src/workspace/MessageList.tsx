@@ -12,6 +12,7 @@ import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu
 import { memberColor, memberLabel } from './grades';
 import { MessageMedia } from './media/MessageMedia';
 import { EventCard } from './events/EventCard';
+import { MailCard } from '../mail/MailCard';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import { ThreadLink } from './dm-threads/ThreadLink';
 import type { ChannelMessages } from './useWorkspace';
@@ -302,6 +303,7 @@ export function MessageList({
 								{message.forward && <ForwardCard workspaceId={workspaceId} message={message} lookup={lookup} />}
 								<MessageMedia workspaceId={workspaceId} message={message} onLoad={keepBottom} />
 								{message.eventId && <EventCard workspaceId={workspaceId} eventId={message.eventId} lookup={lookup} />}
+								{message.mailCard && <MailCard card={message.mailCard} />}
 								{message.reactions && message.reactions.length > 0 && (
 									<Reactions
 										reactions={message.reactions}
