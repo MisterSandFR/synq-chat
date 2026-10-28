@@ -23,6 +23,7 @@ import {
 } from './dm-threads';
 import { AccessDialog } from './grade-access/AccessDialog';
 import { DrivePanel } from './DrivePanel';
+import { DraftsView, ScheduledBanner, useDraftsLoader } from './drafts';
 import { MembersPanel } from './MembersPanel';
 import { useMemberMenu } from './members/useMemberMenu';
 import { MessageList } from './MessageList';
@@ -115,9 +116,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	};
 
 	const channels = state.channels;
+	useDraftsLoader(workspaceId, state.connId);
 	const active = channels?.find((c) => c.id === channelId);
 	// Pages de l'espace hors salon, ouvertes depuis la barre d'apps.
-	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : null;
+	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : channelId === 'brouillons' ? 'drafts' : null;
 	const view: ContentView = page === 'dms' || page === 'threads' ? page : null;
 	const openView = (next: Exclude<ContentView, null>) => navigate(`/w/${workspaceId}/${next === 'dms' ? 'messages' : 'fils'}`);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
@@ -425,6 +427,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						</>
 					)}
 				</div>
+				<ScheduledBanner channelId={active.id} onOpen={() => openChannel('brouillons')} />
 				<Composer
 					key={`composer-${active.id}`}
 					workspaceId={workspaceId}
@@ -499,8 +502,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					</button>
 					{page && (
 						<h1>
-							<Icon name={page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : 'thread'} />
-							<span className='ellipsis'>{page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : 'Fils'}</span>
+							<Icon name={page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : page === 'drafts' ? 'compose' : 'thread'} />
+							<span className='ellipsis'>{page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
@@ -595,6 +598,19 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 								version={state.notificationsVersion}
 								onOpenMessage={openMessage}
 								/>
+						) : page === 'drafts' ? (
+							<DraftsView
+								workspaceId={workspaceId}
+								connId={state.connId}
+								lookup={lookup}
+								channelLabel={labelOf}
+								onOpenChannel={openChannel}
+								onOpenMessage={openMessage}
+								onOpenThread={(cid, id) => {
+									openChannel(cid);
+									setThread({ channelId: cid, id });
+								}}
+							/>
 						) : view === 'dms' ? (
 							<DirectMessagesView state={state} lookup={lookup} onOpen={openChannel} onNew={() => setNewDirect(true)} />
 						) : view === 'threads' ? (

@@ -15,6 +15,7 @@ import { memberColor, memberGrades } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
 import { useContextMenu } from './ContextMenu';
+import { DraftMark } from './drafts/Marks';
 import { voiceDrag, type MemberMenu } from './members/useMemberMenu';
 import type { VoiceControls } from './voice/useVoice';
 import type { WorkspaceState } from './useWorkspace';
@@ -159,6 +160,7 @@ function TextChannelRow({ channel, active, unread, mentions, onOpen }: { channel
 		>
 			<ChannelTile channel={channel} />
 			<span className='channel-name'>{channel.name}</span>
+			{!active && <DraftMark channelId={channel.id} />}
 			{!active && mentions > 0 ? <span className='pill'>{mentions > 99 ? '99+' : mentions}</span> : showUnread && <span className='dot' aria-label='Non lu' />}
 		</a>
 	);

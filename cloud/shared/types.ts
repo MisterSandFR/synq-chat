@@ -3,6 +3,7 @@ import type { PinInfo, Reaction } from './chat';
 import type { DirectConversation, ThreadSummary } from './dm-threads';
 import type { CalendarReminder } from './calendar';
 import type { MailCard } from './mail';
+import type { Draft, ScheduledMessage } from './drafts';
 import type { Override } from './permissions';
 
 export interface Actor {
@@ -235,7 +236,9 @@ export type ServerEvent =
 	| { t: 'calendar_reminder'; reminder: CalendarReminder }
 	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string }
 	| { t: 'event_card'; eventId: string }
-	| { t: 'emojis_changed' };
+	| { t: 'emojis_changed' }
+	| { t: 'draft'; channelId: string; threadRoot: number; draft: Draft | null }
+	| { t: 'scheduled'; items: ScheduledMessage[] };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

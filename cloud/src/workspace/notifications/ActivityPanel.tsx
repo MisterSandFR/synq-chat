@@ -34,6 +34,7 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
 	reaction: 'smile',
 	calendar: 'calendar',
 	mail: 'mail',
+	scheduled: 'clock',
 };
 
 const time = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });

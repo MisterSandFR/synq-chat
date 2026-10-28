@@ -1,0 +1,230 @@
+/* Bouton d'envoi scindé : la flèche colle au bouton existant. */
+.send-btn:has(+ .send-more-box) {
+	border-radius: var(--r) 0 0 var(--r);
+}
+
+.send-more-box {
+	display: inline-flex;
+	margin-left: -3px;
+}
+
+.send-more {
+	width: 26px;
+	height: 36px;
+	display: grid;
+	place-items: center;
+	border: 0;
+	border-left: 1px solid color-mix(in srgb, #fff 28%, transparent);
+	border-radius: 0 var(--r) var(--r) 0;
+	background: var(--accent);
+	color: #fff;
+	cursor: pointer;
+}
+
+.send-more:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--accent) 86%, #000);
+}
+
+.send-more[aria-expanded='true'] svg {
+	transform: rotate(180deg);
+}
+
+.send-more:disabled {
+	border-left-color: var(--line);
+	background: var(--soft);
+	color: var(--muted);
+	cursor: default;
+}
+
+.schedule-menu {
+	min-width: 260px;
+	padding: 6px;
+}
+
+.schedule-menu-title {
+	margin: 0;
+	padding: 6px 10px 4px;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.schedule-menu .menu-item {
+	gap: 10px;
+}
+
+.schedule-menu-hint {
+	color: var(--muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.schedule-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	min-width: min(360px, 100%);
+}
+
+.schedule-fields {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 12px;
+}
+
+.schedule-preview {
+	margin: 0;
+	padding: 10px 12px;
+	border-radius: var(--r);
+	background: var(--accent-soft);
+	color: var(--text);
+	font-size: 14px;
+}
+
+.schedule-preview.is-past {
+	background: var(--soft);
+	color: var(--muted);
+}
+
+.schedule-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+/* Bandeau au-dessus du composer. */
+.scheduled-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 16px 6px;
+	padding: 4px 4px 4px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 13px;
+}
+
+.scheduled-banner > svg {
+	flex: none;
+	color: var(--accent);
+}
+
+.scheduled-banner.is-failed > svg {
+	color: var(--danger);
+}
+
+.scheduled-banner .btn {
+	height: 28px;
+	padding: 0 10px;
+	font-size: 13px;
+}
+
+.draft-mark {
+	display: inline-grid;
+	place-items: center;
+	margin-left: auto;
+	color: var(--muted);
+}
+
+.draft-mark + .pill,
+.draft-mark + .dot {
+	margin-left: 6px;
+}
+
+.draft-count {
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.drafts-tabs {
+	display: flex;
+	min-width: 0;
+}
+
+.drafts-tabs .segmented {
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.drafts-tab-count {
+	margin-left: 6px;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.drafts-notice {
+	margin: 0;
+}
+
+.draft-item {
+	position: relative;
+}
+
+.draft-item .dm-row {
+	padding-right: 112px;
+}
+
+.draft-icon {
+	flex: none;
+	width: 36px;
+	height: 36px;
+	display: grid;
+	place-items: center;
+	border-radius: var(--r);
+	background: var(--bg);
+	color: var(--muted);
+}
+
+.draft-item.is-failed .draft-icon,
+.draft-item.is-failed .draft-when {
+	color: var(--danger);
+}
+
+.draft-when {
+	font-size: 12px;
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.draft-actions {
+	position: absolute;
+	top: 50%;
+	right: 12px;
+	display: flex;
+	gap: 2px;
+	transform: translateY(-50%);
+}
+
+.draft-item:has(.draft-actions) .dm-row time {
+	display: none;
+}
+
+.drafts-more {
+	display: flex;
+	justify-content: center;
+}
+
+@media (max-width: 860px) {
+	.draft-item .dm-row {
+		padding-right: 16px;
+		padding-bottom: 44px;
+	}
+
+	.draft-actions {
+		top: auto;
+		bottom: 8px;
+		transform: none;
+	}
+
+	.scheduled-banner {
+		margin: 0 8px 6px;
+	}
+
+	.drafts-tabs .segmented button {
+		padding: 0 9px;
+	}
+}

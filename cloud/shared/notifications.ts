@@ -1,7 +1,7 @@
 // `message` : tout message d'un salon réglé sur « tout » ; les autres sources se branchent via `notify`.
-export type NotificationKind = 'mention' | 'reply' | 'message' | 'dm' | 'thread' | 'reaction' | 'calendar' | 'mail';
+export type NotificationKind = 'mention' | 'reply' | 'message' | 'dm' | 'thread' | 'reaction' | 'calendar' | 'mail' | 'scheduled';
 
-export const NOTIFICATION_KINDS: readonly NotificationKind[] = ['mention', 'reply', 'message', 'dm', 'thread', 'reaction', 'calendar', 'mail'];
+export const NOTIFICATION_KINDS: readonly NotificationKind[] = ['mention', 'reply', 'message', 'dm', 'thread', 'reaction', 'calendar', 'mail', 'scheduled'];
 
 export interface NotificationItem {
 	id: number;

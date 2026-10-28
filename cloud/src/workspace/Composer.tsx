@@ -19,6 +19,7 @@ import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
 import { RecordButtons } from './media/Recorder';
 import { useUploads } from './media/useUploads';
+import { ScheduleButton, useDraft } from './drafts';
 import { MENTION_EVENT, type MentionDetail } from './members/useMemberMenu';
 import { excerpt, toTokens, type Lookup } from './richText';
 
@@ -57,6 +58,11 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const form = useRef<HTMLFormElement>(null);
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	useOfferedFiles(canAttach ? uploads.add : null);
+	const draft = useDraft(workspaceId, channel.id, 0, { body: text, keys: uploads.keys }, (saved) => {
+		setText(saved.body);
+		setCaret(saved.body.length);
+		uploads.restore(saved.attachments);
+	});
 	const slash = useSlash(workspaceId, channel, text, (next) => {
 		setText(next);
 		setCaret(next.length);
@@ -208,6 +214,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 				setText('');
 				return;
 			}
+			draft.sent();
 			await onSend(toTokens(command ?? text, lookup), uploads.keys, replyTo?.id);
 			setText('');
 			uploads.clear();
@@ -221,6 +228,18 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		} finally {
 			setSending(false);
 			textarea.current?.focus();
+		}
+	};
+
+	const schedule = async (sendAt: number) => {
+		setError(null);
+		try {
+			await draft.schedule(sendAt, toTokens(text, lookup), replyTo?.id);
+			setText('');
+			uploads.clear();
+			onCancelReply();
+		} catch (err) {
+			setError(errorText(err));
 		}
 	};
 
@@ -450,6 +469,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 						>
 							<Icon name='send' strokeWidth={2} />
 						</button>
+						<ScheduleButton disabled={sending || uploads.blocked || (!text.trim() && !uploads.keys.length)} onSchedule={schedule} />
 					</div>
 				</div>
 			</form>

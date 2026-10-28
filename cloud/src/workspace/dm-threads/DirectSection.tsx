@@ -1,5 +1,6 @@
 import type { Member } from '../../../shared/types';
 import { Icon } from '../../ui';
+import { DraftsNavLink } from '../drafts/Marks';
 import type { WorkspaceState } from '../useWorkspace';
 import { DirectAvatar, directName } from './DirectAvatar';
 import './dm-threads.css';
@@ -28,6 +29,7 @@ export function DirectSection({ state, channelId, members, myId, view, onOpenVie
 					</span>
 					<span className='channel-name'>Fils</span>
 				</button>
+				<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => onOpenDirect('brouillons')} />
 			</div>
 			<div className='nav-section'>
 				<div className='nav-section-head'>

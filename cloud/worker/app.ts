@@ -35,6 +35,7 @@ import { mailRoutes } from './routes/mail';
 import { mailSharerRoutes } from './routes/mail-sharers';
 import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
+import { draftRoutes } from './routes/drafts';
 import { voiceRoutes } from './routes/voice';
 import { dropEmojis, emojiRoutes } from './routes/emojis';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
@@ -841,6 +842,7 @@ app.route('/', workspaceLogoRoutes);
 app.route('/', mailSharerRoutes);
 app.route('/', emojiRoutes);
 app.route('/', inviteRoutes);
+app.route('/', draftRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
