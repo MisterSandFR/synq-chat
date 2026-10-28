@@ -40,6 +40,7 @@ import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
 import { CreateChannelDialog, SettingsDialog } from './SettingsDialog';
 import { Sidebar } from './Sidebar';
+import { FavoriteStar } from './favorites/FavoritesSection';
 import { useWorkspace } from './useWorkspace';
 import { CallView, RemoteAudio } from './voice/CallView';
 import { useVoice } from './voice/useVoice';
@@ -520,6 +521,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 								<Icon name={active.kind === 'voice' ? 'speaker' : active.kind === 'dm' ? 'chat' : active.readOnly ? 'megaphone' : 'hash'} />
 								<span className='ellipsis'>{shown!.name}</span>
 							</h1>
+							<FavoriteStar kind='channel' refId={active.id} />
 							<p className='topbar-topic'>{shown!.topic}</p>
 						</>
 					)}
@@ -641,6 +643,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							<ThreadsView
 								workspaceId={workspaceId}
 								connId={state.connId}
+								version={state.dmThreads.threadsVersion}
 								lookup={lookup}
 								channelLabel={labelOf}
 								onOpen={(cid, id) => {

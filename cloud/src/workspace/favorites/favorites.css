@@ -1,0 +1,66 @@
+.fav-head {
+	padding-left: 2px;
+}
+
+.fav-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 24px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: none;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+}
+
+.fav-toggle:hover {
+	color: var(--text);
+}
+
+.fav-toggle:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
+.fav-drop {
+	margin: 0;
+	padding: 10px 12px;
+	border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+	border-radius: var(--r);
+	font-size: 13px;
+	color: var(--muted);
+	text-align: center;
+}
+
+.fav-section.fav-over .fav-drop {
+	background: var(--accent-soft);
+	color: var(--accent-ink);
+}
+
+.fav-tile-dm {
+	background: none;
+}
+
+.fav-star[aria-pressed='true'] {
+	color: var(--accent);
+}
+
+.fav-star[aria-pressed='true'] svg {
+	fill: currentColor;
+}
+
+.sb-links {
+	gap: 1px;
+}
+
+.sb-link-minor {
+	height: 30px;
+	font-size: 13px;
+}
+
+.sb-link-minor .channel-icon {
+	color: var(--muted);
+}

@@ -1,6 +1,7 @@
 import type { Member } from '../../../shared/types';
 import { Icon } from '../../ui';
-import { DraftsNavLink } from '../drafts/Marks';
+import { useContextMenu } from '../ContextMenu';
+import { favoriteDragProps, favoriteItem } from '../favorites/FavoritesSection';
 import type { WorkspaceState } from '../useWorkspace';
 import { DirectAvatar, directName } from './DirectAvatar';
 import './dm-threads.css';
@@ -20,17 +21,9 @@ type Props = {
 
 export function DirectSection({ state, channelId, members, myId, view, onOpenView, onOpenDirect, onNewDirect }: Props) {
 	const dms = state.dmThreads.dms ?? [];
+	const ctx = useContextMenu();
 	return (
 		<>
-			<div className='nav-section'>
-				<button type='button' className='channel dm-nav-btn' aria-current={view === 'threads' ? 'page' : undefined} onClick={() => onOpenView('threads')}>
-					<span className='channel-icon'>
-						<Icon name='thread' size={16} />
-					</span>
-					<span className='channel-name'>Fils</span>
-				</button>
-				<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => onOpenDirect('brouillons')} />
-			</div>
 			<div className='nav-section'>
 				<div className='nav-section-head'>
 					<button type='button' className='dm-head-link' aria-current={view === 'dms' ? 'page' : undefined} onClick={() => onOpenView('dms')}>
@@ -53,6 +46,8 @@ export function DirectSection({ state, channelId, members, myId, view, onOpenVie
 								e.preventDefault();
 								onOpenDirect(dm.id);
 							}}
+							{...favoriteDragProps({ kind: 'channel', refId: dm.id })}
+							{...ctx.bind(() => [favoriteItem({ kind: 'channel', refId: dm.id })])}
 						>
 							<span className='channel-icon'>
 								<DirectAvatar conversation={dm} members={members} myId={myId} online={state.online} size={20} />
@@ -67,7 +62,24 @@ export function DirectSection({ state, channelId, members, myId, view, onOpenVie
 						</a>
 					);
 				})}
+				{ctx.menu}
 			</div>
 		</>
+	);
+}
+
+export function ThreadsNavLink({ active, unread, onOpen }: { active: boolean; unread: number; onOpen: () => void }) {
+	return (
+		<button type='button' className={`channel dm-nav-btn${unread > 0 && !active ? ' channel-unread' : ''}`} aria-current={active ? 'page' : undefined} onClick={onOpen}>
+			<span className='channel-icon'>
+				<Icon name='thread' size={16} />
+			</span>
+			<span className='channel-name'>Fils</span>
+			{unread > 0 && (
+				<span className='pill' aria-label={unread > 1 ? `${unread} fils non lus` : '1 fil non lu'}>
+					{unread > 99 ? '99+' : unread}
+				</span>
+			)}
+		</button>
 	);
 }

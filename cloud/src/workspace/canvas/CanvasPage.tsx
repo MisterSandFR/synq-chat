@@ -9,6 +9,7 @@ import { api, errorText } from '../../api';
 import { Floating } from '../../floating';
 import { navigate } from '../../router';
 import { Avatar, Icon, useDismiss } from '../../ui';
+import { FavoriteStar } from '../favorites/FavoritesSection';
 import { CanvasEditor } from './CanvasEditor';
 import { toMarkdown } from './markdown';
 import { CanvasSync, canvasSocketUrl, colorFor, type SyncStatus } from './sync';
@@ -269,6 +270,7 @@ function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms,
 						Tous les canevas
 					</a>
 				)}
+				<FavoriteStar kind='canvas' refId={meta.id} title={meta.title} />
 				<span className='grow' />
 				<span className='canvas-peers' aria-label={`${peers.length} autre${peers.length > 1 ? 's' : ''} personne${peers.length > 1 ? 's' : ''} sur ce canevas`}>
 					{peers.slice(0, 5).map((p) => (
