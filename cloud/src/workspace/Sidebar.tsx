@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
 
 import { isSpaceEmoji } from '../../shared/categories';
 import { Floating } from '../floating';
@@ -10,6 +10,7 @@ import { api } from '../api';
 import { navigate, readPref, writePref } from '../router';
 import { Avatar, Icon, SpaceLogo, useDismiss } from '../ui';
 import { CategoryNav } from './categories/CategoryNav';
+import { CustomEmojiImg, customOf, type EmojiMap } from './emojis/customEmojis';
 import { memberColor, memberGrades } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
@@ -36,9 +37,10 @@ type Props = {
 	meMenu?: (close: () => void) => ReactNode;
 	directs?: ReactNode;
 	memberMenu?: MemberMenu;
+	emojis?: EmojiMap;
 };
 
-export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu, directs, memberMenu }: Props) {
+export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu, directs, memberMenu, emojis }: Props) {
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
@@ -51,6 +53,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 	};
 
 	return (
+		<TileEmojis.Provider value={emojis}>
 		<aside className='sidebar' style={{ width: width.width }} aria-label='Navigation de l’espace'>
 			<div className='sidebar-top sb-head'>
 				<WorkspaceSwitcher me={me} workspaceId={workspaceId} name={state.info?.name ?? ''} accent={state.info?.accent} logoUrl={state.info?.logoUrl} memberCount={members.size} />
@@ -138,6 +141,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 
 			<ResizeHandle resize={width} label='Redimensionner la barre latérale' />
 		</aside>
+		</TileEmojis.Provider>
 	);
 }
 
@@ -174,12 +178,22 @@ type VoiceRowProps = {
 	memberMenu?: MemberMenu;
 };
 
-// Emoji d'espace (:nom:) : icône du type tant que le rendu image n'est pas branché.
+const TileEmojis = createContext<EmojiMap | undefined>(undefined);
+
+// Emoji d'espace supprimé : icône du type.
 function ChannelTile({ channel }: { channel: Channel }) {
+	const map = useContext(TileEmojis);
+	const custom = channel.icon && isSpaceEmoji(channel.icon) ? customOf(channel.icon, map) : undefined;
 	const emoji = channel.icon && !isSpaceEmoji(channel.icon) ? channel.icon : '';
 	return (
 		<span className='sb-tile' aria-hidden>
-			{emoji ? <span className='sb-tile-emoji'>{emoji}</span> : <Icon name={channel.kind === 'voice' ? 'speaker' : channel.readOnly ? 'megaphone' : 'hash'} size={15} />}
+			{custom ? (
+				<CustomEmojiImg emoji={custom} className='sb-tile-custom' />
+			) : emoji ? (
+				<span className='sb-tile-emoji'>{emoji}</span>
+			) : (
+				<Icon name={channel.kind === 'voice' ? 'speaker' : channel.readOnly ? 'megaphone' : 'hash'} size={15} />
+			)}
 		</span>
 	);
 }

@@ -293,3 +293,9 @@
 		min-height: 40px;
 	}
 }
+
+.sb-tile-custom {
+	width: 18px;
+	height: 18px;
+	object-fit: contain;
+}

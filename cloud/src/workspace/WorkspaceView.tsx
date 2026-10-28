@@ -444,6 +444,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 		<div className={`app themed${navOpen ? ' nav-open' : ''}`} style={{ '--accent': state.info?.accent ?? '#6A4BFF' } as CSSProperties}>
 			<Sidebar
 				me={me}
+				emojis={emojis}
 				workspaceId={workspaceId}
 				state={state}
 				channelId={channelId}
