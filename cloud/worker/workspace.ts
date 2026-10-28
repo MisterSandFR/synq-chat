@@ -2812,6 +2812,17 @@ export class Workspace extends DurableObject<Env> {
 		}
 	}
 
+	// Notifications de base (automatisation, échéance) : accès au salon revérifié ici.
+	listNotice(recipients: Actor[], input: { actorId: string | null; workspaceId: string; listId: string; itemId: string; channelId: string | null; title: string; body: string }): void {
+		const room = input.channelId && this.roomRow(input.channelId) ? input.channelId : null;
+		for (const actor of recipients) {
+			if (actor.guest || (input.channelId && (!room || !this.can(actor, room, P.VIEW_CHANNEL)))) {
+				continue;
+			}
+			this.pushNotification({ userId: actor.id, kind: 'list', channelId: room, actorId: input.actorId, title: input.title, body: input.body, link: `/w/${input.workspaceId}/listes/${input.listId}?element=${input.itemId}` });
+		}
+	}
+
 	// --- Favoris ---
 
 	// Salons filtrés ici ; canevas et listes, rangés en D1, filtrés par la route.

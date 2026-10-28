@@ -228,8 +228,8 @@ function CreateMenu({ workspaceId, guest }: { workspaceId: string | null; guest:
 									<Icon name='list' size={18} />
 								</span>
 								<span className='create-text'>
-									<strong>Liste</strong>
-									<span>Suivre et gérer les projets</span>
+									<strong>Base</strong>
+									<span>Kanban, tableau, calendrier ou chronologie</span>
 								</span>
 							</button>
 							<div className='menu-sep' />
@@ -237,7 +237,7 @@ function CreateMenu({ workspaceId, guest }: { workspaceId: string | null; guest:
 								<Icon name='file' size={16} /> Toutes les pages
 							</button>
 							<button type='button' role='menuitem' className='menu-item' onClick={pick(() => navigate(`/w/${workspaceId}/listes`))}>
-								<Icon name='list' size={16} /> Toutes les listes
+								<Icon name='list' size={16} /> Toutes les bases
 							</button>
 							<div className='menu-sep' />
 						</>

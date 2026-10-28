@@ -87,7 +87,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 						<div className='nav-section sb-links'>
 							<ThreadsNavLink active={channelId === 'fils'} unread={state.dmThreads.unreadThreads} onOpen={() => open('fils')} />
 							<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => open('brouillons')} />
-							<SideLink icon='list' label='Listes' active={pageActive('listes')} onOpen={() => open('listes')} />
+							<SideLink icon='list' label='Bases' active={pageActive('listes')} onOpen={() => open('listes')} />
 						</div>
 						<PagesSection workspaceId={workspaceId} activeId={location.pathname.match(/^\/w\/[\w-]+\/(?:canevas|pages)\/([\w-]+)/)?.[1] ?? null} pagesActive={pageActive('canevas') || pageActive('pages')} />
 						<FavoritesSection

@@ -513,7 +513,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					{page && (
 						<h1>
 							<Icon name={page === 'lists' ? 'list' : page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : page === 'drafts' ? 'compose' : page === 'canvases' ? 'file' : 'thread'} />
-							<span className='ellipsis'>{page === 'lists' ? 'Listes' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Pages' : 'Fils'}</span>
+							<span className='ellipsis'>{page === 'lists' ? 'Bases' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Pages' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
@@ -564,7 +564,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							{ key: 'pins', label: 'Épinglés', icon: 'pin', active: panel === 'pins', onSelect: () => setPanel(panel === 'pins' ? null : 'pins') },
 							{ key: 'files', label: 'Fichiers', icon: 'drive', active: panel === 'drive', onSelect: () => setPanel(panel === 'drive' ? null : 'drive') },
 							...(active.kind !== 'voice' ? [{ key: 'canvas', label: 'Page', icon: 'file' as const, onSelect: () => void openChannelCanvas(workspaceId, active.id) }] : []),
-							...(active.kind === 'text' ? [{ key: 'lists', label: 'Listes', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
+							...(active.kind === 'text' ? [{ key: 'lists', label: 'Bases', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
 						]}
 					/>
 				)}
@@ -585,7 +585,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				<div className='body'>
 					<div className='content'>
 						{page === 'lists' ? (
-							<ListsView workspaceId={workspaceId} members={members} channels={rooms} version={state.listsVersion} />
+							<ListsView workspaceId={workspaceId} members={members} channels={rooms} version={state.listsVersion} myId={myId} />
 						) : page === 'canvases' ? (
 							<Suspense fallback={<div className='spinner' aria-busy />}>
 								<CanvasPage workspaceId={workspaceId} canvasId={subId ?? null} myId={myId} members={members} channels={rooms} perms={state.perms} workspacePerms={state.info?.perms ?? 0} onOpenChannel={openChannel} channelLabel={labelOf} />
