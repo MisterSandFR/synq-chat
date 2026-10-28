@@ -1,0 +1,88 @@
+.reminder-menu {
+	min-width: 240px;
+	padding: 4px;
+}
+
+.reminder-menu-head {
+	margin: 0;
+	padding: 6px 10px 4px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--muted);
+}
+
+.reminder-choice {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	width: 100%;
+}
+
+.reminder-sep {
+	height: 1px;
+	margin: 4px 0;
+	background: var(--line);
+}
+
+.reminder-form {
+	display: grid;
+	gap: 14px;
+}
+
+.reminder-quick {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.reminder-hint {
+	gap: 8px;
+}
+
+.reminder-hint .muted {
+	margin-left: auto;
+	white-space: nowrap;
+	font-size: 12px;
+}
+
+.reminder-hint.is-late,
+.later-item.is-late .later-due {
+	color: var(--danger, #d93f3f);
+}
+
+.later-tabs {
+	padding: 8px 12px 0;
+}
+
+.later-item {
+	position: relative;
+}
+
+.later-due {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	margin-top: 4px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--muted);
+}
+
+.later-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.later-badge {
+	margin-left: auto;
+	min-width: 18px;
+	padding: 0 6px;
+	border-radius: 9px;
+	background: var(--danger, #d93f3f);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 18px;
+	text-align: center;
+}

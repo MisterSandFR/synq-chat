@@ -16,6 +16,7 @@ import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
 import { useContextMenu } from './ContextMenu';
 import { DraftMark, DraftsNavLink } from './drafts/Marks';
+import { LaterNavLink } from './reminders/ReminderUi';
 import { ThreadsNavLink } from './dm-threads';
 import { PagesSection } from './canvas/PageTree';
 import { FavoritesSection } from './favorites/FavoritesSection';
@@ -36,6 +37,8 @@ type Props = {
 	onOpenSettings: () => void;
 	onOpenSearch: () => void;
 	onNavigate: () => void;
+	laterOpen?: boolean;
+	onOpenLater?: () => void;
 	onCreateChannel: (kind: 'text' | 'voice') => void;
 	presence?: Presence;
 	presenceText?: string;
@@ -45,7 +48,7 @@ type Props = {
 	emojis?: EmojiMap;
 };
 
-export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, onCreateChannel, presence, presenceText, meMenu, directs, memberMenu, emojis }: Props) {
+export function Sidebar({ me, workspaceId, state, channelId, members, voice, width, onOpenSettings, onOpenSearch, onNavigate, laterOpen, onOpenLater, onCreateChannel, presence, presenceText, meMenu, directs, memberMenu, emojis }: Props) {
 	const staff = has(state.info?.perms ?? 0, P.MANAGE_CHANNELS);
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
@@ -87,6 +90,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 						<div className='nav-section sb-links'>
 							<ThreadsNavLink active={channelId === 'fils'} unread={state.dmThreads.unreadThreads} onOpen={() => open('fils')} />
 							<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => open('brouillons')} />
+							{onOpenLater && <LaterNavLink active={laterOpen === true} onOpen={onOpenLater} />}
 							<SideLink icon='list' label='Bases' active={pageActive('listes')} onOpen={() => open('listes')} />
 						</div>
 						<PagesSection workspaceId={workspaceId} activeId={location.pathname.match(/^\/w\/[\w-]+\/(?:canevas|pages)\/([\w-]+)/)?.[1] ?? null} pagesActive={pageActive('canevas') || pageActive('pages')} />

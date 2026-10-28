@@ -37,6 +37,7 @@ import { mailSharerRoutes } from './routes/mail-sharers';
 import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
 import { draftRoutes } from './routes/drafts';
+import { reminderRoutes } from './routes/reminders';
 import { favoriteRoutes } from './routes/favorites';
 import { pollRoutes } from './routes/polls';
 import { voiceRoutes } from './routes/voice';
@@ -855,6 +856,7 @@ app.route('/', canvasRoutes);
 app.route('/', favoriteRoutes);
 app.route('/', aiHubRoutes);
 app.route('/', pollRoutes);
+app.route('/', reminderRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

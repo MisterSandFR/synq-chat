@@ -60,6 +60,7 @@ type Props = {
 	onAuthor?: (userId: string, anchor: HTMLElement) => void;
 	authorMenu?: (userId: string) => ContextMenuItem[];
 	extraActions?: (message: Message) => ReactNode;
+	extraMenu?: (message: Message) => ContextMenuItem[];
 	canReact: boolean;
 	canPin: boolean;
 	onReact: (id: number, emoji: string, add: boolean) => Promise<void>;
@@ -87,6 +88,7 @@ export function MessageList({
 	onAuthor,
 	authorMenu,
 	extraActions,
+	extraMenu,
 	onReact,
 	onPin,
 	onOpenThread,
@@ -188,6 +190,7 @@ export function MessageList({
 		if (canPin) {
 			items.push({ label: message.pinned ? 'Désépingler' : 'Épingler', icon: 'pin', onSelect: () => void onPin(message.id, !message.pinned).catch(() => undefined) });
 		}
+		items.push(...(extraMenu?.(message) ?? []));
 		const aiItems = ai.items(message);
 		if (aiItems.length) {
 			items.push('sep', ...aiItems);

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NotificationFilter, NotificationItem, NotificationKind, NotificationPage, NotifyLevel } from '../../../shared/notifications';
 import type { Channel, Member } from '../../../shared/types';
 import { api, errorText } from '../../api';
+import { SnoozeButton } from '../reminders/ReminderUi';
 import { Avatar, Icon, type IconName } from '../../ui';
 import { Snippet } from '../richText';
 import { browserEnabled, browserSupported, disableBrowserNotifications, enableBrowserNotifications, openNotification } from './browser';
@@ -37,6 +38,7 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
 	scheduled: 'clock',
 	list: 'list',
 	poll: 'poll',
+	reminder: 'clock',
 };
 
 const time = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -212,6 +214,7 @@ export function ActivityPanel({ workspaceId, channels, members, unread, version,
 															<Icon name='check' size={16} />
 														</button>
 													)}
+													{item.kind === 'reminder' && <SnoozeButton workspaceId={workspaceId} link={item.link} />}
 												</li>
 											);
 										})}

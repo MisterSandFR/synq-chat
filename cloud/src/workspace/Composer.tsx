@@ -16,6 +16,7 @@ import { EphemeralNotes, SlashHint, SlashMenu } from './commands/SlashMenu';
 import { EventCardDialog } from './events/EventCardDialog';
 import { PollDialog } from './polls/PollDialog';
 import { useSlash } from './commands/useSlash';
+import { ReminderHint, submitReminderCommand } from './reminders/ReminderUi';
 import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
 import { RecordButtons } from './media/Recorder';
@@ -204,6 +205,14 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 			return;
 		}
 		const asked = parseCommand(text.trimEnd());
+		if (asked?.name === 'rappel') {
+			const problem = await submitReminderCommand(workspaceId, asked.args);
+			setError(problem);
+			if (!problem) {
+				setText('');
+			}
+			return;
+		}
 		if (asked?.name === 'evenement') {
 			setEventDraft(asked.args);
 			setText('');
@@ -346,7 +355,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 					</Floating>
 				)}
 				<div className='composer-box'>
-					{slash.active && <SlashHint command={slash.active} />}
+					{slash.active?.name === 'rappel' ? <ReminderHint text={text} /> : slash.active && <SlashHint command={slash.active} />}
 					{replyTo && (
 						<div className='composer-context'>
 							<Icon name='reply' size={14} />

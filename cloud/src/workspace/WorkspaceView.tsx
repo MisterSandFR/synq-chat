@@ -50,7 +50,8 @@ import { DirectoryDialog } from './rc/DirectoryDialog';
 import { ForwardDialog } from './rc/ForwardDialog';
 import { ProfileCard } from './rc/ProfileCard';
 import { ProfileDialog } from './rc/ProfileDialog';
-import { SavedPanel } from './rc/SavedPanel';
+import { LaterPanel } from './reminders/LaterPanel';
+import { ReminderButton, ReminderDialog, useLaterLoader, type LaterTarget } from './reminders/ReminderUi';
 import { StatusDialog, StatusMenuItems } from './rc/status';
 import { presenceOf, useRc } from './rc/useRc';
 import { CatchupBanner } from '../ai/CatchupBanner';
@@ -102,6 +103,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const [jump, setJump] = useState<{ channelId: string; id: number } | null>(null);
 	const [highlight, setHighlight] = useState<number | null>(null);
 	const rc = useRc(workspaceId, myId, state.info);
+	const [reminding, setReminding] = useState<LaterTarget | null>(null);
+	useLaterLoader(workspaceId, rc.saved);
 	const [card, setCard] = useState<{ userId: string; rect: DOMRect } | null>(null);
 	const [rcDialog, setRcDialog] = useState<'status' | 'profile' | null>(null);
 	const [announcing, setAnnouncing] = useState(false);
@@ -406,9 +409,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							>
 									<Icon name='bookmark' size={16} />
 								</button>
+								<ReminderButton workspaceId={workspaceId} message={message} onCustom={() => setReminding({ messageId: message.id })} />
 							</>
 						);
 					}}
+					extraMenu={(m) => [{ label: 'Me le rappeler…', icon: 'clock', onSelect: () => setReminding({ messageId: m.id }) }]}
 					onOpenThread={(id) => setThread({ channelId: active.id, id })}
 					onEdit={async (id, body) => {
 						await api('PATCH', `/w/${workspaceId}/messages/${id}`, { body });
@@ -456,6 +461,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	return (
 		<div className={`app themed${navOpen ? ' nav-open' : ''}`} style={{ '--accent': state.info?.accent ?? '#6A4BFF' } as CSSProperties}>
 			<Sidebar
+				laterOpen={panel === 'saved'}
+				onOpenLater={() => setPanel(panel === 'saved' ? null : 'saved')}
 				me={me}
 				emojis={emojis}
 				workspaceId={workspaceId}
@@ -552,7 +559,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							...(active && active.kind !== 'dm' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) ? [{ key: 'access', label: 'Gérer l’accès', icon: 'shield' as const, onSelect: () => setAccessOpen(true) }] : []),
 							...(active?.kind === 'text' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) ? [{ key: 'announce', label: announcing ? 'Masquer l’annonce' : 'Annonce du salon', icon: 'megaphone' as const, onSelect: () => setAnnouncing(!announcing) }] : []),
 							'separator' as const,
-							{ key: 'saved', label: 'Messages enregistrés', icon: 'bookmark' as const, onSelect: () => setPanel(panel === 'saved' ? null : 'saved') },
+							{ key: 'saved', label: 'Plus tard', icon: 'bookmark' as const, onSelect: () => setPanel(panel === 'saved' ? null : 'saved') },
 							{ key: 'directory', label: 'Annuaire de l’espace', icon: 'users' as const, onSelect: () => setDirectory(true) },
 						]}
 					/>
@@ -659,14 +666,14 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}
 					{panel === 'saved' && (
-						<SavedPanel
-							saved={rc.saved}
+						<LaterPanel
+							workspaceId={workspaceId}
 							lookup={lookup}
 							onOpen={(cid, id) => {
 								setJump({ channelId: cid, id });
 								openChannel(cid);
 							}}
-							onRemove={(message) => void rc.toggleSaved(message).catch(() => undefined)}
+							onEdit={setReminding}
 							onClose={() => setPanel(null)}
 						/>
 					)}
@@ -742,6 +749,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				onOpenChannel={openChannel}
 				onMessage={(id) => void startDirect([id]).catch(() => undefined)}
 			/>
+			<ReminderDialog workspaceId={workspaceId} target={reminding} onClose={() => setReminding(null)} />
 			<StatusDialog open={rcDialog === 'status'} onClose={() => setRcDialog(null)} profile={myProfile} onSave={rc.updateProfile} />
 			<ProfileDialog open={rcDialog === 'profile'} onClose={() => setRcDialog(null)} me={me} profile={myProfile} onSave={rc.updateProfile} onAvatarChanged={onMeChanged} />
 
