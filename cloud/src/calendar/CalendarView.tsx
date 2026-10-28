@@ -5,6 +5,7 @@ import type { Me, WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
 import { readPref, writePref } from '../router';
 import { Icon } from '../ui';
+import { ResizeHandle, useResizable } from '../workspace/resizable';
 import { addDays, dayKey, fmtDay, fmtMonth, fmtShort, fmtTime, groupByDay, HOUR, sameDay, startOfDay, startOfWeek, WEEKDAYS, type Placed } from './dates';
 import { EventDialog } from './EventDialog';
 import { SyncDialog } from './SyncDialog';
@@ -46,6 +47,7 @@ function rangeOf(view: View, cursor: Date): [Date, Date] {
 type Opened = { eventId: string; startsAt: number } | { draft: number };
 
 export function CalendarView({ me, workspaces }: { me: Me; workspaces: WorkspaceSummary[] }) {
+	const sideWidth = useResizable({ pref: 'calendar_side_width', min: 180, max: 420, initial: 240, edge: 'end' });
 	const [view, setView] = useState<View>(() => VIEWS.find((v) => v.id === readPref('calendar_view'))?.id ?? 'month');
 	const [cursor, setCursor] = useState(() => startOfDay(new Date()));
 	const [hidden, setHidden] = useState(readHidden);
@@ -116,7 +118,8 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 	const title = view === 'month' ? fmtMonth(cursor) : view === 'week' ? `Semaine du ${fmtShort(from)}` : `À partir du ${fmtShort(from)}`;
 
 	return (
-		<div className='cal'>
+		<div className='cal' style={{ '--cal-side-w': `${sideWidth.width}px` } as CSSProperties}>
+			<ResizeHandle resize={sideWidth} label='Redimensionner la liste des calendriers' className='cal-resize' />
 			<aside className='cal-side'>
 				<button type='button' className='btn btn-primary btn-block' onClick={() => create(new Date(), new Date().getHours() + 1)}>
 					<Icon name='plus' size={16} />

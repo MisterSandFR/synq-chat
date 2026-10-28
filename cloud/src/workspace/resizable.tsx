@@ -17,6 +17,8 @@ export function useResizable({ pref, min, max, initial, edge }: Options) {
 	const onPointerDown = useCallback(
 		(event: ReactPointerEvent<HTMLDivElement>) => {
 			event.preventDefault();
+			// Capture : le glissé continue au-dessus d'une iframe (corps de mail, vidéo).
+			event.currentTarget.setPointerCapture(event.pointerId);
 			const startX = event.clientX;
 			const startWidth = width;
 			let latest = startWidth;
@@ -61,10 +63,10 @@ export function useResizable({ pref, min, max, initial, edge }: Options) {
 
 export type Resizable = ReturnType<typeof useResizable>;
 
-export function ResizeHandle({ resize, label }: { resize: Resizable; label: string }) {
+export function ResizeHandle({ resize, label, className }: { resize: Resizable; label: string; className?: string }) {
 	return (
 		<div
-			className='resize-handle'
+			className={className ? `resize-handle ${className}` : 'resize-handle'}
 			role='separator'
 			aria-orientation='vertical'
 			aria-label={label}

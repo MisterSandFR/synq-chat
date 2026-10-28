@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import type { MailboxInfo, MailDraft, MailScheduleInput, MailThread, MailThreadDetail } from '../../shared/mail';
 import type { Me, WorkspaceSummary } from '../../shared/types';
 import { AiAssist } from '../ai/AiAssist';
 import { api, errorText } from '../api';
 import { Icon } from '../ui';
+import { ResizeHandle, useResizable } from '../workspace/resizable';
 import { BoxDialog } from './BoxDialog';
 import { Composer, newSeed, seedFromDraft, type ComposeSeed } from './Composer';
 import { longDate } from './format';
@@ -21,6 +22,8 @@ const initialThread = () => new URLSearchParams(location.search).get('thread');
 const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSummary[] }) {
+	const navWidth = useResizable({ pref: 'mail_nav_width', min: 180, max: 360, initial: 220, edge: 'end' });
+	const listWidth = useResizable({ pref: 'mail_list_width', min: 260, max: 640, initial: 340, edge: 'end' });
 	const [boxes, setBoxes] = useState<MailboxInfo[] | null>(null);
 	const [filter, setFilter] = useState<Filter>({ workspaceId: '', boxId: '', tab: 'open' });
 	const [threads, setThreads] = useState<MailThread[] | null>(null);
@@ -249,7 +252,12 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 	const empty = !boxes?.length ? 'Aucune boîte. Ajoute une boîte Mailcow pour commencer.' : filter.tab === 'snoozed' ? 'Aucun fil en attente.' : 'Aucune conversation.';
 
 	return (
-		<div className={`mail${selected ? ' mail-reading' : ''}`}>
+		<div
+			className={`mail${selected ? ' mail-reading' : ''}`}
+			style={{ '--mail-nav-w': `${navWidth.width}px`, '--mail-list-w': `${listWidth.width}px` } as CSSProperties}
+		>
+			<ResizeHandle resize={navWidth} label='Redimensionner la liste des boîtes' className='mail-resize-nav' />
+			<ResizeHandle resize={listWidth} label='Redimensionner la liste des conversations' className='mail-resize-list' />
 			<aside className='mail-nav'>
 				<div className='mail-nav-head'>
 					<h1>Mail</h1>
