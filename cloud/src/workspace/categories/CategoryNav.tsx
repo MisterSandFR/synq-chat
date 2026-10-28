@@ -96,7 +96,8 @@ async function bannerFile(file: File): Promise<File> {
 
 export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel, footer }: Props) {
 	const [tick, setTick] = useState(0);
-	const categories = useCategories(workspaceId, channels, tick);
+	const loaded = useCategories(workspaceId, channels, tick);
+	const categories = useMemo(() => loaded ?? [], [loaded]);
 	const [iconFor, setIconFor] = useState<{ channel: Channel; anchor: DOMRect } | null>(null);
 	const bannerInput = useRef<HTMLInputElement>(null);
 	const bannerTarget = useRef<string | null>(null);
@@ -111,12 +112,15 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 	useEffect(() => setCollapsed(readCollapsed(workspaceId)), [workspaceId]);
 
 	const groups = useMemo<Group[]>(() => {
+		if (!loaded) {
+			return [];
+		}
 		const known = new Set(categories.map((k) => k.id));
 		return [
 			{ category: null, items: channels.filter((c) => !c.categoryId || !known.has(c.categoryId)).sort(byPosition) },
 			...categories.map((category) => ({ category, items: channels.filter((c) => c.categoryId === category.id).sort(byPosition) })),
 		];
-	}, [channels, categories]);
+	}, [channels, categories, loaded]);
 
 	const report = (e: unknown) => setError(errorText(e));
 
