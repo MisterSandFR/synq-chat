@@ -133,7 +133,11 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	}, [trigger, dismissed, lookup]);
 
 	if (!canPost) {
-		return <p className='composer-locked'>{channel.readOnly ? `#${channel.name} est en lecture seule.` : `Ton grade ne permet pas d’écrire dans #${channel.name}.`}</p>;
+		return (
+			<p className='composer-locked'>
+				{channel.readOnly ? `#${channel.name} est en lecture seule.` : `Ton grade ne permet pas d’écrire dans #${channel.name}.`}
+			</p>
+		);
 	}
 
 	const accept = (suggestion: Suggestion) => {
@@ -240,7 +244,15 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		}
 		const key = e.key.toLowerCase();
 		const shortcut: FormatKind | null =
-			(e.ctrlKey || e.metaKey) && !e.altKey ? (key === 'b' ? 'bold' : key === 'i' ? 'italic' : e.shiftKey && key === 'x' ? 'strike' : null) : null;
+			(e.ctrlKey || e.metaKey) && !e.altKey
+				? key === 'b'
+					? 'bold'
+					: key === 'i'
+						? 'italic'
+						: e.shiftKey && key === 'x'
+							? 'strike'
+							: null
+				: null;
 		if (shortcut) {
 			e.preventDefault();
 			format(shortcut);
@@ -262,156 +274,190 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		}
 	};
 
-	const replyAuthor = replyTo ? lookup.members.get(replyTo.userId)?.name ?? 'Ancien membre' : '';
+	const replyAuthor = replyTo ? (lookup.members.get(replyTo.userId)?.name ?? 'Ancien membre') : '';
 
 	return (
-		<form
-			ref={form}
-			className='composer'
-			onSubmit={(e) => {
-				e.preventDefault();
-				void submit();
-			}}
-		>
-			<EphemeralNotes notes={slash.notes} onDismiss={slash.dismissNote} />
-			<SlashMenu anchor={form} matches={slash.matches} index={slash.index} onPick={slash.accept} />
-			{suggestions.length > 0 && (
-				<Floating anchor={form} placement='top-start' className='popover suggest' role='listbox' aria-label='Suggestions'>
-					{suggestions.map((s, i) => (
-						<button
-							key={s.key}
-							type='button'
-							role='option'
-							aria-selected={i === Math.min(selected, suggestions.length - 1)}
-							className='menu-item'
-							onMouseDown={(e) => {
-								e.preventDefault();
-								accept(s);
-							}}
-						>
-							{s.avatar ? (
-								<Avatar name={s.avatar.name} url={s.avatar.url} size={24} />
-							) : s.glyph ? (
-								<span className='emoji-glyph'>{s.glyph}</span>
-							) : (
-								<Icon name='hash' size={16} />
-							)}
-							<span className='ellipsis'>{s.label}</span>
-						</button>
-					))}
-				</Floating>
-			)}
-			<div className='composer-box'>
-				{slash.active && <SlashHint command={slash.active} />}
-				{replyTo && (
-					<div className='composer-context'>
-						<Icon name='reply' size={14} />
-						<span className='grow ellipsis'>
-							Réponse à <strong style={{ color: 'var(--text)' }}>{replyAuthor}</strong> : {excerpt(replyTo.body, lookup, 80) || 'fichier joint'}
-						</span>
-						<button type='button' className='icon-btn icon-btn-sm' aria-label='Annuler la réponse' onClick={onCancelReply}>
-							<Icon name='close' size={14} />
-						</button>
-					</div>
+		<>
+			<form
+				ref={form}
+				className='composer'
+				onSubmit={(e) => {
+					e.preventDefault();
+					void submit();
+				}}
+			>
+				<EphemeralNotes notes={slash.notes} onDismiss={slash.dismissNote} />
+				<SlashMenu anchor={form} matches={slash.matches} index={slash.index} onPick={slash.accept} />
+				{suggestions.length > 0 && (
+					<Floating anchor={form} placement='top-start' className='popover suggest' role='listbox' aria-label='Suggestions'>
+						{suggestions.map((s, i) => (
+							<button
+								key={s.key}
+								type='button'
+								role='option'
+								aria-selected={i === Math.min(selected, suggestions.length - 1)}
+								className='menu-item'
+								onMouseDown={(e) => {
+									e.preventDefault();
+									accept(s);
+								}}
+							>
+								{s.avatar ? (
+									<Avatar name={s.avatar.name} url={s.avatar.url} size={24} />
+								) : s.glyph ? (
+									<span className='emoji-glyph'>{s.glyph}</span>
+								) : (
+									<Icon name='hash' size={16} />
+								)}
+								<span className='ellipsis'>{s.label}</span>
+							</button>
+						))}
+					</Floating>
 				)}
-				{uploads.items.length > 0 && <PendingFiles items={uploads.items} onRemove={uploads.remove} />}
-				{formatOpen && <FormatBar onFormat={format} />}
-				<label className='sr-only' htmlFor='composer'>
-					Message pour #{channel.name}
-				</label>
-				<textarea
-					id='composer'
-					ref={textarea}
-					value={text}
-					rows={1}
-					maxLength={LIMITS.messageLength}
-					placeholder={`Écrire dans #${channel.name}`}
-					onPaste={onPaste}
-					onKeyDown={onKeyDown}
-					onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-					onChange={(e) => {
-						setText(e.target.value);
-						setCaret(e.target.selectionStart);
-						setSelected(0);
-						setDismissed(null);
-						e.target.style.height = 'auto';
-						e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
-						if (Date.now() - lastTyping.current > TYPING_EVERY) {
-							lastTyping.current = Date.now();
-							onTyping();
-						}
-					}}
-				/>
-				<div className='composer-tools'>
-					<button type='button' className='icon-btn fmt-toggle' aria-pressed={formatOpen} aria-label='Mise en forme' title='Mise en forme' onClick={() => setFormatOpen(!formatOpen)}>
-						<span aria-hidden>Aa</span>
-					</button>
-					<AiAssist
-						textarea={textarea}
-						value={text}
-						onChange={(next) => {
-							setText(next);
-							setCaret(next.length);
-						}}
-					/>
-					<button
-						type='button'
-						className='icon-btn'
-						aria-label='Emoji'
-						title='Emoji'
-						onPointerDown={(e) => picker && e.stopPropagation()}
-						onClick={(e) => setPicker(picker ? null : e.currentTarget.getBoundingClientRect())}
-					>
-						<Icon name='smile' />
-					</button>
-					{canAttach && (
-						<button type='button' className='icon-btn' aria-label='Joindre un fichier' title='Joindre un fichier' onClick={() => fileInput.current?.click()}>
-							<Icon name='paperclip' />
-						</button>
+				<div className='composer-box'>
+					{slash.active && <SlashHint command={slash.active} />}
+					{replyTo && (
+						<div className='composer-context'>
+							<Icon name='reply' size={14} />
+							<span className='grow ellipsis'>
+								Réponse à <strong style={{ color: 'var(--text)' }}>{replyAuthor}</strong> :{' '}
+								{excerpt(replyTo.body, lookup, 80) || 'fichier joint'}
+							</span>
+							<button type='button' className='icon-btn icon-btn-sm' aria-label='Annuler la réponse' onClick={onCancelReply}>
+								<Icon name='close' size={14} />
+							</button>
+						</div>
 					)}
-					{canAttach && <RecordButtons onClip={(file) => attach([file])} />}
-					<button type='button' className='icon-btn' aria-label='Événement' title='Créer ou partager un événement' onClick={() => setEventDraft('')}>
-						<Icon name='calendar' />
-					</button>
-					<input
-						ref={fileInput}
-						type='file'
-						multiple
-						hidden
+					{uploads.items.length > 0 && <PendingFiles items={uploads.items} onRemove={uploads.remove} />}
+					{formatOpen && <FormatBar onFormat={format} />}
+					<label className='sr-only' htmlFor='composer'>
+						Message pour #{channel.name}
+					</label>
+					<textarea
+						id='composer'
+						ref={textarea}
+						value={text}
+						rows={1}
+						maxLength={LIMITS.messageLength}
+						placeholder={`Écrire dans #${channel.name}`}
+						onPaste={onPaste}
+						onKeyDown={onKeyDown}
+						onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
 						onChange={(e) => {
-							const files = [...(e.target.files ?? [])];
-							e.target.value = '';
-							if (files.length) {
-								attach(files);
+							setText(e.target.value);
+							setCaret(e.target.selectionStart);
+							setSelected(0);
+							setDismissed(null);
+							e.target.style.height = 'auto';
+							e.target.style.height = `${Math.min(e.target.scrollHeight, 240)}px`;
+							if (Date.now() - lastTyping.current > TYPING_EVERY) {
+								lastTyping.current = Date.now();
+								onTyping();
 							}
 						}}
 					/>
-					{picker && (
-						<EmojiPicker
-							anchor={picker}
-							onClose={() => setPicker(null)}
-							onPick={(char) => {
-								insertEmoji(char);
-								setPicker(null);
+					<div className='composer-tools'>
+						<button
+							type='button'
+							className='icon-btn fmt-toggle'
+							aria-pressed={formatOpen}
+							aria-label='Mise en forme'
+							title='Mise en forme'
+							onClick={() => setFormatOpen(!formatOpen)}
+						>
+							<span aria-hidden>Aa</span>
+						</button>
+						<AiAssist
+							textarea={textarea}
+							value={text}
+							onChange={(next) => {
+								setText(next);
+								setCaret(next.length);
 							}}
 						/>
-					)}
-					{eventDraft !== null && (
-						<EventCardDialog workspaceId={workspaceId} channel={channel} lookup={lookup} initialTitle={eventDraft} onClose={() => setEventDraft(null)} />
-					)}
-					<span className='grow' />
-					{error || uploads.notice ? (
-						<span className='composer-hint' role='alert' style={{ color: 'var(--danger)', display: 'inline' }}>
-							{error ?? uploads.notice}
-						</span>
-					) : (
-						<span className='composer-hint'>Maj + Entrée pour aller à la ligne</span>
-					)}
-					<button className='send-btn' aria-label='Envoyer' title='Envoyer' disabled={sending || uploads.blocked || (!text.trim() && !uploads.keys.length)}>
-						<Icon name='send' strokeWidth={2} />
-					</button>
+						<button
+							type='button'
+							className='icon-btn'
+							aria-label='Emoji'
+							title='Emoji'
+							onPointerDown={(e) => picker && e.stopPropagation()}
+							onClick={(e) => setPicker(picker ? null : e.currentTarget.getBoundingClientRect())}
+						>
+							<Icon name='smile' />
+						</button>
+						{canAttach && (
+							<button
+								type='button'
+								className='icon-btn'
+								aria-label='Joindre un fichier'
+								title='Joindre un fichier'
+								onClick={() => fileInput.current?.click()}
+							>
+								<Icon name='paperclip' />
+							</button>
+						)}
+						{canAttach && <RecordButtons onClip={(file) => attach([file])} />}
+						<button
+							type='button'
+							className='icon-btn'
+							aria-label='Événement'
+							title='Créer ou partager un événement'
+							onClick={() => setEventDraft('')}
+						>
+							<Icon name='calendar' />
+						</button>
+						<input
+							ref={fileInput}
+							type='file'
+							multiple
+							hidden
+							onChange={(e) => {
+								const files = [...(e.target.files ?? [])];
+								e.target.value = '';
+								if (files.length) {
+									attach(files);
+								}
+							}}
+						/>
+						{picker && (
+							<EmojiPicker
+								anchor={picker}
+								onClose={() => setPicker(null)}
+								onPick={(char) => {
+									insertEmoji(char);
+									setPicker(null);
+								}}
+							/>
+						)}
+						<span className='grow' />
+						{error || uploads.notice ? (
+							<span className='composer-hint' role='alert' style={{ color: 'var(--danger)', display: 'inline' }}>
+								{error ?? uploads.notice}
+							</span>
+						) : (
+							<span className='composer-hint'>Maj + Entrée pour aller à la ligne</span>
+						)}
+						<button
+							className='send-btn'
+							aria-label='Envoyer'
+							title='Envoyer'
+							disabled={sending || uploads.blocked || (!text.trim() && !uploads.keys.length)}
+						>
+							<Icon name='send' strokeWidth={2} />
+						</button>
+					</div>
 				</div>
-			</div>
-		</form>
+			</form>
+			{/* Hors du <form> du composer : un formulaire imbriqué part en envoi natif et recharge la page. */}
+			{eventDraft !== null && (
+				<EventCardDialog
+					workspaceId={workspaceId}
+					channel={channel}
+					lookup={lookup}
+					initialTitle={eventDraft}
+					onClose={() => setEventDraft(null)}
+				/>
+			)}
+		</>
 	);
 }
