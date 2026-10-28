@@ -47,9 +47,7 @@ export function Shell({ me, workspaceId, items, children }: Props) {
 					))}
 				</div>
 				<span className='grow' />
-				<button type='button' className='rail-round rail-desktop' aria-label='Créer ou rejoindre un espace' title='Créer ou rejoindre un espace' onClick={() => navigate('/espaces')}>
-					<Icon name='plus' />
-				</button>
+				<CreateMenu workspaceId={workspaceId} guest={Boolean(me.guest)} />
 				<button
 					type='button'
 					className='rail-round rail-desktop'
@@ -164,6 +162,46 @@ function ProfileMenu({ me }: { me: Me }) {
 						}}
 					>
 						<Icon name='logout' size={16} /> Se déconnecter
+					</button>
+				</Floating>
+			)}
+		</div>
+	);
+}
+
+// Menu « Créer » de la barre d'apps.
+function CreateMenu({ workspaceId, guest }: { workspaceId: string | null; guest: boolean }) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	const pick = (action: () => void) => () => {
+		setOpen(false);
+		action();
+	};
+	const newCanvas = async (id: string) => {
+		const canvas = await api<{ id: string }>('POST', `/w/${id}/canvases`, { title: 'Sans titre' });
+		navigate(`/w/${id}/canevas/${canvas.id}`);
+	};
+	return (
+		<div ref={ref} className='rail-anchor rail-desktop'>
+			<button type='button' className='rail-round' aria-label='Créer' title='Créer' aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
+				<Icon name='plus' />
+			</button>
+			{open && (
+				<Floating anchor={ref} placement='right-end' offset={18} className='popover rail-pop' role='menu' style={{ width: 260 }}>
+					{workspaceId && !guest && (
+						<>
+							<button type='button' role='menuitem' className='menu-item' onClick={pick(() => void newCanvas(workspaceId).catch(() => undefined))}>
+								<Icon name='file' size={16} /> Canevas
+							</button>
+							<button type='button' role='menuitem' className='menu-item' onClick={pick(() => navigate(`/w/${workspaceId}/canevas`))}>
+								<Icon name='list' size={16} /> Tous les canevas
+							</button>
+							<div className='menu-sep' />
+						</>
+					)}
+					<button type='button' role='menuitem' className='menu-item' onClick={pick(() => navigate('/espaces'))}>
+						<Icon name='plus' size={16} /> Créer ou rejoindre un espace
 					</button>
 				</Floating>
 			)}

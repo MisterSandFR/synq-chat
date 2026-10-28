@@ -1,0 +1,73 @@
+.canvas-card {
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+	max-width: 440px;
+	margin-top: 6px;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+	color: var(--text);
+	text-decoration: none;
+}
+
+.canvas-card:hover {
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.canvas-card-icon {
+	display: grid;
+	flex: none;
+	width: 36px;
+	height: 36px;
+	place-items: center;
+	border-radius: var(--r-sm);
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.canvas-card-main {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.canvas-card-excerpt {
+	display: -webkit-box;
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.45;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+}
+
+.canvas-card-foot {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 4px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.canvas-card-editors {
+	display: flex;
+}
+
+.canvas-card-editors > * + * {
+	margin-left: -6px;
+}
+
+.canvas-card-editors > * {
+	box-shadow: 0 0 0 2px var(--surface);
+	border-radius: 50%;
+}
+
+.canvas-card-pill {
+	padding: 1px 7px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--text) 7%, transparent);
+}
