@@ -24,6 +24,7 @@ import {
 import { listCanvasRows } from '../canvases';
 import { listGrades, loadActors } from '../grades';
 import { fail, readJson, stub, type AppEnv, type Ctx } from '../http';
+import { pagesNotice } from './canvases';
 import { listRow } from '../lists';
 
 export const accessRoutes = new Hono<AppEnv>();
@@ -87,7 +88,7 @@ accessRoutes.get('/w/:wid/access/:kind/:id', async (c) => {
 	return info ? c.json(info) : fail(c, 404, 'Ressource introuvable');
 });
 
-accessRoutes.put('/w/:wid/access/:kind/:id', async (c) => {
+accessRoutes.put('/w/:wid/access/:kind/:id', pagesNotice, async (c) => {
 	const t = await load(c);
 	if (t instanceof Response) {
 		return t;
@@ -176,7 +177,7 @@ accessRoutes.get('/w/:wid/page-categories', async (c) => {
 	);
 });
 
-accessRoutes.post('/w/:wid/page-categories', async (c) => {
+accessRoutes.post('/w/:wid/page-categories', pagesNotice, async (c) => {
 	const actor = c.get('actor');
 	if (!spaceLevel(actor)) {
 		return fail(c, 403, 'Accès invité limité');
@@ -201,7 +202,7 @@ accessRoutes.post('/w/:wid/page-categories', async (c) => {
 	return c.json(toCategory(row, 'manage'), 201);
 });
 
-accessRoutes.patch('/w/:wid/page-categories/:id', async (c) => {
+accessRoutes.patch('/w/:wid/page-categories/:id', pagesNotice, async (c) => {
 	const found = await categoryFor(c);
 	if (found instanceof Response) {
 		return found;
@@ -231,7 +232,7 @@ accessRoutes.patch('/w/:wid/page-categories/:id', async (c) => {
 });
 
 // Les pages de la catégorie reviennent sans catégorie.
-accessRoutes.delete('/w/:wid/page-categories/:id', async (c) => {
+accessRoutes.delete('/w/:wid/page-categories/:id', pagesNotice, async (c) => {
 	const found = await categoryFor(c);
 	if (found instanceof Response) {
 		return found;

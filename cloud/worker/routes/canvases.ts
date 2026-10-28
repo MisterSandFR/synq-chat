@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 
 import { CANVAS_IMAGE_TYPES, CANVAS_LIMITS, PAGE_COVER_RE, pageTemplate, type CanvasAccess, type PagePatch, type PageRelated } from '../../shared/canvas';
 import { atLeast } from '../../shared/access';
@@ -33,6 +33,18 @@ import {
 import { fail, readJson, stub, type AppEnv, type Ctx } from '../http';
 
 export const canvasRoutes = new Hono<AppEnv>();
+
+// Mutation réussie d'une page, d'une catégorie ou d'un accès : l'arbre des autres se relit.
+export const pagesNotice: MiddlewareHandler<AppEnv> = async (c, next) => {
+	await next();
+	if (c.res.ok) {
+		c.executionCtx.waitUntil(
+			stub(c as Ctx)
+				.pagesChanged()
+				.catch(() => undefined),
+		);
+	}
+};
 
 const FILE_ID = /^[\w-]{1,64}$/;
 
@@ -76,7 +88,7 @@ canvasRoutes.get('/w/:wid/canvases', async (c) => {
 	return c.json(rows.flatMap((row) => (access.has(row.id) && (row.archived_at !== null) === archived ? [toMeta(row, access.get(row.id)!)] : [])));
 });
 
-canvasRoutes.post('/w/:wid/canvases', async (c) => {
+canvasRoutes.post('/w/:wid/canvases', pagesNotice, async (c) => {
 	const actor = c.get('actor');
 	if (actor.guest) {
 		return fail(c, 403, 'Accès invité limité');
@@ -124,7 +136,7 @@ canvasRoutes.post('/w/:wid/canvases', async (c) => {
 });
 
 // Canevas de l'onglet du salon : renvoyé s'il existe, créé sinon par qui peut écrire.
-canvasRoutes.post('/w/:wid/channels/:cid/canvas', async (c) => {
+canvasRoutes.post('/w/:wid/channels/:cid/canvas', pagesNotice, async (c) => {
 	const actor = c.get('actor');
 	const channelId = c.req.param('cid');
 	const [access] = await stub(c).canvasAccess(actor, [channelId]);
@@ -155,7 +167,7 @@ canvasRoutes.get('/w/:wid/canvases/:id', async (c) => {
 	return found ? c.json(toMeta(found.row, found.level)) : fail(c, 404, 'Canevas introuvable');
 });
 
-canvasRoutes.patch('/w/:wid/canvases/:id', async (c) => {
+canvasRoutes.patch('/w/:wid/canvases/:id', pagesNotice, async (c) => {
 	const found = await load(c, c.req.param('id'));
 	if (!found) {
 		return fail(c, 404, 'Page introuvable');
@@ -237,7 +249,7 @@ canvasRoutes.patch('/w/:wid/canvases/:id', async (c) => {
 	return fresh ? c.json(toMeta(fresh.row, fresh.level)) : c.json({ ok: true });
 });
 
-canvasRoutes.post('/w/:wid/canvases/:id/duplicate', async (c) => {
+canvasRoutes.post('/w/:wid/canvases/:id/duplicate', pagesNotice, async (c) => {
 	const actor = c.get('actor');
 	const found = await load(c, c.req.param('id'));
 	if (!found || actor.guest) {
@@ -276,7 +288,7 @@ canvasRoutes.get('/w/:wid/canvases/:id/related', async (c) => {
 	return c.json(related);
 });
 
-canvasRoutes.delete('/w/:wid/canvases/:id', async (c) => {
+canvasRoutes.delete('/w/:wid/canvases/:id', pagesNotice, async (c) => {
 	const actor = c.get('actor');
 	const found = await load(c, c.req.param('id'));
 	if (!found) {

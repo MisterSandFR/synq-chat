@@ -5,6 +5,8 @@ import { canvasPath, type CanvasMeta, type PagePatch } from '../../../shared/can
 import { api } from '../../api';
 import { navigate } from '../../router';
 
+export const PAGES_EVENT = 'synq:pages';
+
 type Store = { items: CanvasMeta[] | null; loading: boolean; listeners: Set<() => void> };
 
 const stores = new Map<string, Store>();
@@ -44,10 +46,23 @@ export function usePages(workspaceId: string): CanvasMeta[] | null {
 		if (store.items === null && !store.loading) {
 			void refreshPages(workspaceId).catch(() => undefined);
 		}
-		// Les éditions des autres arrivent au retour sur l'onglet.
 		const onFocus = () => void refreshPages(workspaceId).catch(() => undefined);
+		// Modification d'un autre (page, catégorie, accès) : arbre et catégories relus ensemble, rafales groupées.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const onChange = (event: Event) => {
+			if ((event as CustomEvent<string>).detail !== workspaceId) {
+				return;
+			}
+			clearTimeout(timer);
+			timer = setTimeout(() => void Promise.all([refreshPages(workspaceId), refreshCategories(workspaceId)]).catch(() => undefined), 250);
+		};
 		window.addEventListener('focus', onFocus);
-		return () => window.removeEventListener('focus', onFocus);
+		window.addEventListener(PAGES_EVENT, onChange);
+		return () => {
+			clearTimeout(timer);
+			window.removeEventListener('focus', onFocus);
+			window.removeEventListener(PAGES_EVENT, onChange);
+		};
 	}, [workspaceId]);
 	return items;
 }

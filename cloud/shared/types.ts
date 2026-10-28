@@ -239,6 +239,7 @@ export type ServerEvent =
 	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string }
 	| { t: 'event_card'; eventId: string }
 	| { t: 'emojis_changed' }
+	| { t: 'pages_changed' }
 	| { t: 'draft'; channelId: string; threadRoot: number; draft: Draft | null }
 	| { t: 'scheduled'; items: ScheduledMessage[] }
 	| { t: 'list_changed'; listId: string; channelId: string | null }

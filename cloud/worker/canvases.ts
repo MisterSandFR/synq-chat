@@ -176,10 +176,11 @@ export async function restorePage(db: D1Database, row: CanvasRow): Promise<void>
 }
 
 // Appelé par le DO après une rafale d'éditions.
-export async function updateCanvasContent(db: D1Database, id: string, input: { title: string | null; excerpt: string; editors: string[]; links?: string[] }): Promise<void> {
-	const row = await db.prepare('SELECT editors, workspace_id FROM canvases WHERE id = ?').bind(id).first<{ editors: string; workspace_id: string }>();
+// Renvoie l'espace quand le titre change : l'arbre des autres doit se relire.
+export async function updateCanvasContent(db: D1Database, id: string, input: { title: string | null; excerpt: string; editors: string[]; links?: string[] }): Promise<string | null> {
+	const row = await db.prepare('SELECT editors, workspace_id, title FROM canvases WHERE id = ?').bind(id).first<{ editors: string; workspace_id: string; title: string }>();
 	if (!row) {
-		return;
+		return null;
 	}
 	const editors = [...new Set([...input.editors, ...parseEditors(row.editors)])].slice(0, CANVAS_LIMITS.editors);
 	const title = input.title === null ? null : cleanTitle(input.title) || 'Sans titre';
@@ -196,6 +197,7 @@ export async function updateCanvasContent(db: D1Database, id: string, input: { t
 		}
 	}
 	await db.batch(statements);
+	return title !== null && title !== row.title ? row.workspace_id : null;
 }
 
 export async function backlinkIds(db: D1Database, id: string): Promise<string[]> {

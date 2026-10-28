@@ -235,7 +235,12 @@ export class CanvasDoc extends DurableObject<Env> {
 		const excerpt = textOf(fragment).replace(/\s+/g, ' ').trim();
 		const editors = JSON.parse(this.meta('editors') ?? '[]') as string[];
 		this.sql.exec("DELETE FROM meta WHERE key = 'editors'");
-		await updateCanvasContent(this.env.DB, canvasId, { title: typeof title === 'string' ? title : null, excerpt, editors, links: linksOf(fragment) });
+		const renamed = await updateCanvasContent(this.env.DB, canvasId, { title: typeof title === 'string' ? title : null, excerpt, editors, links: linksOf(fragment) });
+		if (renamed) {
+			await this.env.WORKSPACE.getByName(renamed)
+				.pagesChanged()
+				.catch(() => undefined);
+		}
 	}
 
 	// Modification côté serveur (modèle, titre, copie) relayée comme une édition.

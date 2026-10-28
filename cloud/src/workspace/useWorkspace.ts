@@ -5,6 +5,7 @@ import { mentionedUsers, type Channel, type ClientEvent, type Message, type Mess
 import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
+import { PAGES_EVENT } from './canvas/pages';
 import { EVENT_CARD_EVENT } from './events/store';
 import { publishPoll } from './polls/store';
 import { DRAFTS_EVENT } from './drafts/store';
@@ -230,6 +231,7 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		case 'members_changed':
 		case 'commands_changed':
 		case 'emojis_changed':
+		case 'pages_changed':
 			return state;
 		case 'thread':
 			return withMessage(state, event.root, 'update');
@@ -344,6 +346,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				}
 				if (event.t === 'emojis_changed') {
 					window.dispatchEvent(new CustomEvent(EMOJIS_EVENT, { detail: workspaceId }));
+				}
+				if (event.t === 'pages_changed') {
+					window.dispatchEvent(new CustomEvent(PAGES_EVENT, { detail: workspaceId }));
 				}
 				if (event.t === 'event_card') {
 					window.dispatchEvent(new CustomEvent(EVENT_CARD_EVENT, { detail: event.eventId }));

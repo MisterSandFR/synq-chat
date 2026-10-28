@@ -2589,6 +2589,11 @@ export class Workspace extends DurableObject<Env> {
 		this.broadcast({ t: 'emojis_changed' });
 	}
 
+	// Arbre des pages et catégories changé : chacun relit ce qu'il a le droit de voir.
+	pagesChanged(): void {
+		this.broadcast({ t: 'pages_changed' });
+	}
+
 	// --- Brouillons et messages programmés ---
 
 	draftsList(actor: Actor): Draft[] {

@@ -210,6 +210,21 @@ describe('partage des pages', () => {
 });
 
 describe('catégories de pages', () => {
+	it('arbre en direct : pages, catégories et accès diffusés à l’espace', async () => {
+		const { owner, member, wid, page, share } = await setup();
+		const live = await member.socket(wid);
+		const created = await owner.req<PageCategory>('POST', `/api/w/${wid}/page-categories`, { name: 'Produit' });
+		expect(created.status).toBe(201);
+		expect(await live.next('pages_changed')).toEqual({ t: 'pages_changed' });
+		const p = await page(owner);
+		await live.next('pages_changed');
+		await owner.req('PATCH', `/api/w/${wid}/canvases/${p.id}`, { categoryId: created.data.id });
+		await live.next('pages_changed');
+		await share(owner, 'page_category', created.data.id, { restricted: true, rules: [] });
+		await live.next('pages_changed');
+		live.ws.close();
+	});
+
 	it('crée, range, restreint, renomme et supprime', async () => {
 		const { owner, member, carol, wid, page, share, meta } = await setup();
 		const created = await member.req<PageCategory>('POST', `/api/w/${wid}/page-categories`, { name: '  Produit  ' });
