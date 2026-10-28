@@ -106,6 +106,9 @@ import {
 	type ScheduledFull,
 } from './drafts';
 import { loadActor } from './grades';
+import { REMINDERS_MIGRATION, checkDue, cleanReminderText, deleteMessageReminder, deleteReminder, dueReminders, getReminder, markFired, nextReminderAt, patchReminder, publicReminder, upsertReminder, userReminders } from './reminders';
+import { reminderLink, type LaterItem, type Reminder, type ReminderInput, type ReminderPatch } from '../shared/reminders';
+import { notifyUsers } from './user-hub';
 
 interface Voice {
 	channelId: string;
@@ -385,6 +388,7 @@ const MIGRATIONS = [
 	ALTER TABLE categories ADD COLUMN banner_key TEXT;`,
 	DRAFTS_MIGRATION,
 	FAVORITES_MIGRATION,
+	REMINDERS_MIGRATION,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -2133,6 +2137,9 @@ export class Workspace extends DurableObject<Env> {
 		if (!message || !this.can(actor, message.channelId, P.VIEW_CHANNEL)) {
 			return err(404, 'Message introuvable');
 		}
+		if (!saved) {
+			deleteMessageReminder(this.sql, actor.id, id);
+		}
 		return writeSaved(this.sql, actor.id, id, saved);
 	}
 
@@ -2708,12 +2715,13 @@ export class Workspace extends DurableObject<Env> {
 
 	async alarm(): Promise<void> {
 		await this.sendDueScheduled(Date.now());
+		await this.fireDueReminders(Date.now());
 		await this.armAlarm();
 	}
 
 	// Une seule alarme par DO : chaque source ajoute ici sa prochaine échéance.
 	private async armAlarm(): Promise<void> {
-		const wakes = [nextScheduledAt(this.sql)].filter((at): at is number => at !== null);
+		const wakes = [nextScheduledAt(this.sql), nextReminderAt(this.sql)].filter((at): at is number => at !== null);
 		if (!wakes.length) {
 			await this.ctx.storage.deleteAlarm();
 			return;
@@ -2840,5 +2848,120 @@ export class Workspace extends DurableObject<Env> {
 
 	private seesChannel(actor: Actor, channelId: string): boolean {
 		return this.channelRow(channelId) !== null && this.can(actor, channelId, P.VIEW_CHANNEL);
+	}
+
+	// --- Rappels et « Plus tard » ---
+
+	// Enregistrés et rappels fusionnés par message ; strictement propres à l'acteur.
+	laterItems(actor: Actor): LaterItem[] {
+		const reminders = userReminders(this.sql, actor.id);
+		const pending = new Map(reminders.filter((r) => r.messageId !== null).map((r) => [r.messageId!, r]));
+		const items: LaterItem[] = [];
+		const entry = (messageId: number | null, reminder: Reminder | null, savedAt: number | null, key: string) => {
+			const message = messageId === null ? null : this.message(messageId);
+			const visible = message && this.can(actor, message.channelId, P.VIEW_CHANNEL) ? message : null;
+			if (messageId !== null && !visible && !reminder) {
+				return;
+			}
+			items.push({ key, messageId, message: visible, unavailable: messageId !== null && !visible, savedAt, reminder, at: reminder?.dueAt ?? savedAt ?? reminder?.createdAt ?? 0 });
+		};
+		for (const row of savedRows(this.sql, actor.id)) {
+			const reminder = pending.get(row.message_id);
+			pending.delete(row.message_id);
+			entry(row.message_id, reminder ? publicReminder(reminder) : null, row.created_at, `m${row.message_id}`);
+		}
+		for (const reminder of reminders) {
+			if (reminder.messageId === null || pending.has(reminder.messageId)) {
+				entry(reminder.messageId, publicReminder(reminder), null, reminder.messageId === null ? `r${reminder.id}` : `m${reminder.messageId}`);
+			}
+		}
+		return items;
+	}
+
+	async setReminder(actor: Actor, workspaceId: string, input: ReminderInput): Promise<Result<Reminder>> {
+		const messageId = input.messageId ?? null;
+		if (messageId !== null) {
+			const message = Number.isInteger(messageId) ? this.message(messageId) : null;
+			if (!message || !this.can(actor, message.channelId, P.VIEW_CHANNEL)) {
+				return err(404, 'Message introuvable');
+			}
+		}
+		const text = cleanReminderText(input.text);
+		if (messageId === null && (!text || input.dueAt === null)) {
+			return err(400, 'Texte et échéance requis');
+		}
+		const due = checkDue(input.dueAt);
+		if (!due.ok) {
+			return err(due.status, due.error);
+		}
+		const result = upsertReminder(this.sql, workspaceId, actor.id, { messageId, text, dueAt: due.value, done: input.done === true });
+		if (!result.ok) {
+			return err(result.status, result.error);
+		}
+		if (messageId !== null) {
+			// Rappel sur un message = entrée « Plus tard » ; plafond des enregistrés ignoré.
+			writeSaved(this.sql, actor.id, messageId, true);
+		}
+		await this.remindersChanged(actor.id, workspaceId);
+		return ok(publicReminder(result.value));
+	}
+
+	async updateReminder(actor: Actor, id: number, patch: ReminderPatch): Promise<Result<Reminder>> {
+		const reminder = getReminder(this.sql, actor.id, id);
+		if (!reminder) {
+			return err(404, 'Rappel introuvable');
+		}
+		if (patch.dueAt !== undefined) {
+			const due = checkDue(patch.dueAt);
+			if (!due.ok) {
+				return err(due.status, due.error);
+			}
+		}
+		const next = patchReminder(this.sql, reminder, patch);
+		await this.remindersChanged(actor.id, reminder.workspaceId);
+		return ok(publicReminder(next));
+	}
+
+	// Supprimer : l'entrée quitte « Plus tard », message enregistré compris.
+	async removeReminder(actor: Actor, id: number): Promise<Result<null>> {
+		const reminder = getReminder(this.sql, actor.id, id);
+		if (!reminder) {
+			return err(404, 'Rappel introuvable');
+		}
+		deleteReminder(this.sql, id);
+		if (reminder.messageId !== null) {
+			writeSaved(this.sql, actor.id, reminder.messageId, false);
+		}
+		await this.remindersChanged(actor.id, reminder.workspaceId);
+		return ok(null);
+	}
+
+	private async remindersChanged(userId: string, workspaceId: string): Promise<void> {
+		await this.armAlarm();
+		await notifyUsers(this.env, [userId], { t: 'reminders', workspaceId });
+	}
+
+	// Visibilité relue à l'échéance : un message devenu invisible n'est pas cité.
+	private async fireDueReminders(now: number): Promise<void> {
+		for (const due of dueReminders(this.sql, now)) {
+			markFired(this.sql, due.id, now);
+			const actor = await loadActor(this.env.DB, due.workspaceId, due.userId);
+			if (!actor) {
+				continue;
+			}
+			const message = due.messageId === null ? null : this.message(due.messageId);
+			const visible = message && this.can(actor, message.channelId, P.VIEW_CHANNEL) ? message : null;
+			const where = visible ? this.channelRow(visible.channelId) : null;
+			// Hors salon : un salon en sourdine ne coupe pas un rappel personnel.
+			this.pushNotification({
+				userId: due.userId,
+				kind: 'reminder',
+				channelId: null,
+				title: due.messageId === null ? 'Rappel' : !visible ? 'Rappel : message indisponible' : where && where.kind !== 'dm' ? `Rappel : message dans #${where.name}` : 'Rappel : message',
+				body: due.messageId === null ? due.text : (visible?.body ?? ''),
+				link: reminderLink(due.workspaceId, due.id, visible ?? undefined),
+			});
+			await notifyUsers(this.env, [due.userId], { t: 'reminders', workspaceId: due.workspaceId });
+		}
 	}
 }
