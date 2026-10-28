@@ -2424,6 +2424,21 @@ export class Workspace extends DurableObject<Env> {
 		return ok(conversation);
 	}
 
+	// --- Canevas ---
+
+	// Droits d'un canevas : ceux du salon rattaché, sinon tout membre non invité.
+	canvasAccess(actor: Actor, channelIds: Array<string | null>): Array<'write' | 'read' | null> {
+		return channelIds.map((id) => {
+			if (id === null) {
+				return actor.guest ? null : 'write';
+			}
+			if (!this.channelRow(id) || !this.can(actor, id, P.VIEW_CHANNEL)) {
+				return null;
+			}
+			return this.can(actor, id, P.SEND_MESSAGES) ? 'write' : 'read';
+		});
+	}
+
 	private isGuest(userId: string): boolean {
 		return this.sql.exec('SELECT 1 FROM guests WHERE user_id = ?', userId).toArray().length > 0;
 	}

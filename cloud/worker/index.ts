@@ -7,6 +7,7 @@ import { mailChanged, sendScheduled } from './routes/mail';
 export { Workspace } from './workspace';
 export { Mailbox } from './mail/mailbox';
 export { UserHub } from './user-hub';
+export { CanvasDoc } from './canvas-doc';
 
 const HASHED = /^\/assets\//;
 

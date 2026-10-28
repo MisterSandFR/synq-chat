@@ -12,6 +12,8 @@ import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu
 import { memberColor, memberLabel } from './grades';
 import { MessageMedia } from './media/MessageMedia';
 import { EventCard } from './events/EventCard';
+import { CanvasLinkCard } from './canvas/CanvasCard';
+import { CANVAS_LINK_RE } from '../../shared/canvas';
 import { MailCard } from '../mail/MailCard';
 import { RichText, excerpt, toDisplay, toTokens, type Lookup } from './richText';
 import { ThreadLink } from './dm-threads/ThreadLink';
@@ -312,6 +314,7 @@ export function MessageList({
 								{message.forward && <ForwardCard workspaceId={workspaceId} message={message} lookup={lookup} />}
 								<MessageMedia workspaceId={workspaceId} message={message} onLoad={keepBottom} />
 								{message.eventId && <EventCard workspaceId={workspaceId} eventId={message.eventId} lookup={lookup} />}
+								{CANVAS_LINK_RE.test(message.body) && <CanvasLinkCard workspaceId={workspaceId} body={message.body} lookup={lookup} />}
 								{message.mailCard && <MailCard card={message.mailCard} />}
 								{message.reactions && message.reactions.length > 0 && (
 									<Reactions

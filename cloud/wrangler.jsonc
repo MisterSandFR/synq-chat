@@ -20,13 +20,15 @@
 		"bindings": [
 			{ "name": "WORKSPACE", "class_name": "Workspace" },
 			{ "name": "MAILBOX", "class_name": "Mailbox" },
-			{ "name": "USER_HUB", "class_name": "UserHub" }
+			{ "name": "USER_HUB", "class_name": "UserHub" },
+			{ "name": "CANVAS_DOC", "class_name": "CanvasDoc" }
 		]
 	},
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["Workspace"] },
 		{ "tag": "v2", "new_sqlite_classes": ["Mailbox"] },
-		{ "tag": "v3", "new_sqlite_classes": ["UserHub"] }
+		{ "tag": "v3", "new_sqlite_classes": ["UserHub"] },
+		{ "tag": "v4", "new_sqlite_classes": ["CanvasDoc"] }
 	],
 	"d1_databases": [{ "binding": "DB", "database_name": "synq-chat", "database_id": "7a9814e6-ec0c-4fec-b527-196452e11206", "migrations_dir": "migrations" }],
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "synq-chat-files" }],

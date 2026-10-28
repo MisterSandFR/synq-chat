@@ -39,6 +39,7 @@ import { eventCardRoutes } from './routes/event-cards';
 import { draftRoutes } from './routes/drafts';
 import { voiceRoutes } from './routes/voice';
 import { dropEmojis, emojiRoutes } from './routes/emojis';
+import { canvasRoutes } from './routes/canvases';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
 import { guestRoutes } from './routes/guests';
@@ -847,6 +848,7 @@ app.route('/', inviteRoutes);
 app.route('/', draftRoutes);
 app.route('/', listRoutes);
 app.route('/', absenceRoutes);
+app.route('/', canvasRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

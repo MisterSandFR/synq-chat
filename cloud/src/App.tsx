@@ -68,7 +68,7 @@ export function App() {
 	if (invite) {
 		return <InviteScreen code={invite[1]!} onJoined={refresh} />;
 	}
-	const workspace = path.match(/^\/w\/([\w-]+)(?:\/([\w-]+))?(?:\/[\w-]+)?$/);
+	const workspace = path.match(/^\/w\/([\w-]+)(?:\/([\w-]+)(?:\/([\w-]+))?)?$/);
 	const inWorkspace = Boolean(workspace && me.workspaces.some((w) => w.id === workspace[1]));
 	const last = lastWorkspace();
 	const currentId = inWorkspace ? workspace![1]! : me.workspaces.some((w) => w.id === last) ? last : (me.workspaces[0]?.id ?? null);
@@ -98,7 +98,7 @@ export function App() {
 	if (inWorkspace) {
 		return (
 			<Shell me={me} workspaceId={currentId} items={items}>
-				<WorkspaceView key={workspace![1]} me={me} workspaceId={workspace![1]!} channelId={workspace![2] ?? null} onMeChanged={refresh} onBadges={setBadges} />
+				<WorkspaceView key={workspace![1]} me={me} workspaceId={workspace![1]!} channelId={workspace![2] ?? null} subId={workspace![3] ?? null} onMeChanged={refresh} onBadges={setBadges} />
 			</Shell>
 		);
 	}

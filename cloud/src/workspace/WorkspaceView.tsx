@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, lazy, Suspense } from 'react';
 
 import { P, has } from '../../shared/permissions';
 import type { ChannelKind, Me, Member, Message } from '../../shared/types';
@@ -25,6 +25,7 @@ import { AccessDialog } from './grade-access/AccessDialog';
 import { DrivePanel } from './DrivePanel';
 import { DraftsView, ScheduledBanner, useDraftsLoader } from './drafts';
 import { useAbsenceStatus } from './absences/AbsenceStatus';
+import { openChannelCanvas } from './canvas/CanvasCard';
 import { MembersPanel } from './MembersPanel';
 import { useMemberMenu } from './members/useMemberMenu';
 import { MessageList } from './MessageList';
@@ -57,6 +58,7 @@ type Props = {
 	workspaceId: string;
 	channelId: string | null;
 	onMeChanged: () => Promise<unknown>;
+	subId?: string | null;
 	onBadges?: (badges: Record<string, number>) => void;
 };
 
@@ -78,7 +80,10 @@ function useFocused(): boolean {
 	return focused;
 }
 
-export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadges }: Props) {
+// Éditeur et Yjs chargés seulement à l'ouverture d'un canevas.
+const CanvasPage = lazy(() => import('./canvas/CanvasPage').then((m) => ({ default: m.CanvasPage })));
+
+export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadges, subId }: Props) {
 	const myId = me.user.id;
 	const { state, dispatch, send, loadMessages, reloadInfo } = useWorkspace(workspaceId, myId, channelId);
 	useDirectsLoader(workspaceId, state.connId, dispatch);
@@ -121,7 +126,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	useDraftsLoader(workspaceId, state.connId);
 	const active = channels?.find((c) => c.id === channelId);
 	// Pages de l'espace hors salon, ouvertes depuis la barre d'apps.
-	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : channelId === 'brouillons' ? 'drafts' : channelId === 'listes' ? 'lists' : null;
+	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : channelId === 'brouillons' ? 'drafts' : channelId === 'listes' ? 'lists' : channelId === 'canevas' ? 'canvases' : null;
 	const view: ContentView = page === 'dms' || page === 'threads' ? page : null;
 	const openView = (next: Exclude<ContentView, null>) => navigate(`/w/${workspaceId}/${next === 'dms' ? 'messages' : 'fils'}`);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
@@ -505,8 +510,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					</button>
 					{page && (
 						<h1>
-							<Icon name={page === 'lists' ? 'list' : page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : page === 'drafts' ? 'compose' : 'thread'} />
-							<span className='ellipsis'>{page === 'lists' ? 'Listes' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : 'Fils'}</span>
+							<Icon name={page === 'lists' ? 'list' : page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : page === 'drafts' ? 'compose' : page === 'canvases' ? 'file' : 'thread'} />
+							<span className='ellipsis'>{page === 'lists' ? 'Listes' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Canevas' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
@@ -544,6 +549,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					{!view && activeDm?.group && (
 						<button type='button' className='icon-btn' aria-label='Participants du groupe' title='Participants du groupe' onClick={() => setGroupOpen(true)}>
 							<Icon name='users' />
+						</button>
+					)}
+					{active && active.kind !== 'voice' && (
+						<button type='button' className='icon-btn' aria-label='Canevas du salon' title='Canevas du salon' onClick={() => void openChannelCanvas(workspaceId, active.id)}>
+							<Icon name='file' />
 						</button>
 					)}
 					{active && (
@@ -599,6 +609,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					<div className='content'>
 						{page === 'lists' ? (
 							<ListsView workspaceId={workspaceId} members={members} channels={rooms} version={state.listsVersion} />
+						) : page === 'canvases' ? (
+							<Suspense fallback={<div className='spinner' aria-busy />}>
+								<CanvasPage workspaceId={workspaceId} canvasId={subId ?? null} myId={myId} members={members} channels={rooms} perms={state.perms} workspacePerms={state.info?.perms ?? 0} onOpenChannel={openChannel} channelLabel={labelOf} />
+							</Suspense>
 						) : page === 'activity' ? (
 							<ActivityPanel
 								workspaceId={workspaceId}
