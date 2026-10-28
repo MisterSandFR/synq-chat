@@ -47,9 +47,7 @@ export function Shell({ me, workspaceId, items, children }: Props) {
 					))}
 				</div>
 				<span className='grow' />
-				<button type='button' className='rail-round rail-desktop' aria-label='Créer ou rejoindre un espace' title='Créer ou rejoindre un espace' onClick={() => navigate('/espaces')}>
-					<Icon name='plus' />
-				</button>
+				<CreateMenu workspaceId={me.guest ? null : workspaceId} />
 				<button
 					type='button'
 					className='rail-round rail-desktop'
@@ -62,6 +60,39 @@ export function Shell({ me, workspaceId, items, children }: Props) {
 				<ProfileMenu me={me} />
 			</nav>
 			<div className='shell-main'>{children}</div>
+		</div>
+	);
+}
+
+// Menu « Créer » : entrées d'espace (liste, canevas) puis espaces.
+function CreateMenu({ workspaceId }: { workspaceId: string | null }) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useDismiss(ref, open, () => setOpen(false));
+	const pick = (href: string) => {
+		setOpen(false);
+		navigate(href);
+	};
+	return (
+		<div ref={ref} className='rail-anchor rail-desktop'>
+			<button type='button' className='rail-round' aria-label='Créer' title='Créer' aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
+				<Icon name='plus' />
+			</button>
+			{open && (
+				<Floating anchor={ref} placement='right-end' offset={18} className='popover rail-pop' role='menu' style={{ width: 260 }}>
+					{workspaceId && (
+						<>
+							<button type='button' role='menuitem' className='menu-item' onClick={() => pick(`/w/${workspaceId}/listes/nouvelle`)}>
+								<Icon name='list' size={16} /> Liste
+							</button>
+							<div className='menu-sep' />
+						</>
+					)}
+					<button type='button' role='menuitem' className='menu-item' onClick={() => pick('/espaces')}>
+						<Icon name='plus' size={16} /> Créer ou rejoindre un espace
+					</button>
+				</Floating>
+			)}
 		</div>
 	);
 }

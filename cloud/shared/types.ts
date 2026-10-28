@@ -238,7 +238,8 @@ export type ServerEvent =
 	| { t: 'event_card'; eventId: string }
 	| { t: 'emojis_changed' }
 	| { t: 'draft'; channelId: string; threadRoot: number; draft: Draft | null }
-	| { t: 'scheduled'; items: ScheduledMessage[] };
+	| { t: 'scheduled'; items: ScheduledMessage[] }
+	| { t: 'list_changed'; listId: string; channelId: string | null };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

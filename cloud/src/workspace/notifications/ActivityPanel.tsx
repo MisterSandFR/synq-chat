@@ -35,6 +35,7 @@ const KIND_ICON: Record<NotificationKind, IconName> = {
 	calendar: 'calendar',
 	mail: 'mail',
 	scheduled: 'clock',
+	list: 'list',
 };
 
 const time = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
