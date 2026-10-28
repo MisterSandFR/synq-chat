@@ -6,7 +6,10 @@ type Sql = SqlStorage;
 export const cleanCategoryName = (raw: unknown) => (typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ').slice(0, LIMITS.categoryLength) : '');
 
 export const listCategories = (sql: Sql): Category[] =>
-	sql.exec<{ id: string; name: string; position: number }>('SELECT id, name, position FROM categories ORDER BY position, name').toArray();
+	sql
+		.exec<{ id: string; name: string; position: number; banner_key: string | null }>('SELECT id, name, position, banner_key FROM categories ORDER BY position, name')
+		.toArray()
+		.map(({ banner_key, ...rest }) => ({ ...rest, bannerKey: banner_key }));
 
 const categoryExists = (sql: Sql, id: string) => sql.exec('SELECT 1 FROM categories WHERE id = ?', id).toArray().length > 0;
 
@@ -15,7 +18,7 @@ export const nextPosition = (sql: Sql, categoryId: string | null) =>
 
 export function insertCategory(sql: Sql, name: string): Category {
 	const { max } = sql.exec<{ max: number | null }>('SELECT MAX(position) AS max FROM categories').one();
-	const category = { id: crypto.randomUUID(), name, position: (max ?? -1) + 1 };
+	const category = { id: crypto.randomUUID(), name, position: (max ?? -1) + 1, bannerKey: null };
 	sql.exec('INSERT INTO categories (id, name, position) VALUES (?, ?, ?)', category.id, category.name, category.position);
 	return category;
 }
@@ -23,6 +26,13 @@ export function insertCategory(sql: Sql, name: string): Category {
 export function renameCategory(sql: Sql, id: string, name: string): Category | null {
 	sql.exec('UPDATE categories SET name = ? WHERE id = ?', name, id);
 	return listCategories(sql).find((c) => c.id === id) ?? null;
+}
+
+// Renvoie l'ancienne clé, à retirer de R2 par l'appelant.
+export function setCategoryBanner(sql: Sql, id: string, key: string | null): string | null {
+	const previous = sql.exec<{ banner_key: string | null }>('SELECT banner_key FROM categories WHERE id = ?', id).one().banner_key;
+	sql.exec('UPDATE categories SET banner_key = ? WHERE id = ?', key, id);
+	return previous;
 }
 
 // Salons conservés, rangés après ceux sans catégorie.

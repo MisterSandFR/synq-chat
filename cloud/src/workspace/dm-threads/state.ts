@@ -100,6 +100,7 @@ export async function openDirect(workspaceId: string, userIds: string[], name = 
 		userLimit: 0,
 		position: 0,
 		createdAt: conversation.createdAt,
+		icon: '',
 	};
 	return { conversation, channel, perms: DM_PERMS };
 }
