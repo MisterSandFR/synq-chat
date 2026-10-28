@@ -129,6 +129,13 @@
 	box-shadow: 0 0 0 2px rgb(255 255 255 / 0.18);
 }
 
+.rail-space-img {
+	width: 100%;
+	height: 100%;
+	border-radius: inherit;
+	object-fit: cover;
+}
+
 .rail-round {
 	width: 36px;
 	height: 36px;

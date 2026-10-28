@@ -10,6 +10,8 @@ const rule = (method: string, re: RegExp, action: string, kind: AuditKind): Rule
 // Chemins relatifs à /api/w/:wid ; le premier groupe capturé est la cible.
 const RULES: Rule[] = [
 	rule('PATCH', /^\/info$/, 'workspace.update', 'workspace'),
+	rule('POST', /^\/logo$/, 'workspace.update', 'workspace'),
+	rule('DELETE', /^\/logo$/, 'workspace.update', 'workspace'),
 	rule('PUT', /^\/layout$/, 'layout.update', 'workspace'),
 	rule('POST', /^\/invites$/, 'invite.create', 'invite'),
 	rule('DELETE', /^\/members\/([^/]+)$/, 'member.kick', 'member'),

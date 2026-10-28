@@ -5,7 +5,7 @@ import type { Me } from '../../shared/types';
 import { api } from '../api';
 import { navigate } from '../router';
 import { useTheme, type Theme } from '../theme';
-import { Avatar, Icon, useDismiss, type IconName } from '../ui';
+import { Avatar, Icon, SpaceLogo, useDismiss, type IconName } from '../ui';
 import './shell.css';
 
 export type RailItem = { key: string; label: string; icon: IconName; href: string; active: boolean; badge?: number };
@@ -76,14 +76,14 @@ function SpaceMenu({ me, workspaceId }: { me: Me; workspaceId: string | null }) 
 			<button
 				type='button'
 				className='rail-space'
-				style={current ? { background: current.accent } : undefined}
+				style={current ? { background: current.logoUrl ? 'var(--surface)' : current.accent } : undefined}
 				aria-label={current ? `Espace ${current.name}, changer d’espace` : 'Choisir un espace'}
 				title={current?.name ?? 'Espaces'}
 				aria-haspopup='menu'
 				aria-expanded={open}
 				onClick={() => setOpen(!open)}
 			>
-				{current ? current.name.charAt(0).toUpperCase() : <Icon name='home' />}
+				{current ? current.logoUrl ? <img className='rail-space-img' src={current.logoUrl} alt='' /> : current.name.charAt(0).toUpperCase() : <Icon name='home' />}
 			</button>
 			{open && (
 				<Floating anchor={ref} placement='right-start' offset={18} className='popover rail-pop' role='menu' style={{ width: 280 }}>
@@ -98,9 +98,7 @@ function SpaceMenu({ me, workspaceId }: { me: Me; workspaceId: string | null }) 
 								navigate(`/w/${w.id}`);
 							}}
 						>
-							<span className='avatar avatar-square' style={{ width: 26, height: 26, fontSize: 12, background: w.accent, color: '#fff' }}>
-								{w.name.charAt(0).toUpperCase()}
-							</span>
+							<SpaceLogo name={w.name} accent={w.accent} url={w.logoUrl} size={26} />
 							<span className='grow ellipsis'>{w.name}</span>
 							{w.id === workspaceId && <Icon name='check' size={16} />}
 						</button>

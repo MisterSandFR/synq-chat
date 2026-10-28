@@ -7,7 +7,7 @@ import { P, has } from '../../shared/permissions';
 import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
 import { api } from '../api';
 import { navigate } from '../router';
-import { Avatar, Icon, useDismiss } from '../ui';
+import { Avatar, Icon, SpaceLogo, useDismiss } from '../ui';
 import { CategoryNav } from './categories/CategoryNav';
 import { memberColor } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
@@ -50,7 +50,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 	return (
 		<aside className='sidebar' style={{ width: width.width }} aria-label='Navigation de l’espace'>
 			<div className='sidebar-top'>
-				<WorkspaceSwitcher me={me} workspaceId={workspaceId} name={state.info?.name ?? ''} accent={state.info?.accent} />
+				<WorkspaceSwitcher me={me} workspaceId={workspaceId} name={state.info?.name ?? ''} accent={state.info?.accent} logoUrl={state.info?.logoUrl} />
 				<button type='button' className='icon-btn' aria-label='Réglages de l’espace' title='Réglages de l’espace' onClick={onOpenSettings}>
 					<Icon name='settings' />
 				</button>
@@ -250,16 +250,14 @@ function VoiceChannelRow({ channel, active, unread, mentions, participants, memb
 	);
 }
 
-function WorkspaceSwitcher({ me, workspaceId, name, accent }: { me: Me; workspaceId: string; name: string; accent?: string }) {
+function WorkspaceSwitcher({ me, workspaceId, name, accent, logoUrl }: { me: Me; workspaceId: string; name: string; accent?: string; logoUrl?: string | null }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	useDismiss(ref, open, () => setOpen(false));
 	return (
 		<div className='switcher' ref={ref}>
 			<button type='button' className='switcher-btn' aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
-				<span className='avatar avatar-square' style={{ width: 30, height: 30, fontSize: 13, background: accent ?? 'var(--text)', color: '#fff' }}>
-					{name.charAt(0).toUpperCase() || ' '}
-				</span>
+				<SpaceLogo name={name} accent={accent} url={logoUrl} size={30} />
 				<span className='switcher-name'>{name}</span>
 				<Icon name='chevron' size={16} />
 			</button>
@@ -276,9 +274,7 @@ function WorkspaceSwitcher({ me, workspaceId, name, accent }: { me: Me; workspac
 								navigate(`/w/${w.id}`);
 							}}
 						>
-							<span className='avatar avatar-square' style={{ width: 26, height: 26, fontSize: 12, background: w.accent, color: '#fff' }}>
-								{w.name.charAt(0).toUpperCase()}
-							</span>
+							<SpaceLogo name={w.name} accent={w.accent} url={w.logoUrl} size={26} />
 							<span className='grow ellipsis'>{w.name}</span>
 							{w.id === workspaceId && <Icon name='check' size={16} />}
 						</button>

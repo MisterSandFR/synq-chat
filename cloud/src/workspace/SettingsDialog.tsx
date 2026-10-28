@@ -2,10 +2,11 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Floating } from '../floating';
 import { DEFAULT_GRADE, P, has, type Override, type PermGroup } from '../../shared/permissions';
+import { AVATAR_TYPES } from '../../shared/rc';
 import { type Channel, type ChannelKind, type ChannelOverrides, type Grade, type Member, type WorkspaceDetail } from '../../shared/types';
-import { api, errorText } from '../api';
+import { api, errorText, upload } from '../api';
 import { navigate } from '../router';
-import { Avatar, Dialog, Icon, useDismiss } from '../ui';
+import { Avatar, Dialog, Icon, SpaceLogo, useDismiss, type IconName } from '../ui';
 import { ChannelPermissions } from './categories/OverridesEditor';
 import { CommandsTab } from './commands/CommandsSettings';
 import { memberColor, memberGrades, topOf } from './grades';
@@ -13,6 +14,7 @@ import { AuditTab } from './settings/AuditTab';
 import { GradesTab } from './settings/GradesSettings';
 import { Swatches } from './settings/Swatches';
 import { WebhooksTab } from './rc/WebhooksTab';
+import './settings/settings.css';
 
 type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'audit';
 
@@ -24,6 +26,10 @@ type Props = {
 	myId: string;
 	onChanged: () => Promise<unknown>;
 };
+
+type NavItem = { key: Tab; label: string; icon: IconName; allowed: boolean };
+
+const LOGO_SIZE = 256;
 
 function useAction() {
 	const [error, setError] = useState<string | null>(null);
@@ -41,110 +47,269 @@ function useAction() {
 }
 
 export function SettingsDialog({ open, onClose, info, channels, myId, onChanged }: Props) {
+	const ref = useRef<HTMLDialogElement>(null);
+	useEffect(() => {
+		const dialog = ref.current;
+		if (open && dialog && !dialog.open) {
+			dialog.showModal();
+		} else if (!open && dialog?.open) {
+			dialog.close();
+		}
+	}, [open]);
+	return (
+		<dialog ref={ref} className='dialog settings-dialog' aria-label='Réglages de l’espace' onClose={onClose} onClick={(e) => e.target === ref.current && onClose()}>
+			{open && <SettingsShell info={info} channels={channels} myId={myId} onChanged={onChanged} onClose={onClose} />}
+		</dialog>
+	);
+}
+
+function SettingsShell({ info, channels, myId, onChanged, onClose }: Omit<Props, 'open'>) {
 	const [tab, setTab] = useState<Tab>('space');
-	const tabs: Array<[Tab, string, boolean]> = [
-		['space', 'Espace', true],
-		['channels', 'Salons', has(info.perms, P.MANAGE_CHANNELS)],
-		['grades', 'Grades', has(info.perms, P.MANAGE_GRADES)],
-		['members', 'Membres', true],
-		['invites', 'Invitations', has(info.perms, P.CREATE_INVITES)],
-		['commands', 'Commandes', has(info.perms, P.MANAGE_COMMANDS)],
-		['webhooks', 'Webhooks', has(info.perms, P.MANAGE_COMMANDS)],
-		['audit', 'Journal', has(info.perms, P.MANAGE_WORKSPACE)],
+	// Mobile seulement : liste des sections, puis page plein écran.
+	const [view, setView] = useState<'nav' | 'page'>('nav');
+	const groups: Array<[string, NavItem[]]> = [
+		[
+			'Espace',
+			[
+				{ key: 'space', label: 'Vue d’ensemble', icon: 'settings', allowed: true },
+				{ key: 'channels', label: 'Salons', icon: 'hash', allowed: has(info.perms, P.MANAGE_CHANNELS) },
+			],
+		],
+		[
+			'Membres',
+			[
+				{ key: 'members', label: 'Membres', icon: 'users', allowed: true },
+				{ key: 'grades', label: 'Grades', icon: 'shield', allowed: has(info.perms, P.MANAGE_GRADES) },
+				{ key: 'invites', label: 'Invitations', icon: 'user-plus', allowed: has(info.perms, P.CREATE_INVITES) },
+			],
+		],
+		[
+			'Intégrations',
+			[
+				{ key: 'commands', label: 'Commandes', icon: 'slash', allowed: has(info.perms, P.MANAGE_COMMANDS) },
+				{ key: 'webhooks', label: 'Webhooks', icon: 'link', allowed: has(info.perms, P.MANAGE_COMMANDS) },
+			],
+		],
+		['Modération', [{ key: 'audit', label: 'Journal', icon: 'list', allowed: has(info.perms, P.MANAGE_WORKSPACE) }]],
 	];
-	const visible = tabs.filter(([, , allowed]) => allowed);
-	const current = visible.some(([key]) => key === tab) ? tab : 'space';
+	const visible = groups.map(([label, items]) => [label, items.filter((item) => item.allowed)] as const).filter(([, items]) => items.length > 0);
+	const items = visible.flatMap(([, list]) => list);
+	const current = items.find((item) => item.key === tab) ?? items[0]!;
 
 	return (
-		<Dialog open={open} onClose={onClose} title='Réglages de l’espace' wide>
-			<div className='tabs' role='tablist'>
-				{visible.map(([key, label]) => (
-					<button key={key} type='button' role='tab' aria-selected={current === key} className='tab' onClick={() => setTab(key)}>
-						{label}
+		<div className='settings-shell' data-view={view}>
+			<nav className='settings-nav' aria-label='Sections des réglages'>
+				<div className='settings-nav-head'>
+					<SpaceLogo name={info.name} accent={info.accent} url={info.logoUrl} size={32} />
+					<span className='settings-nav-title'>
+						<strong className='ellipsis'>{info.name}</strong>
+						<span>Réglages de l’espace</span>
+					</span>
+					<button type='button' className='icon-btn settings-nav-close' onClick={onClose} aria-label='Fermer'>
+						<Icon name='close' />
 					</button>
+				</div>
+				{visible.map(([label, list]) => (
+					<div key={label} className='settings-nav-group' role='group' aria-label={label}>
+						<h3>{label}</h3>
+						{list.map((item) => (
+							<button
+								key={item.key}
+								type='button'
+								className='settings-nav-item'
+								aria-current={item.key === current.key ? 'page' : undefined}
+								onClick={() => {
+									setTab(item.key);
+									setView('page');
+								}}
+							>
+								<Icon name={item.icon} size={16} />
+								<span className='grow ellipsis'>{item.label}</span>
+								<Icon name='chevron-right' size={16} />
+							</button>
+						))}
+					</div>
 				))}
-			</div>
-			{current === 'space' && <SpaceTab info={info} myId={myId} onChanged={onChanged} />}
-			{current === 'channels' && <ChannelsTab info={info} channels={channels} />}
-			{current === 'grades' && <GradesTab info={info} myId={myId} onChanged={onChanged} />}
-			{current === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
-			{current === 'invites' && <InvitesTab workspaceId={info.id} />}
-			{current === 'commands' && <CommandsTab workspaceId={info.id} />}
-			{current === 'webhooks' && <WebhooksTab workspaceId={info.id} />}
-			{current === 'audit' && <AuditTab info={info} channelName={(id) => channels.find((c) => c.id === id)?.name ?? null} />}
-		</Dialog>
+			</nav>
+			<section className='settings-page' aria-labelledby='settings-page-title'>
+				<header className='settings-page-head'>
+					<button type='button' className='icon-btn settings-back' onClick={() => setView('nav')} aria-label='Retour aux sections'>
+						<Icon name='chevron-left' />
+					</button>
+					<h2 id='settings-page-title' className='ellipsis'>
+						{current.label}
+					</h2>
+					<button type='button' className='icon-btn' onClick={onClose} aria-label='Fermer'>
+						<Icon name='close' />
+					</button>
+				</header>
+				<div className='settings-page-body'>
+					{current.key === 'space' && <SpaceTab info={info} myId={myId} onChanged={onChanged} />}
+					{current.key === 'channels' && <ChannelsTab info={info} channels={channels} />}
+					{current.key === 'grades' && <GradesTab info={info} myId={myId} onChanged={onChanged} />}
+					{current.key === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
+					{current.key === 'invites' && <InvitesTab workspaceId={info.id} />}
+					{current.key === 'commands' && <CommandsTab workspaceId={info.id} />}
+					{current.key === 'webhooks' && <WebhooksTab workspaceId={info.id} />}
+					{current.key === 'audit' && <AuditTab info={info} channelName={(id) => channels.find((c) => c.id === id)?.name ?? null} />}
+				</div>
+			</section>
+		</div>
 	);
+}
+
+// Recadrage carré centré, réduit à 256 px : poids constant quelle que soit la photo.
+async function squareLogo(file: File): Promise<File> {
+	if (!AVATAR_TYPES.includes(file.type)) {
+		throw new Error('Image PNG, JPEG, GIF ou WebP attendue');
+	}
+	const bitmap = await createImageBitmap(file).catch(() => {
+		throw new Error('Image illisible');
+	});
+	const side = Math.min(bitmap.width, bitmap.height);
+	const canvas = document.createElement('canvas');
+	canvas.width = LOGO_SIZE;
+	canvas.height = LOGO_SIZE;
+	const context = canvas.getContext('2d')!;
+	context.imageSmoothingQuality = 'high';
+	context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, LOGO_SIZE, LOGO_SIZE);
+	bitmap.close();
+	const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
+	if (!blob) {
+		throw new Error('Image illisible');
+	}
+	// Safari n'encode pas le WebP : blob.type retombe sur PNG.
+	return new File([blob], 'logo', { type: blob.type });
 }
 
 function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: string; onChanged: () => Promise<unknown> }) {
 	const { error, run } = useAction();
+	const [busy, setBusy] = useState(false);
 	const canEdit = has(info.perms, P.MANAGE_WORKSPACE);
 	const setAccent = (accent: string) =>
 		run(async () => {
 			await api('PATCH', `/w/${info.id}/info`, { accent });
 			await onChanged();
 		});
+	const logoTask = (task: () => Promise<unknown>) => {
+		setBusy(true);
+		void run(async () => {
+			await task();
+			await onChanged();
+		}).finally(() => setBusy(false));
+	};
+	const changeLogo = (file: File | undefined) => file && logoTask(async () => upload(`/w/${info.id}/logo`, await squareLogo(file)));
+	const removeLogo = () => logoTask(() => api('DELETE', `/w/${info.id}/logo`));
+
 	return (
-		<div className='stack' style={{ gap: 22 }}>
-			{canEdit && (
-				<form
-					className='field'
-					onSubmit={(e: FormEvent<HTMLFormElement>) => {
-						e.preventDefault();
-						const name = new FormData(e.currentTarget).get('name');
-						void run(async () => {
-							await api('PATCH', `/w/${info.id}/info`, { name });
-							await onChanged();
-						});
-					}}
-				>
-					Nom de l’espace
-					<div className='inline-form'>
-						<input name='name' defaultValue={info.name} required maxLength={64} />
-						<button className='btn'>Renommer</button>
+		<div className='settings-sections'>
+			<section className='settings-block'>
+				<div className='settings-identity'>
+					<SpaceLogo name={info.name} accent={info.accent} url={info.logoUrl} size={80} />
+					<div className='settings-identity-text'>
+						<strong className='ellipsis'>{info.name}</strong>
+						{canEdit ? (
+							<>
+								<div className='row' style={{ flexWrap: 'wrap', gap: 8 }}>
+									<label className={`btn${busy ? ' is-disabled' : ''}`}>
+										<Icon name='upload' size={16} /> Changer le logo
+										<input
+											type='file'
+											accept={AVATAR_TYPES.join(',')}
+											hidden
+											disabled={busy}
+											onChange={(e) => {
+												changeLogo(e.target.files?.[0]);
+												e.target.value = '';
+											}}
+										/>
+									</label>
+									{info.logoUrl && (
+										<button type='button' className='btn btn-ghost' disabled={busy} onClick={removeLogo}>
+											Retirer
+										</button>
+									)}
+								</div>
+								<span className='field-hint'>Recadré en carré de 256 px. PNG, JPEG, GIF ou WebP, 2 Mo max. Sans logo, l’initiale s’affiche.</span>
+							</>
+						) : (
+							<span className='field-hint'>Seuls les membres qui gèrent l’espace peuvent modifier son identité.</span>
+						)}
 					</div>
-				</form>
-			)}
-			{canEdit && (
-				<div className='field'>
-					Couleur de l’espace
-					<span className='field-hint'>Utilisée pour le salon actif, les mentions et les boutons principaux.</span>
-					<Swatches value={info.accent} onPick={(color) => void setAccent(color)} />
 				</div>
-			)}
-			{info.owner ? (
-				<button
-					type='button'
-					className='btn btn-danger'
-					style={{ alignSelf: 'flex-start' }}
-					onClick={() =>
-						window.confirm(`Supprimer « ${info.name} » ? Messages et fichiers seront effacés définitivement.`) &&
-						void run(async () => {
-							await api('DELETE', `/w/${info.id}/info`);
-							await onChanged();
-							navigate('/espaces', true);
-						})
-					}
-				>
-					Supprimer l’espace
-				</button>
-			) : (
-				<button
-					type='button'
-					className='btn btn-danger'
-					style={{ alignSelf: 'flex-start' }}
-					onClick={() =>
-						window.confirm(`Quitter « ${info.name} » ?`) &&
-						void run(async () => {
-							await api('DELETE', `/w/${info.id}/members/${myId}`);
-							await onChanged();
-							navigate('/espaces', true);
-						})
-					}
-				>
-					Quitter l’espace
-				</button>
-			)}
+				{canEdit && (
+					<form
+						className='field'
+						onSubmit={(e: FormEvent<HTMLFormElement>) => {
+							e.preventDefault();
+							const name = new FormData(e.currentTarget).get('name');
+							void run(async () => {
+								await api('PATCH', `/w/${info.id}/info`, { name });
+								await onChanged();
+							});
+						}}
+					>
+						Nom de l’espace
+						<div className='inline-form'>
+							<input name='name' defaultValue={info.name} required maxLength={64} />
+							<button className='btn'>Renommer</button>
+						</div>
+					</form>
+				)}
+				{canEdit && (
+					<div className='field'>
+						Couleur de l’espace
+						<span className='field-hint'>Utilisée pour le salon actif, les mentions et les boutons principaux.</span>
+						<Swatches value={info.accent} onPick={(color) => void setAccent(color)} />
+					</div>
+				)}
+			</section>
+			<section className='settings-block'>
+				<h3 className='settings-block-title'>{info.owner ? 'Zone sensible' : 'Quitter'}</h3>
+				{info.owner ? (
+					<div className='settings-danger'>
+						<span className='grow'>
+							<strong>Supprimer l’espace</strong>
+							<span className='field-hint'>Messages, fichiers et réglages sont effacés définitivement.</span>
+						</span>
+						<button
+							type='button'
+							className='btn btn-danger'
+							onClick={() =>
+								window.confirm(`Supprimer « ${info.name} » ? Messages et fichiers seront effacés définitivement.`) &&
+								void run(async () => {
+									await api('DELETE', `/w/${info.id}/info`);
+									await onChanged();
+									navigate('/espaces', true);
+								})
+							}
+						>
+							Supprimer l’espace
+						</button>
+					</div>
+				) : (
+					<div className='settings-danger'>
+						<span className='grow'>
+							<strong>Quitter l’espace</strong>
+							<span className='field-hint'>Il faudra une nouvelle invitation pour revenir.</span>
+						</span>
+						<button
+							type='button'
+							className='btn btn-danger'
+							onClick={() =>
+								window.confirm(`Quitter « ${info.name} » ?`) &&
+								void run(async () => {
+									await api('DELETE', `/w/${info.id}/members/${myId}`);
+									await onChanged();
+									navigate('/espaces', true);
+								})
+							}
+						>
+							Quitter l’espace
+						</button>
+					</div>
+				)}
+			</section>
 			{error && <p className='notice notice-error'>{error}</p>}
 		</div>
 	);

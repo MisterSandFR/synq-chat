@@ -35,6 +35,7 @@ import { mailRoutes } from './routes/mail';
 import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
 import { voiceRoutes } from './routes/voice';
+import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
 import { guestRoutes } from './routes/guests';
 import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
@@ -319,17 +320,17 @@ app.use('*', async (c, next) => {
 app.get('/me', async (c) => {
 	const user = c.get('user');
 	const { results } = await c.env.DB.prepare(
-		"SELECT w.id, w.name, w.accent, m.role = 'owner' AS owner FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY w.name COLLATE NOCASE",
+		"SELECT w.id, w.name, w.accent, w.logo_key, m.role = 'owner' AS owner FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY w.name COLLATE NOCASE",
 	)
 		.bind(user.id)
-		.all<Omit<WorkspaceSummary, 'owner'> & { owner: number }>();
+		.all<Omit<WorkspaceSummary, 'owner' | 'logoUrl'> & { owner: number; logo_key: string | null }>();
 	const [identities, account] = await c.env.DB.batch([
 		c.env.DB.prepare('SELECT provider FROM identities WHERE user_id = ?').bind(user.id),
 		c.env.DB.prepare("SELECT password_hash != '' AS has_password, guest FROM users WHERE id = ?").bind(user.id),
 	]);
 	return c.json({
 		user,
-		workspaces: results.map((w) => ({ ...w, owner: w.owner === 1 })),
+		workspaces: results.map(({ logo_key, ...w }) => ({ ...w, owner: w.owner === 1, logoUrl: logoUrl(w.id, logo_key) })),
 		identities: (identities!.results as { provider: string }[]).map((row) => row.provider),
 		hasPassword: (account!.results[0] as { has_password: number }).has_password === 1,
 		guest: (account!.results[0] as { guest: number }).guest === 1,
@@ -374,16 +375,16 @@ app.post('/workspaces', async (c) => {
 		...defaultGrades(c.env.DB, id),
 	]);
 	const channels = await workspaceStub(c.env, id).setup();
-	return c.json({ id, name, accent, owner: true, channels }, 201);
+	return c.json({ id, name, accent, owner: true, logoUrl: null, channels }, 201);
 });
 
 app.get('/invites/:code', async (c) => {
 	const invite = await c.env.DB.prepare(
-		'SELECT w.id, w.name FROM invites i JOIN workspaces w ON w.id = i.workspace_id WHERE i.code = ? AND i.expires_at > ?',
+		'SELECT w.id, w.name, w.logo_key FROM invites i JOIN workspaces w ON w.id = i.workspace_id WHERE i.code = ? AND i.expires_at > ?',
 	)
 		.bind(c.req.param('code'), Date.now())
-		.first<{ id: string; name: string }>();
-	return invite ? c.json({ workspaceId: invite.id, workspaceName: invite.name }) : fail(c, 404, 'Invitation invalide ou expirée');
+		.first<{ id: string; name: string; logo_key: string | null }>();
+	return invite ? c.json({ workspaceId: invite.id, workspaceName: invite.name, logoUrl: logoUrl(invite.id, invite.logo_key) }) : fail(c, 404, 'Invitation invalide ou expirée');
 });
 
 app.post('/invites/:code/accept', async (c) => {
@@ -436,7 +437,7 @@ app.get('/w/:wid/info', async (c) => {
 	const workspaceId = c.get('workspaceId');
 	const actor = c.get('actor');
 	const [workspace, members, links] = await c.env.DB.batch([
-		c.env.DB.prepare('SELECT id, name, accent FROM workspaces WHERE id = ?').bind(workspaceId),
+		c.env.DB.prepare('SELECT id, name, accent, logo_key FROM workspaces WHERE id = ?').bind(workspaceId),
 		c.env.DB.prepare(
 			"SELECT u.id, u.name, u.avatar_url AS avatarUrl, m.role = 'owner' AS owner, m.role = 'guest' AS guest FROM members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? ORDER BY u.name COLLATE NOCASE",
 		).bind(workspaceId),
@@ -446,7 +447,7 @@ app.get('/w/:wid/info', async (c) => {
 	for (const link of links!.results as Array<{ user_id: string; grade_id: string }>) {
 		gradesOf.set(link.user_id, [...(gradesOf.get(link.user_id) ?? []), link.grade_id]);
 	}
-	const { id, name, accent } = workspace!.results[0] as { id: string; name: string; accent: string };
+	const { id, name, accent, logo_key } = workspace!.results[0] as { id: string; name: string; accent: string; logo_key: string | null };
 	// Invité : seulement les participants de ses groupes, aucun grade.
 	const contacts = actor.guest ? new Set(await stub(c).guestContacts(actor.id)) : null;
 	const rows = (members!.results as Array<Omit<Member, 'owner' | 'gradeIds' | 'guest'> & { owner: number; guest: number }>).filter((m) => !contacts || contacts.has(m.id) || m.id === actor.id);
@@ -454,6 +455,7 @@ app.get('/w/:wid/info', async (c) => {
 		id,
 		name,
 		accent,
+		logoUrl: logoUrl(id, logo_key),
 		owner: actor.owner,
 		perms: actor.perms,
 		top: actor.top,
@@ -493,8 +495,10 @@ app.delete('/w/:wid/info', async (c) => {
 	if (!c.get('actor').owner) {
 		return fail(c, 403, 'Réservé au propriétaire');
 	}
+	const logo = await c.env.DB.prepare('SELECT logo_key FROM workspaces WHERE id = ?').bind(c.get('workspaceId')).first<{ logo_key: string | null }>();
 	await stub(c).destroy();
 	await c.env.DB.prepare('DELETE FROM workspaces WHERE id = ?').bind(c.get('workspaceId')).run();
+	await dropLogo(c, c.get('workspaceId'), logo?.logo_key);
 	return c.json({ ok: true });
 });
 
@@ -871,6 +875,7 @@ app.route('/', eventCardRoutes);
 app.route('/', guestRoutes);
 app.route('/', aiRoutes);
 app.route('/', aiChatRoutes);
+app.route('/', workspaceLogoRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

@@ -4,7 +4,7 @@ import { ACCENTS, type Me } from '../shared/types';
 import type { Notice } from './App';
 import { api, errorText } from './api';
 import { navigate, rememberReturn } from './router';
-import { Avatar, Icon, Logo } from './ui';
+import { Avatar, Icon, Logo, SpaceLogo } from './ui';
 
 type Props = { me: Me; notice: Notice; onNotice: (n: Notice) => void; onChanged: () => Promise<unknown> };
 
@@ -77,9 +77,7 @@ export function HomeScreen({ me, notice, onNotice, onChanged }: Props) {
 											navigate(`/w/${w.id}`);
 										}}
 									>
-										<span className='avatar avatar-square' style={{ width: 42, height: 42, fontSize: 16, background: w.accent, color: '#fff' }}>
-											{w.name.charAt(0).toUpperCase()}
-										</span>
+										<SpaceLogo name={w.name} accent={w.accent} url={w.logoUrl} size={42} />
 										<span className='grow'>
 											<span className='ellipsis' style={{ display: 'block', fontWeight: 600 }}>
 												{w.name}

@@ -59,7 +59,7 @@ export function guestAllowed(method: string, rest: string, guestId: string): boo
 }
 
 // Compte invité : son profil et les routes d'espace, filtrées ensuite par `guestAllowed`.
-const GUEST_ACCOUNT_RE = /^\/api\/(me|me\/profile|me\/avatar|ai\/rewrite|avatars\/[^/]+\/[^/]+|w\/.+)$/;
+const GUEST_ACCOUNT_RE = /^\/api\/(me|me\/profile|me\/avatar|ai\/rewrite|avatars\/[^/]+\/[^/]+|workspace-logos\/[^/]+\/[^/]+|w\/.+)$/;
 
 export const guestAccountAllowed = (path: string) => GUEST_ACCOUNT_RE.test(path);
 

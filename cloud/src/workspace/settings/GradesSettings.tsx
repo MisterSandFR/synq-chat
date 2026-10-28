@@ -127,16 +127,24 @@ export function GradesTab({ info, myId, onChanged }: Props) {
 			{grade && (
 				<section className='roles-main'>
 					<div className='roles-head'>
-						<h3 className='ellipsis'>Modifier le grade : {grade.name}</h3>
-						<div className='segmented' role='tablist'>
-							<button type='button' role='tab' aria-selected={pane === 'display'} onClick={() => setPane('display')}>
+						<h3 className='roles-title'>
+							<span className='roles-title-label'>Modifier le grade</span>
+							<span className='roles-title-name'>
+								<span className='grade-dot' style={{ background: grade.color || 'var(--line-strong)' }} aria-hidden />
+								<span className='ellipsis' title={grade.name}>
+									{grade.name}
+								</span>
+							</span>
+						</h3>
+						<div className='tabs roles-tabs' role='tablist'>
+							<button type='button' role='tab' className='tab' aria-selected={pane === 'display'} onClick={() => setPane('display')}>
 								Affichage
 							</button>
-							<button type='button' role='tab' aria-selected={pane === 'perms'} onClick={() => setPane('perms')}>
+							<button type='button' role='tab' className='tab' aria-selected={pane === 'perms'} onClick={() => setPane('perms')}>
 								Permissions
 							</button>
-							<button type='button' role='tab' aria-selected={pane === 'members'} onClick={() => setPane('members')}>
-								Membres ({count(grade)})
+							<button type='button' role='tab' className='tab' aria-selected={pane === 'members'} onClick={() => setPane('members')}>
+								Membres <span className='roles-tab-count'>{count(grade)}</span>
 							</button>
 						</div>
 					</div>
