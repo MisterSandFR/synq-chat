@@ -14,6 +14,7 @@ import {
 	type ListTemplate,
 	type ListValue,
 } from '../shared/lists';
+import { fieldsOf, templateStatements, type ItemFields } from './lists-bases';
 import { err, ok, type Result } from './result';
 
 export type ListRow = {
@@ -23,6 +24,7 @@ export type ListRow = {
 	title: string;
 	description: string;
 	columns: string;
+	labels: string;
 	created_by: string;
 	created_at: number;
 	updated_at: number;
@@ -40,6 +42,15 @@ type ItemRow = {
 	created_at: number;
 	updated_at: number;
 	comments?: number;
+	labels: string;
+	cover: string | null;
+	start_date: string | null;
+	due_date: string | null;
+	done: number;
+	checks_total?: number;
+	checks_done?: number;
+	attachments?: number;
+	page_id?: string | null;
 };
 
 const parse = <T>(raw: string, fallback: T): T => {
@@ -75,10 +86,23 @@ const toItem = (row: ItemRow): ListItem => ({
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,
 	comments: row.comments ?? 0,
+	labels: parse<string[]>(row.labels, []),
+	cover: row.cover,
+	startDate: row.start_date,
+	dueDate: row.due_date,
+	done: Boolean(row.done),
+	checks: { done: row.checks_done ?? 0, total: row.checks_total ?? 0 },
+	attachments: row.attachments ?? 0,
+	pageId: row.page_id ?? null,
 });
 
 const LIST_SELECT = 'SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS item_count FROM lists l';
-const ITEM_SELECT = 'SELECT i.*, (SELECT COUNT(*) FROM list_comments c WHERE c.item_id = i.id) AS comments FROM list_items i';
+const ITEM_SELECT = `SELECT i.*, (SELECT COUNT(*) FROM list_comments c WHERE c.item_id = i.id) AS comments,
+	(SELECT COUNT(*) FROM list_checks k WHERE k.item_id = i.id) AS checks_total,
+	(SELECT COUNT(*) FROM list_checks k WHERE k.item_id = i.id AND k.done = 1) AS checks_done,
+	(SELECT COUNT(*) FROM list_attachments a WHERE a.item_id = i.id) AS attachments,
+	(SELECT canvas_id FROM list_item_pages p WHERE p.item_id = i.id) AS page_id
+	FROM list_items i`;
 
 export async function workspaceLists(db: D1Database, workspaceId: string): Promise<ListRow[]> {
 	const { results } = await db.prepare(`${LIST_SELECT} WHERE l.workspace_id = ? ORDER BY l.updated_at DESC`).bind(workspaceId).all<ListRow>();
@@ -229,8 +253,14 @@ export function newlyAssigned(columns: ListColumn[], before: Record<string, List
 	return [...out];
 }
 
-export function changedFields(columns: ListColumn[], before: ListItem, input: { title?: unknown; description?: unknown }, values: Record<string, ListValue>): string[] {
+export function changedFields(columns: ListColumn[], before: ListItem, input: { title?: unknown; description?: unknown }, values: Record<string, ListValue>, fields: ItemFields = fieldsOf(before)): string[] {
 	const names: string[] = [];
+	const was = fieldsOf(before);
+	for (const [key, label] of [['labels', 'Étiquettes'], ['cover', 'Couverture'], ['startDate', 'Début'], ['dueDate', 'Échéance'], ['done', 'Terminé']] as const) {
+		if (JSON.stringify(was[key]) !== JSON.stringify(fields[key])) {
+			names.push(label);
+		}
+	}
 	if (typeof input.title === 'string' && input.title.trim() !== before.title) {
 		names.push('Titre');
 	}
@@ -246,18 +276,21 @@ export function changedFields(columns: ListColumn[], before: ListItem, input: { 
 }
 
 export async function createList(db: D1Database, workspaceId: string, userId: string, input: { title?: unknown; template?: unknown; channelId?: string | null }): Promise<Result<ListRow>> {
-	const template = LIST_TEMPLATES[(typeof input.template === 'string' && input.template in LIST_TEMPLATES ? input.template : 'blank') as ListTemplate];
+	const key = (typeof input.template === 'string' && input.template in LIST_TEMPLATES ? input.template : 'blank') as ListTemplate;
+	const template = LIST_TEMPLATES[key];
 	const title = cleanText(input.title, LIST_LIMITS.titleLength) || template.title;
 	const now = Date.now();
 	const id = crypto.randomUUID();
-	await db
-		.prepare('INSERT INTO lists (id, workspace_id, channel_id, title, columns, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-		.bind(id, workspaceId, input.channelId ?? null, title, JSON.stringify(template.columns), userId, now, now)
-		.run();
+	await db.batch([
+		db
+			.prepare('INSERT INTO lists (id, workspace_id, channel_id, title, columns, labels, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+			.bind(id, workspaceId, input.channelId ?? null, title, JSON.stringify(template.columns), JSON.stringify(template.labels ?? []), userId, now, now),
+		...templateStatements(db, id, userId, key),
+	]);
 	return ok((await listRow(db, workspaceId, id))!);
 }
 
-export async function updateList(db: D1Database, row: ListRow, input: { title?: unknown; description?: unknown; columns?: unknown }): Promise<Result<null>> {
+export async function updateList(db: D1Database, row: ListRow, input: { title?: unknown; description?: unknown; columns?: unknown }, labels: string = row.labels): Promise<Result<null>> {
 	const title = input.title === undefined ? row.title : cleanText(input.title, LIST_LIMITS.titleLength);
 	if (!title) {
 		return err(400, 'Titre requis');
@@ -271,7 +304,7 @@ export async function updateList(db: D1Database, row: ListRow, input: { title?: 
 		}
 		columns = JSON.stringify(clean.value);
 	}
-	await db.prepare('UPDATE lists SET title = ?, description = ?, columns = ?, updated_at = ? WHERE id = ?').bind(title, description, columns, Date.now(), row.id).run();
+	await db.prepare('UPDATE lists SET title = ?, description = ?, columns = ?, labels = ?, updated_at = ? WHERE id = ?').bind(title, description, columns, labels, Date.now(), row.id).run();
 	return ok(null);
 }
 
@@ -280,7 +313,7 @@ export const touchList = (db: D1Database, id: string) => db.prepare('UPDATE list
 const logActivity = (db: D1Database, itemId: string, userId: string, action: string) =>
 	db.prepare('INSERT INTO list_activity (item_id, user_id, action, created_at) VALUES (?, ?, ?, ?)').bind(itemId, userId, action, Date.now());
 
-export async function createItem(db: D1Database, list: ListRow, userId: string, input: { title?: unknown; position?: unknown }, values: Record<string, ListValue>): Promise<Result<ListItem>> {
+export async function createItem(db: D1Database, list: ListRow, userId: string, input: { title?: unknown; position?: unknown }, values: Record<string, ListValue>, fields: ItemFields = fieldsOf(null)): Promise<Result<ListItem>> {
 	if ((list.item_count ?? 0) >= LIST_LIMITS.items) {
 		return err(409, 'Liste pleine');
 	}
@@ -293,8 +326,8 @@ export async function createItem(db: D1Database, list: ListRow, userId: string, 
 	const now = Date.now();
 	await db.batch([
 		db
-			.prepare('INSERT INTO list_items (id, list_id, position, title, vals, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-			.bind(id, list.id, position, cleanText(input.title, LIST_LIMITS.titleLength), JSON.stringify(values), userId, now, now),
+			.prepare('INSERT INTO list_items (id, list_id, position, title, vals, labels, cover, start_date, due_date, done, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+			.bind(id, list.id, position, cleanText(input.title, LIST_LIMITS.titleLength), JSON.stringify(values), JSON.stringify(fields.labels), fields.cover, fields.startDate, fields.dueDate, Number(fields.done), userId, now, now),
 		logActivity(db, id, userId, 'a créé l’élément'),
 		touchList(db, list.id),
 	]);
@@ -308,17 +341,24 @@ export async function updateItem(
 	userId: string,
 	input: { title?: unknown; description?: unknown; position?: unknown },
 	values: Record<string, ListValue>,
+	fields: ItemFields = fieldsOf(item),
+	automated = 0,
 ): Promise<ListItem> {
 	const title = typeof input.title === 'string' ? cleanText(input.title, LIST_LIMITS.titleLength) : item.title;
 	const description = typeof input.description === 'string' ? input.description.slice(0, LIST_LIMITS.descriptionLength) : item.description;
 	const position = typeof input.position === 'number' && Number.isFinite(input.position) ? input.position : item.position;
-	const changed = changedFields(columnsOf(list), item, input, values);
+	const changed = changedFields(columnsOf(list), item, input, values, fields);
 	const statements = [
-		db.prepare('UPDATE list_items SET title = ?, description = ?, position = ?, vals = ?, updated_at = ? WHERE id = ?').bind(title, description, position, JSON.stringify(values), Date.now(), item.id),
+		db
+			.prepare('UPDATE list_items SET title = ?, description = ?, position = ?, vals = ?, labels = ?, cover = ?, start_date = ?, due_date = ?, done = ?, updated_at = ? WHERE id = ?')
+			.bind(title, description, position, JSON.stringify(values), JSON.stringify(fields.labels), fields.cover, fields.startDate, fields.dueDate, Number(fields.done), Date.now(), item.id),
 		touchList(db, list.id),
 	];
 	if (changed.length) {
 		statements.push(logActivity(db, item.id, userId, `a modifié ${changed.join(', ')}`));
+	}
+	if (automated) {
+		statements.push(logActivity(db, item.id, userId, automated > 1 ? `a déclenché ${automated} automatisations` : 'a déclenché une automatisation'));
 	}
 	await db.batch(statements);
 	return (await itemRow(db, list.id, item.id))!;
