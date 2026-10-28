@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 
-import type { ListDetail } from '../../shared/lists';
+import type { CardLink, ListDetail } from '../../shared/lists';
 import { fail, readJson, stub, type AppEnv, type Ctx } from '../http';
 import {
 	addComment,
+	archivedItems,
 	columnsOf,
 	createItem,
 	createList,
@@ -52,6 +53,8 @@ import {
 	updateView,
 	type Notice,
 } from '../lists-bases';
+import { listCanvasRows, scopeOf, workspaceMemberIds } from '../canvases';
+import { addLink, checkToCard, duplicateCard, followersOf, moveCard, removeLink, resolveLinks, searchTargets, setFollow, toggleReaction, type ScopedLink } from '../lists-cards';
 import { LIMITS } from '../../shared/types';
 import { atLeast, type AccessLevel } from '../../shared/access';
 import { baseLevel, loadAccess, readableBases } from '../access';
@@ -182,7 +185,7 @@ listRoutes.post('/w/:wid/lists/:lid/items', async (c) => {
 	if (!created.ok) {
 		return fail(c, created.status, created.error);
 	}
-	await notifyAssigned(c, found.row, created.value.id, created.value.title, newlyAssigned(columns, {}, auto.state.values));
+	await notifyAssigned(c, found.row, created.value.id, created.value.title, [...newlyAssigned(columns, {}, auto.state.values), ...auto.state.fields.members]);
 	await notifyRules(c, found.row, created.value, auto.notices);
 	await changed(c, found.row);
 	return c.json(created.value, 201);
@@ -197,8 +200,14 @@ listRoutes.get('/w/:wid/lists/:lid/items/:iid', async (c) => {
 	if (!item) {
 		return fail(c, 404, 'Élément introuvable');
 	}
-	const [history, checklists, files] = await Promise.all([itemHistory(c.env.DB, item.id), checklistsOf(c.env.DB, item.id), filesOf(c.env.DB, c.get('workspaceId'), item.id)]);
-	return c.json({ item, ...history, checklists, files });
+	const [history, checklists, files, links, followers] = await Promise.all([
+		itemHistory(c.env.DB, item.id),
+		checklistsOf(c.env.DB, item.id),
+		filesOf(c.env.DB, c.get('workspaceId'), item.id),
+		resolveLinks(c.env.DB, c.get('workspaceId'), item.id),
+		followersOf(c.env.DB, item.id),
+	]);
+	return c.json({ item, ...history, checklists, files, links: await visibleLinks(c, links), following: followers.includes(c.get('actor').id) });
 });
 
 listRoutes.patch('/w/:wid/lists/:lid/items/:iid', async (c) => {
@@ -222,8 +231,11 @@ listRoutes.patch('/w/:wid/lists/:lid/items/:iid', async (c) => {
 	}
 	const auto = applyRules(await rulesOf(c.env.DB, found.row.id), columns, item.values, { values: values.value, fields: fields.value });
 	const updated = await updateItem(c.env.DB, found.row, item, c.get('user').id, input, auto.state.values, auto.state.fields, auto.fired);
-	await notifyAssigned(c, found.row, item.id, updated.title, newlyAssigned(columns, item.values, auto.state.values));
+	await notifyAssigned(c, found.row, item.id, updated.title, [...newlyAssigned(columns, item.values, auto.state.values), ...updated.members.filter((id) => !item.members.includes(id))]);
 	await notifyRules(c, found.row, updated, auto.notices);
+	if (updated.done !== item.done || Boolean(updated.archivedAt) !== Boolean(item.archivedAt)) {
+		await notifyFollowers(c, found.row, updated, updated.archivedAt && !item.archivedAt ? 'Carte archivée' : updated.done && !item.done ? 'Carte terminée' : 'Carte rouverte');
+	}
 	await changed(c, found.row);
 	return c.json(updated);
 });
@@ -252,10 +264,16 @@ listRoutes.post('/w/:wid/lists/:lid/items/:iid/comments', async (c) => {
 	if (!item) {
 		return fail(c, 404, 'Élément introuvable');
 	}
-	const added = await addComment(c.env.DB, found.row, item.id, c.get('user').id, (await readJson<{ body: string }>(c)).body);
+	const input = await readJson<{ body: string; mentions: unknown }>(c);
+	const added = await addComment(c.env.DB, found.row, item.id, c.get('user').id, input.body);
 	if (!added.ok) {
 		return fail(c, added.status, added.error);
 	}
+	const actor = c.get('actor');
+	const asked = Array.isArray(input.mentions) ? input.mentions.filter((id): id is string => typeof id === 'string').slice(0, 20) : [];
+	const mentioned = asked.length ? await workspaceMemberIds(c.env.DB, c.get('workspaceId'), asked) : [];
+	await sendNotice(c.env, found.row, actor.id, mentioned, item, `${actor.name} t’a mentionné dans un commentaire`).catch(() => undefined);
+	await notifyFollowers(c, found.row, item, `Nouveau commentaire de ${actor.name}`, mentioned);
 	await changed(c, found.row);
 	return c.json(added.value, 201);
 });
@@ -280,10 +298,31 @@ listRoutes.get('/w/:wid/lists/:lid/export', async (c) => {
 
 // --- Bases : champs natifs, vues, checklists, pièces jointes, automatisations, document ---
 
-type ItemInput = { title: string; description: string; values: unknown; position: number; labels: unknown; cover: unknown; startDate: unknown; dueDate: unknown; done: unknown };
+type ItemInput = {
+	title: string;
+	description: string;
+	values: unknown;
+	position: number;
+	labels: unknown;
+	cover: unknown;
+	startDate: unknown;
+	dueDate: unknown;
+	done: unknown;
+	icon: unknown;
+	coverMode: unknown;
+	coverY: unknown;
+	members: unknown;
+	startTime: unknown;
+	dueTime: unknown;
+	reminder: unknown;
+	estimate: unknown;
+	estimateUnit: unknown;
+	archived: unknown;
+	template: unknown;
+};
 
-// À la création, pas encore de pièce jointe : seule une couleur est acceptée.
-const isColorCover = (value: unknown) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+// À la création, pas encore de pièce jointe : seule une couleur ou un dégradé est accepté.
+const isColorCover = (value: unknown) => typeof value === 'string' && (/^#[0-9a-f]{6}$/i.test(value) || value.startsWith('grad:'));
 
 async function notifyRules(c: Ctx, row: ListRow, item: { id: string; title: string; values: Record<string, unknown> }, notices: Notice[]): Promise<void> {
 	for (const notice of notices) {
@@ -559,4 +598,171 @@ listRoutes.get('/w/:wid/lists/:lid/items/:iid/page/ws', async (c) => {
 	const headers = new Headers(c.req.raw.headers);
 	headers.set('x-canvas-peer', JSON.stringify(peer));
 	return c.env.CANVAS_DOC.getByName(docId).fetch(new Request(c.req.raw, { headers }));
+});
+
+// --- Cartes riches : dupliquer, déplacer, archives, suivi, liens, réactions ---
+
+async function notifyFollowers(c: Ctx, row: ListRow, item: { id: string; title: string }, title: string, skip: string[] = []): Promise<void> {
+	const followers = (await followersOf(c.env.DB, item.id)).filter((id) => !skip.includes(id));
+	await sendNotice(c.env, row, c.get('actor').id, followers, item, title).catch(() => undefined);
+}
+
+// Droits relus par les vérifications existantes : base de la carte liée, portée de la page.
+async function visibleLinks(c: Ctx, links: ScopedLink[]): Promise<CardLink[]> {
+	const listIds = [...new Set(links.filter((l) => l.kind === 'card').map((l) => l.listId!))];
+	const rows = await Promise.all(listIds.map((id) => listRow(c.env.DB, c.get('workspaceId'), id)));
+	const rights = await Promise.all(rows.map((row) => (row ? rightsOf(c, row) : null)));
+	const seen = new Set(listIds.filter((_, i) => rights[i]?.view));
+	const pages = links.filter((l) => l.kind === 'page');
+	const access = pages.length ? await stub(c).canvasAccess(c.get('actor'), pages.map((l) => l.scope)) : [];
+	const open = new Set(pages.filter((_, i) => access[i]).map((l) => l.id));
+	return links.filter((l) => (l.kind === 'card' ? seen.has(l.listId!) : open.has(l.id))).map(({ scope: _scope, ...link }) => link);
+}
+
+listRoutes.get('/w/:wid/lists/:lid/archived', async (c) => {
+	const found = await loadList(c, 'view');
+	return found instanceof Response ? found : c.json(await archivedItems(c.env.DB, found.row.id));
+});
+
+listRoutes.post('/w/:wid/lists/:lid/items/:iid/duplicate', async (c) => {
+	const found = await loadItem(c, 'edit');
+	if (found instanceof Response) {
+		return found;
+	}
+	const input = await readJson<{ title: string; template: boolean; values: unknown }>(c);
+	const template = input.template === true;
+	const values = await mergeValues(c.env.DB, c.get('workspaceId'), columnsOf(found.row), found.item.values, input.values);
+	if (!values.ok) {
+		return fail(c, values.status, values.error);
+	}
+	const fromTemplate = found.item.template && !template;
+	const title = typeof input.title === 'string' && input.title.trim() ? input.title : fromTemplate ? found.item.title : `${found.item.title || 'Sans titre'} (copie)`;
+	const created = await duplicateCard(c.env.DB, found.row, found.item, c.get('actor').id, { title, template, values: values.value });
+	if (!created.ok) {
+		return fail(c, created.status, created.error);
+	}
+	if (fromTemplate) {
+		await notifyAssigned(c, found.row, created.value.id, created.value.title, created.value.members);
+	}
+	await changed(c, found.row);
+	return c.json(created.value, 201);
+});
+
+// Écriture exigée des deux côtés ; base cible invisible = introuvable.
+listRoutes.post('/w/:wid/lists/:lid/items/:iid/move', async (c) => {
+	const found = await loadItem(c, 'edit');
+	if (found instanceof Response) {
+		return found;
+	}
+	const input = await readJson<{ listId: string }>(c);
+	const target = typeof input.listId === 'string' ? await listRow(c.env.DB, c.get('workspaceId'), input.listId) : null;
+	const rights = target ? await rightsOf(c, target) : null;
+	if (!target || !rights?.view) {
+		return fail(c, 404, 'Base introuvable');
+	}
+	if (!rights.edit) {
+		return fail(c, 403, 'Permission insuffisante');
+	}
+	const moved = await moveCard(c.env, found.row, target, found.item, c.get('actor').id);
+	if (!moved.ok) {
+		return fail(c, moved.status, moved.error);
+	}
+	c.executionCtx.waitUntil(moved.value.stale.length ? c.env.FILES.delete(moved.value.stale) : Promise.resolve());
+	await notifyFollowers(c, target, moved.value.item, `Carte déplacée vers ${target.title}`);
+	await Promise.all([changed(c, found.row), changed(c, target)]);
+	return c.json(moved.value.item);
+});
+
+listRoutes.post('/w/:wid/lists/:lid/items/:iid/checks/:chid/convert', async (c) => {
+	const found = await loadItem(c, 'edit');
+	if (found instanceof Response) {
+		return found;
+	}
+	const created = await checkToCard(c.env.DB, found.row, found.item, c.req.param('chid'), c.get('actor').id);
+	if (!created.ok) {
+		return fail(c, created.status, created.error);
+	}
+	await notifyAssigned(c, found.row, created.value.id, created.value.title, created.value.members);
+	await changed(c, found.row);
+	return c.json(created.value, 201);
+});
+
+listRoutes.put('/w/:wid/lists/:lid/items/:iid/follow', async (c) => {
+	const found = await loadItem(c, 'view');
+	if (found instanceof Response) {
+		return found;
+	}
+	const on = (await readJson<{ on: boolean }>(c)).on;
+	if (typeof on !== 'boolean') {
+		return fail(c, 400, 'Valeur invalide');
+	}
+	await setFollow(c.env.DB, found.item.id, c.get('actor').id, on);
+	return c.json({ following: on });
+});
+
+async function targetVisible(c: Ctx, kind: unknown, id: unknown): Promise<boolean> {
+	if (typeof id !== 'string') {
+		return false;
+	}
+	if (kind === 'card') {
+		const owner = await c.env.DB.prepare('SELECT list_id FROM list_items WHERE id = ?').bind(id).first<{ list_id: string }>();
+		const row = owner ? await listRow(c.env.DB, c.get('workspaceId'), owner.list_id) : null;
+		return Boolean(row && (await rightsOf(c, row)).view);
+	}
+	const rows = await listCanvasRows(c.env.DB, c.get('workspaceId'));
+	const byId = new Map(rows.map((r) => [r.id, r]));
+	const page = byId.get(id);
+	return Boolean(page && (await stub(c).canvasAccess(c.get('actor'), [scopeOf(page, byId)]))[0]);
+}
+
+listRoutes.post('/w/:wid/lists/:lid/items/:iid/links', async (c) => {
+	const found = await loadItem(c, 'edit');
+	if (found instanceof Response) {
+		return found;
+	}
+	const input = await readJson<{ kind: string; id: string }>(c);
+	if ((input.kind === 'card' || input.kind === 'page') && !(await targetVisible(c, input.kind, input.id))) {
+		return fail(c, 404, 'Cible introuvable');
+	}
+	const done = await addLink(c.env.DB, c.get('workspaceId'), found.item, c.get('actor').id, input);
+	if (!done.ok) {
+		return fail(c, done.status, done.error);
+	}
+	await changed(c, found.row);
+	return c.json(await visibleLinks(c, await resolveLinks(c.env.DB, c.get('workspaceId'), found.item.id)), 201);
+});
+
+listRoutes.delete('/w/:wid/lists/:lid/items/:iid/links/:kind/:ref', async (c) => {
+	const found = await loadItem(c, 'edit');
+	if (found instanceof Response) {
+		return found;
+	}
+	const done = await removeLink(c.env.DB, found.item.id, c.req.param('kind'), c.req.param('ref'));
+	if (!done.ok) {
+		return fail(c, done.status, done.error);
+	}
+	await changed(c, found.row);
+	return c.json(null);
+});
+
+listRoutes.get('/w/:wid/lists/:lid/items/:iid/link-targets', async (c) => {
+	const found = await loadItem(c, 'view');
+	if (found instanceof Response) {
+		return found;
+	}
+	const targets = await searchTargets(c.env.DB, c.get('workspaceId'), c.req.query('q') ?? '', found.item.id);
+	return c.json(await visibleLinks(c, targets));
+});
+
+listRoutes.post('/w/:wid/lists/:lid/items/:iid/comments/:cid/reactions', async (c) => {
+	const found = await loadItem(c, 'edit');
+	if (found instanceof Response) {
+		return found;
+	}
+	const done = await toggleReaction(c.env.DB, found.item.id, c.req.param('cid'), c.get('actor').id, (await readJson<{ emoji: string }>(c)).emoji);
+	if (!done.ok) {
+		return fail(c, done.status, done.error);
+	}
+	await changed(c, found.row);
+	return c.json(null);
 });

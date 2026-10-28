@@ -62,6 +62,18 @@ export interface ListItem {
 	checks: { done: number; total: number };
 	attachments: number;
 	pageId: string | null;
+	icon: string;
+	coverMode: CoverMode;
+	// Position verticale du recadrage, en pourcentage.
+	coverY: number;
+	members: string[];
+	startTime: string | null;
+	dueTime: string | null;
+	reminder: CardReminder | null;
+	estimate: number | null;
+	estimateUnit: EstimateUnit;
+	archivedAt: number | null;
+	template: boolean;
 }
 
 export interface ListDetail extends ListSummary {
@@ -80,6 +92,7 @@ export interface ListComment {
 	userId: string;
 	body: string;
 	createdAt: number;
+	reactions: CommentReaction[];
 }
 
 export interface ListActivity {
@@ -87,6 +100,7 @@ export interface ListActivity {
 	userId: string;
 	action: string;
 	createdAt: number;
+	changes: ActivityChange[];
 }
 
 export interface ListItemDetail {
@@ -95,6 +109,8 @@ export interface ListItemDetail {
 	activity: ListActivity[];
 	checklists: Checklist[];
 	files: ListAttachment[];
+	links: CardLink[];
+	following: boolean;
 }
 
 export type ListTemplate = 'blank' | 'project' | 'bugs' | 'roadmap' | 'content' | 'requests' | 'hiring';
@@ -280,9 +296,10 @@ export interface ViewConfig {
 	hidden: string[];
 	// « due », « start » ou id d'une colonne date.
 	dateField: string;
+	card: CardFace;
 }
 
-export const defaultViewConfig = (): ViewConfig => ({ filters: [], sort: null, groupBy: null, boardBy: null, hidden: [], dateField: 'due' });
+export const defaultViewConfig = (): ViewConfig => ({ filters: [], sort: null, groupBy: null, boardBy: null, hidden: [], dateField: 'due', card: defaultCardFace() });
 
 export interface ListSavedView {
 	id: string;
@@ -368,3 +385,79 @@ export function dueState(item: Pick<ListItem, 'dueDate' | 'done'>, today: string
 export const isoDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
 export const fileCover = (cover: string | null) => (cover?.startsWith('file:') ? cover.slice(5) : null);
+
+// --- Cartes riches ---
+
+export type CoverMode = 'top' | 'full';
+export type CardReminder = '1d' | '1h';
+export type EstimateUnit = 'pts' | 'h';
+
+export const CARD_REMINDERS: ReadonlyArray<{ id: CardReminder; label: string; ms: number }> = [
+	{ id: '1d', label: '1 jour avant', ms: 86_400_000 },
+	{ id: '1h', label: '1 heure avant', ms: 3_600_000 },
+];
+
+export const COVER_GRADIENTS: ReadonlyArray<{ id: string; label: string; css: string }> = [
+	{ id: 'aube', label: 'Aube', css: 'linear-gradient(135deg, #f7b267 0%, #f25f5c 100%)' },
+	{ id: 'lagon', label: 'Lagon', css: 'linear-gradient(135deg, #43cea2 0%, #185a9d 100%)' },
+	{ id: 'lavande', label: 'Lavande', css: 'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)' },
+	{ id: 'foret', label: 'Forêt', css: 'linear-gradient(135deg, #7fb685 0%, #1d4d3a 100%)' },
+	{ id: 'nuit', label: 'Nuit', css: 'linear-gradient(135deg, #2b3a67 0%, #6b4c9a 100%)' },
+	{ id: 'sable', label: 'Sable', css: 'linear-gradient(135deg, #f3e3c3 0%, #d9a86c 100%)' },
+	{ id: 'acier', label: 'Acier', css: 'linear-gradient(135deg, #a7b4c2 0%, #48566a 100%)' },
+	{ id: 'corail', label: 'Corail', css: 'linear-gradient(135deg, #ff9a8b 0%, #c0266d 100%)' },
+];
+
+// Fond CSS d'une bannière couleur ou dégradé ; nul pour une image.
+export const coverFill = (cover: string | null): string | null =>
+	cover?.startsWith('#') ? cover : cover?.startsWith('grad:') ? (COVER_GRADIENTS.find((g) => g.id === cover.slice(5))?.css ?? null) : null;
+
+export interface CardFace {
+	cover: boolean;
+	labels: boolean;
+	members: boolean;
+	dates: boolean;
+	checklist: boolean;
+	counts: boolean;
+	// Colonnes affichées sur la face.
+	props: string[];
+}
+
+export const defaultCardFace = (): CardFace => ({ cover: true, labels: true, members: true, dates: true, checklist: true, counts: true, props: [] });
+
+export const CARD_LIMITS = {
+	// Image de bannière : au-delà, la face de carte se charge mal.
+	bannerSize: 10 * 1024 * 1024,
+	icon: 16,
+	estimate: 10_000,
+	links: 30,
+	emoji: 32,
+	faceProps: 10,
+	members: 20,
+} as const;
+
+export const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// kind « people » : from et to sont des ids séparés par des virgules.
+export interface ActivityChange {
+	field: string;
+	from: string | null;
+	to: string | null;
+	kind?: 'people';
+}
+
+export interface CommentReaction {
+	emoji: string;
+	users: string[];
+}
+
+export interface CardLink {
+	kind: 'card' | 'page';
+	id: string;
+	title: string;
+	icon: string;
+	// Carte : base de rattachement.
+	listId?: string;
+	listTitle?: string;
+	done?: boolean;
+}

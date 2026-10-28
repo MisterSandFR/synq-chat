@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { LIST_VIEW_KINDS, defaultViewConfig, type ListColumn, type ListDetail, type ListItem, type ListLabel, type ListSavedView, type ListValue, type ListViewKind, type ViewConfig, type ViewFilter } from '../../../shared/lists';
+import { LIST_VIEW_KINDS, defaultCardFace, defaultViewConfig, type CardFace, type ListColumn, type ListDetail, type ListItem, type ListLabel, type ListSavedView, type ListValue, type ListViewKind, type ViewConfig, type ViewFilter } from '../../../shared/lists';
 import type { Channel, Member } from '../../../shared/types';
 import { api, ApiError } from '../../api';
 import { navigate } from '../../router';
@@ -10,9 +10,9 @@ import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { FavoriteStar } from '../favorites/FavoritesSection';
 import { Automations } from './Automations';
 import { optionsOf } from './cells';
-import { ItemPanel } from './ItemPanel';
+import { ArchiveDialog, ItemPanel } from './ItemPanel';
 import { defaultOptions, MenuButton, newId, Table, type Patch } from './table';
-import { Board, CalendarView, GalleryView, TimelineView, visibleItems, type Quick } from './views';
+import { Board, CalendarView, GalleryView, TimelineView, visibleItems, type CardFocus, type Quick } from './views';
 import './bases.css';
 
 export const VIEW_ICON: Record<ListViewKind, IconName> = { table: 'list', board: 'copy', calendar: 'calendar', gallery: 'image', timeline: 'clock' };
@@ -58,6 +58,8 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const [rulesOpen, setRulesOpen] = useState(false);
 	const [sharing, setSharing] = useState(false);
+	const [focus, setFocus] = useState<CardFocus | null>(null);
+	const [archiveOpen, setArchiveOpen] = useState(false);
 	const selected = compact ? null : params.get('element');
 	const full = params.get('plein') === '1';
 	const viewId = compact ? localView : (params.get('vue') ?? localView);
@@ -123,6 +125,16 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 		} catch (e) {
 			setError(message(e));
 			return null;
+		}
+	};
+
+	const fromTemplate = async (template: ListItem, values: Record<string, ListValue>) => {
+		try {
+			const created = await api<ListItem>('POST', `${base}/items/${template.id}/duplicate`, { values });
+			setList((l) => (l ? { ...l, items: [...l.items, created].sort((a, b) => a.position - b.position) } : l));
+			go({ element: created.id });
+		} catch (e) {
+			setError(message(e));
 		}
 	};
 
@@ -210,7 +222,13 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 	const dateFields = [{ id: 'due', name: 'Échéance' }, { id: 'start', name: 'Début' }, ...list.columns.filter((c) => c.type === 'date')];
 	const room = rooms.find((r) => r.id === list.channelId);
 	const current = list.items.find((i) => i.id === selected);
-	const viewProps = { workspaceId, list, items, members, onPatch: patchItem, onAdd: addItem, onOpen: (id: string) => go({ element: id }) };
+	const face: CardFace = { ...defaultCardFace(), ...config.card };
+	const setFace = (patch: Partial<CardFace>) => setConfig({ card: { ...face, ...patch } });
+	const open = (id: string, target?: CardFocus) => {
+		setFocus(target ?? null);
+		go({ element: id });
+	};
+	const viewProps = { workspaceId, list, items, members, myId, face, onPatch: patchItem, onAdd: addItem, onOpen: open, onFromTemplate: (t: ListItem, values: Record<string, ListValue>) => void fromTemplate(t, values) };
 	const kind = view?.kind ?? 'table';
 	const quickLabel = list.labels.find((l) => l.id === quick.label);
 
@@ -241,6 +259,9 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 						{sharing && <ShareDialog workspaceId={workspaceId} kind='base' id={list.id} title={list.title || 'Sans titre'} onClose={() => setSharing(false)} />}
 						<button type='button' className='btn btn-ghost' onClick={() => setRulesOpen(true)}>
 							<Icon name='repeat' size={16} /> <span className='hide-mobile'>Automatisations</span>
+						</button>
+						<button type='button' className='btn btn-ghost hide-mobile' onClick={() => setArchiveOpen(true)}>
+							<Icon name='folder' size={16} /> Archives
 						</button>
 						<a className='btn btn-ghost hide-mobile' href={`/api${base}/export`} download>
 							<Icon name='download' size={16} /> Exporter en CSV
@@ -404,6 +425,33 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 											))}
 										</>
 									)}
+									{(kind === 'board' || kind === 'gallery') && (
+										<>
+											<p className='lst-menu-title'>Face des cartes</p>
+											{(
+												[
+													['cover', 'Bannière'],
+													['labels', 'Étiquettes'],
+													['members', 'Membres'],
+													['dates', 'Dates'],
+													['checklist', 'Checklist'],
+													['counts', 'Compteurs et estimation'],
+												] as const
+											).map(([key, label]) => (
+												<label key={key} className='menu-item bs-check-row'>
+													<input type='checkbox' checked={face[key]} onChange={() => setFace({ [key]: !face[key] })} />
+													<span className='grow'>{label}</span>
+												</label>
+											))}
+											{list.columns.length > 0 && <span className='muted k1-face-hint'>Propriétés affichées</span>}
+											{list.columns.map((c) => (
+												<label key={c.id} className='menu-item bs-check-row'>
+													<input type='checkbox' checked={face.props.includes(c.id)} onChange={() => setFace({ props: face.props.includes(c.id) ? face.props.filter((p) => p !== c.id) : [...face.props, c.id].slice(0, 10) })} />
+													<span className='grow'>{c.name}</span>
+												</label>
+											))}
+										</>
+									)}
 									<p className='lst-menu-title'>Filtres enregistrés</p>
 									<label className='menu-item bs-check-row'>
 										<input type='checkbox' checked={config.filters.some((f) => f.field === 'done')} onChange={() => toggleFilter({ field: 'done', op: 'is', value: 'false' })} />
@@ -511,8 +559,14 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 					onDelete={deleteItem}
 					onFull={() => go({ element: current.id, plein: !full })}
 					onClose={() => go({ element: null })}
+					focus={focus}
+					onColumns={(columns) => patchList({ columns })}
+					onFocused={() => setFocus(null)}
+					onReload={load}
+					onOpen={(id) => go({ element: id })}
 				/>
 			)}
+			{archiveOpen && <ArchiveDialog base={base} list={list} onClose={() => setArchiveOpen(false)} onRestored={load} />}
 			{rulesOpen && <Automations base={base} list={list} members={members} onClose={() => setRulesOpen(false)} />}
 			<Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title='Supprimer la base'>
 				<p>

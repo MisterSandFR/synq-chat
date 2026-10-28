@@ -3,6 +3,7 @@ import { sendReminders } from './calendar';
 import { expireTemporaryMembers } from './invites';
 import { wakeSnoozed } from './mail/store';
 import { sendDueSoon } from './lists-bases';
+import { sendCardReminders } from './lists-cards';
 import { mailChanged, sendScheduled } from './routes/mail';
 
 export { Workspace } from './workspace';
@@ -32,5 +33,6 @@ export default {
 		ctx.waitUntil(sendScheduled(env, Date.now()));
 		ctx.waitUntil(expireTemporaryMembers(env, Date.now()));
 		ctx.waitUntil(sendDueSoon(env, Date.now()));
+		ctx.waitUntil(sendCardReminders(env, Date.now()));
 	},
 } satisfies ExportedHandler<Env>;

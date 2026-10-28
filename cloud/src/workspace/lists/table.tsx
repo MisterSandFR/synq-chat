@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
-import { LIST_COLUMN_TYPES, STATUS_COLORS, type ListColumn, type ListColumnType, type ListDetail, type ListItem, type ListValue } from '../../../shared/lists';
+import { LIST_COLUMN_TYPES, STATUS_COLORS, type ListColumn, type ListColumnType, type ListDetail, type ListItem, type ListValue, type CardReminder, type CoverMode, type EstimateUnit } from '../../../shared/lists';
 import type { Member } from '../../../shared/types';
 import { Floating } from '../../floating';
 import { Avatar, Icon, useDismiss, type IconName } from '../../ui';
@@ -16,6 +16,16 @@ export type Patch = {
 	startDate?: string | null;
 	dueDate?: string | null;
 	done?: boolean;
+	icon?: string;
+	coverMode?: CoverMode;
+	coverY?: number;
+	members?: string[];
+	startTime?: string | null;
+	dueTime?: string | null;
+	reminder?: CardReminder | null;
+	estimate?: number | null;
+	estimateUnit?: EstimateUnit;
+	template?: boolean;
 };
 
 export const newId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
