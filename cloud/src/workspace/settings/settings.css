@@ -538,3 +538,9 @@
 		gap: 14px;
 	}
 }
+
+.mail-sharers-head {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}

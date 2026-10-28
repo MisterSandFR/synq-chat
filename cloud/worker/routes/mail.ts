@@ -22,6 +22,7 @@ import {
 	type MailSendInput,
 	type MailShareGrade,
 	type MailShareInput,
+	type MailShareSpaces,
 	type MailShareUpdate,
 	type MailStatus,
 	type MailTemplate,
@@ -45,6 +46,7 @@ import { ImapClient } from '../mail/imap';
 import { binary, parseAddresses } from '../mail/mime';
 import { excerpt, searchTerms } from '../mail/search';
 import { seal, unseal } from '../mail/secret';
+import { canShareIn, shareSpaces } from '../mail/sharers';
 import { smtpSend, type OutgoingAttachment } from '../mail/smtp';
 import { MailError, attachmentKey, bodyKey, htmlKey, loadBox, markRead, sendMail, sendReply, type BoxRow } from '../mail/store';
 import { transport } from '../mail/wire';
@@ -141,9 +143,9 @@ const userOf = (c: Ctx | Scope) => ('userId' in c ? c.userId : c.get('user').id)
 const RANK: Record<MailLevel, number> = { view: 1, reply: 2, manage: 3 };
 
 // Niveau d'un membre sur un partage : meilleur de ses grades, défaut compris ; propriétaire de l'espace = gestion. Invités jamais joints.
-const SHARE_MEMBERS = "mailbox_shares s JOIN members m ON m.workspace_id = s.workspace_id AND m.role != 'guest'";
+export const SHARE_MEMBERS = "mailbox_shares s JOIN members m ON m.workspace_id = s.workspace_id AND m.role != 'guest'";
 // Propriétaire et administrateurs de l'espace gèrent, comme pour les salons.
-const SHARE_RANK = `CASE WHEN m.role = 'owner' OR EXISTS (SELECT 1 FROM member_grades ag JOIN grades g ON g.workspace_id = ag.workspace_id AND g.id = ag.grade_id
+export const SHARE_RANK = `CASE WHEN m.role = 'owner' OR EXISTS (SELECT 1 FROM member_grades ag JOIN grades g ON g.workspace_id = ag.workspace_id AND g.id = ag.grade_id
 		WHERE ag.workspace_id = s.workspace_id AND ag.user_id = m.user_id AND (g.permissions & ${P.ADMINISTRATOR}) != 0) THEN 3 ELSE (SELECT MAX(CASE sg.level WHEN 'manage' THEN 3 WHEN 'reply' THEN 2 ELSE 1 END) FROM mailbox_share_grades sg
 	WHERE sg.mailbox_id = s.mailbox_id AND sg.workspace_id = s.workspace_id
 		AND (sg.grade_id = '${DEFAULT_GRADE}' OR sg.grade_id IN (SELECT mg.grade_id FROM member_grades mg WHERE mg.workspace_id = s.workspace_id AND mg.user_id = m.user_id))) END`;
@@ -253,6 +255,8 @@ mailRoutes.get('/mail/boxes', async (c) => {
 	const counts = await unreadCounts(c, boxes.map((access) => access.box.id));
 	return c.json(await Promise.all(boxes.map((access) => boxJson(c, access.box, access, counts.get(access.box.id) ?? 0))));
 });
+
+mailRoutes.get('/mail/share-spaces', async (c) => c.json<MailShareSpaces>({ workspaceIds: await shareSpaces(c.env.DB, c.get('user').id) }));
 
 const UNREAD = 't.deleted_at IS NULL AND t.status = \'open\' AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?) AND t.last_at > COALESCE(r.read_at, 0)';
 
@@ -423,7 +427,10 @@ mailRoutes.put('/mail/boxes/:id/shares/:wid', async (c) => {
 	if (target instanceof Response) {
 		return target;
 	}
-	const { box, workspaceId } = target;
+	const { box, workspaceId, shared } = target;
+	if (!shared && !(await canShareIn(c.env.DB, workspaceId, c.get('user').id))) {
+		return fail(c, 403, 'Partage réservé dans cet espace');
+	}
 	const body = await readJson<MailShareUpdate>(c);
 	const rules = body.grades === undefined ? null : await readRules(c, workspaceId, body.grades);
 	if (body.grades !== undefined && !rules) {

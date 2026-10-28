@@ -12,11 +12,12 @@ import { CommandsTab } from './commands/CommandsSettings';
 import { memberColor, memberGrades, topOf } from './grades';
 import { AuditTab } from './settings/AuditTab';
 import { GradesTab } from './settings/GradesSettings';
+import { MailTab } from './settings/MailSettings';
 import { Swatches } from './settings/Swatches';
 import { WebhooksTab } from './rc/WebhooksTab';
 import './settings/settings.css';
 
-type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'audit';
+type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'mail' | 'audit';
 
 type Props = {
 	open: boolean;
@@ -88,6 +89,7 @@ function SettingsShell({ info, channels, myId, onChanged, onClose }: Omit<Props,
 			[
 				{ key: 'commands', label: 'Commandes', icon: 'slash', allowed: has(info.perms, P.MANAGE_COMMANDS) },
 				{ key: 'webhooks', label: 'Webhooks', icon: 'link', allowed: has(info.perms, P.MANAGE_COMMANDS) },
+				{ key: 'mail', label: 'Boîtes mail', icon: 'mail', allowed: has(info.perms, P.MANAGE_WORKSPACE) },
 			],
 		],
 		['Modération', [{ key: 'audit', label: 'Journal', icon: 'list', allowed: has(info.perms, P.MANAGE_WORKSPACE) }]],
@@ -151,6 +153,7 @@ function SettingsShell({ info, channels, myId, onChanged, onClose }: Omit<Props,
 					{current.key === 'invites' && <InvitesTab workspaceId={info.id} />}
 					{current.key === 'commands' && <CommandsTab workspaceId={info.id} />}
 					{current.key === 'webhooks' && <WebhooksTab workspaceId={info.id} />}
+					{current.key === 'mail' && <MailTab info={info} />}
 					{current.key === 'audit' && <AuditTab info={info} channelName={(id) => channels.find((c) => c.id === id)?.name ?? null} />}
 				</div>
 			</section>

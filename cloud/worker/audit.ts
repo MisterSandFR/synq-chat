@@ -40,6 +40,8 @@ const RULES: Rule[] = [
 	rule('POST', /^\/voice\/moderate$/, 'voice.moderate', 'voice'),
 	rule('POST', /^\/dms\/([^/]+)\/guests$/, 'guest.invite', 'guest'),
 	rule('DELETE', /^\/dms\/[^/]+\/guests\/([^/]+)$/, 'guest.revoke', 'guest'),
+	rule('PUT', /^\/mail-sharers$/, 'mail.sharers', 'mail'),
+	rule('DELETE', /^\/mail-boxes\/([^/]+)$/, 'mail.unshare', 'mail'),
 ];
 
 export type AuditInput = Omit<AuditEntry, 'id' | 'at'>;

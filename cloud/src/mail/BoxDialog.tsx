@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
-import type { MailboxInfo, MailboxInput, MailShare, MailShareGrade, MailTestResult } from '../../shared/mail';
+import type { MailboxInfo, MailboxInput, MailShare, MailShareGrade, MailShareSpaces, MailTestResult } from '../../shared/mail';
 import type { Channel, WorkspaceDetail, WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
 import { Dialog, Icon } from '../ui';
@@ -161,8 +161,18 @@ function ShareEditor({ box, workspaces, onChanged }: { box: MailboxInfo; workspa
 	const [infos, setInfos] = useState<Record<string, WorkspaceDetail | null>>({});
 	const [error, setError] = useState<string | null>(null);
 	const requested = useRef(new Set<string>());
+	const [spaces, setSpaces] = useState<string[] | null>(null);
 	const canManage = box.access.owner || box.access.manage;
 	const existing = shares.find((share) => share.workspaceId === workspaceId);
+	const offered = workspaces.filter((workspace) => spaces?.includes(workspace.id) && !shares.some((item) => item.workspaceId === workspace.id));
+
+	useEffect(() => {
+		if (box.access.owner) {
+			void api<MailShareSpaces>('GET', '/mail/share-spaces')
+				.then((result) => setSpaces(result.workspaceIds))
+				.catch(() => setSpaces([]));
+		}
+	}, [box.access.owner]);
 
 	// Grades et membres de chaque espace concerné, chargés une fois.
 	const wanted = [...new Set([...shares.map((share) => share.workspaceId), workspaceId])].filter(Boolean).join(',');
@@ -270,18 +280,22 @@ function ShareEditor({ box, workspaces, onChanged }: { box: MailboxInfo; workspa
 					</div>
 				);
 			})}
-			{box.access.owner && (
-				<select className='mail-select' value={existing ? '' : workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} aria-label='Espace de partage'>
-					<option value=''>Partager dans un espace…</option>
-					{workspaces
-						.filter((workspace) => !shares.some((item) => item.workspaceId === workspace.id))
-						.map((workspace) => (
+			{box.access.owner &&
+				spaces &&
+				(offered.length > 0 ? (
+					<select className='mail-select' value={existing ? '' : workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} aria-label='Espace de partage'>
+						<option value=''>Partager dans un espace…</option>
+						{offered.map((workspace) => (
 							<option key={workspace.id} value={workspace.id}>
 								{workspace.name}
 							</option>
 						))}
-				</select>
-			)}
+					</select>
+				) : (
+					<p className='field-hint'>
+						{shares.length ? 'Aucun autre espace ne vous autorise à partager une boîte.' : 'Aucun espace ne vous autorise à partager une boîte.'} Un administrateur de l’espace peut vous l’ouvrir dans les réglages, section Boîtes mail.
+					</p>
+				))}
 			{workspaceId && (
 				<div className='mail-share-draft'>
 					{existing && <p className='mail-share-draft-title'>Salons de {existing.workspaceName}</p>}

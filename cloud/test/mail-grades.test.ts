@@ -145,6 +145,7 @@ describe('droits des boîtes mail par grade', () => {
 
 		// Boîte de Bob : il la partage lui-même, pas dans un espace dont il n'est pas membre.
 		const own = await insertBox(bob.user.id);
+		expect((await alice.req('PUT', `/api/w/${wid}/mail-sharers`, { subjects: ['default'] })).status).toBe(200);
 		expect((await bob.req('PUT', `/api/mail/boxes/${own}/shares/${wid}`, { channelIds: [] })).status).toBe(200);
 		expect((await bob.req('PUT', `/api/mail/boxes/${own}/shares/${other.data.id}`, { channelIds: [] })).status).toBe(404);
 		// Propriétaire de l'espace : gestion d'office.

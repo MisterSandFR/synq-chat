@@ -32,6 +32,7 @@ import { chatRoutes } from './routes/chat';
 import { dmThreadsRoutes } from './routes/dm-threads';
 import { calendarRoutes, icsRoutes } from './routes/calendar';
 import { mailRoutes } from './routes/mail';
+import { mailSharerRoutes } from './routes/mail-sharers';
 import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
 import { voiceRoutes } from './routes/voice';
@@ -876,6 +877,7 @@ app.route('/', guestRoutes);
 app.route('/', aiRoutes);
 app.route('/', aiChatRoutes);
 app.route('/', workspaceLogoRoutes);
+app.route('/', mailSharerRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
