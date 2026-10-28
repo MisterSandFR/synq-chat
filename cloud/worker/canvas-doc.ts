@@ -292,4 +292,26 @@ export class CanvasDoc extends DurableObject<Env> {
 		await this.ctx.storage.deleteAlarm();
 		await this.ctx.storage.deleteAll();
 	}
+
+	peerIds(): string[] {
+		const ids = this.ctx.getWebSockets().map((ws) => (ws.deserializeAttachment() as Attachment | null)?.userId);
+		return [...new Set(ids.filter((id): id is string => !!id))];
+	}
+
+	// 4403 : accès retiré ; 4409 : droits changés, le client relit la page et se reconnecte.
+	revise(rights: Record<string, 'none' | 'read' | 'write'>): void {
+		for (const ws of this.ctx.getWebSockets()) {
+			const peer = ws.deserializeAttachment() as Attachment | null;
+			if (!peer) {
+				continue;
+			}
+			const right = rights[peer.userId] ?? 'none';
+			if (right === 'none') {
+				ws.close(4403, 'Accès retiré');
+			} else if (peer.write !== (right === 'write')) {
+				ws.serializeAttachment({ ...peer, write: right === 'write' } satisfies Attachment);
+				ws.close(4409, 'Droits modifiés');
+			}
+		}
+	}
 }

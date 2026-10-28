@@ -879,3 +879,90 @@
 		max-width: 110px;
 	}
 }
+
+/* Catégories de pages : même langage que les catégories de salons. */
+.page-cat {
+	margin-top: 6px;
+}
+
+.page-cat-head {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-height: 26px;
+	padding: 0 4px;
+	border-radius: var(--r-sm);
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.page-cat-head:hover {
+	color: var(--text);
+}
+
+.page-cat-head:hover .page-row-actions,
+.page-cat-head:focus-within .page-row-actions {
+	opacity: 1;
+}
+
+.page-cat-over {
+	background: var(--accent-soft);
+	color: var(--text);
+}
+
+.page-cat-toggle {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 1;
+	min-width: 0;
+	padding: 2px 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.page-cat-icon {
+	font-size: 13px;
+	line-height: 1;
+}
+
+.page-cat-lock {
+	display: inline-flex;
+	color: var(--muted);
+}
+
+.page-cat-empty {
+	margin: 2px 0 4px 22px;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.page-cat-new {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 6px 0 2px;
+	padding: 3px 8px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: none;
+	color: var(--muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.page-cat-new:hover {
+	background: var(--surface);
+	color: var(--text);
+}
+
+.page-cat-input {
+	margin: 6px 4px 2px;
+}

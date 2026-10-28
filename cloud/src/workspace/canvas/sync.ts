@@ -93,8 +93,13 @@ export class CanvasSync {
 				this.sendLocalAwareness();
 			}
 		};
-		ws.onclose = () => {
+		ws.onclose = (event) => {
 			window.clearInterval(this.ping);
+			// Droits revus par le serveur : la page relit son accès.
+			if (event.code === 4403 || event.code === 4409) {
+				window.dispatchEvent(new CustomEvent('synq-canvas-access', { detail: { code: event.code } }));
+				this.closed ||= event.code === 4403;
+			}
 			this.ws = null;
 			// Curseurs des autres effacés : ils reviendront à la reconnexion.
 			removeAwarenessStates(

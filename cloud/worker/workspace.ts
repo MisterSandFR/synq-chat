@@ -107,6 +107,7 @@ import {
 	type ScheduleInput,
 	type ScheduledFull,
 } from './drafts';
+import type { ChannelGrant } from '../shared/access';
 import { loadActor } from './grades';
 import { REMINDERS_MIGRATION, checkDue, cleanReminderText, deleteMessageReminder, deleteReminder, dueReminders, getReminder, markFired, nextReminderAt, patchReminder, publicReminder, upsertReminder, userReminders } from './reminders';
 import { reminderLink, type LaterItem, type Reminder, type ReminderInput, type ReminderPatch } from '../shared/reminders';
@@ -2876,14 +2877,9 @@ export class Workspace extends DurableObject<Env> {
 
 	// --- Pages ---
 
-	// Mention dans un commentaire de page : seulement pour qui voit la page.
+	// Mention dans un commentaire de page : lecteurs déjà filtrés par la route (worker/access.ts).
 	async pageMentioned(actor: Actor, userIds: string[], input: { workspaceId: string; scope: string | null; pageId: string; threadId: string; title: string; body: string }): Promise<void> {
 		for (const userId of new Set(userIds)) {
-			const target = await loadActor(this.env.DB, input.workspaceId, userId);
-			const [access] = target ? this.canvasAccess(target, [input.scope]) : [null];
-			if (!access) {
-				continue;
-			}
 			this.pushNotification({
 				userId,
 				kind: 'mention',
@@ -3152,5 +3148,19 @@ export class Workspace extends DurableObject<Env> {
 			});
 			await notifyUsers(this.env, [due.userId], { t: 'reminders', workspaceId: due.workspaceId });
 		}
+	}
+
+	// --- Accès fins ---
+
+	// Droits de salon bruts par acteur ; l'évaluation vit dans worker/access.ts.
+	accessChannels(actors: Actor[], channelIds: string[]): ChannelGrant[][] {
+		return actors.map((actor) =>
+			channelIds.map((id) => {
+				if (!this.channelRow(id) || !this.can(actor, id, P.VIEW_CHANNEL)) {
+					return { view: false, send: false, manage: false, room: false };
+				}
+				return { view: true, send: this.can(actor, id, P.SEND_MESSAGES), manage: this.can(actor, id, P.MANAGE_CHANNELS), room: this.roomRow(id) !== null };
+			}),
+		);
 	}
 }

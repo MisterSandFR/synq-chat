@@ -1,3 +1,5 @@
+import type { AccessLevel } from './access';
+
 export type CanvasAccess = 'write' | 'read';
 
 export type CanvasMeta = {
@@ -12,6 +14,9 @@ export type CanvasMeta = {
 	createdAt: number;
 	updatedAt: number;
 	access: CanvasAccess;
+	level: AccessLevel;
+	categoryId: string | null;
+	restricted: boolean;
 	parentId: string | null;
 	icon: string | null;
 	// `gradient:N` ou URL d'image servie par la route des fichiers.
@@ -39,6 +44,7 @@ export type PagePatch = {
 	icon?: string | null;
 	cover?: string | null;
 	parentId?: string | null;
+	categoryId?: string | null;
 	position?: number;
 	archived?: boolean;
 };

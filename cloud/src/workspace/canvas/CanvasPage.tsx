@@ -15,6 +15,7 @@ import { CanvasEditor } from './CanvasEditor';
 import { CommentsPanel, type PendingComment } from './CommentsPanel';
 import { toMarkdown } from './markdown';
 import { PageIcon, PageTree } from './PageTree';
+import { ShareDialog } from '../access/ShareDialog';
 import { createPage, duplicatePage, localPage, pageLabel, patchPage, refreshPages, usePages } from './pages';
 import { CanvasSync, canvasSocketUrl, colorFor, type SyncStatus } from './sync';
 import './canvas.css';
@@ -241,6 +242,8 @@ const STATUS: Record<SyncStatus, string> = { connecting: 'Connexion…', synced:
 
 function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms, workspacePerms, onOpenChannel, channelLabel }: Props & { canvasId: string }) {
 	const [meta, setMeta] = useState<CanvasMeta | null>(null);
+	const [sharing, setSharing] = useState(false);
+	const [accessTick, setAccessTick] = useState(0);
 	const [related, setRelated] = useState<PageRelated | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -276,7 +279,13 @@ function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms,
 		void loadRelated();
 		window.addEventListener('focus', loadRelated);
 		return () => window.removeEventListener('focus', loadRelated);
-	}, [workspaceId, canvasId]);
+	}, [workspaceId, canvasId, accessTick]);
+
+	useEffect(() => {
+		const reread = () => setAccessTick((n) => n + 1);
+		window.addEventListener('synq-canvas-access', reread);
+		return () => window.removeEventListener('synq-canvas-access', reread);
+	}, []);
 
 	useEffect(() => {
 		if (!meta) {
@@ -349,7 +358,7 @@ function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms,
 	const editable = meta.access === 'write' && !archived;
 	const link = `${location.origin}${canvasPath(workspaceId, meta.id)}`;
 	const targets = channels.filter((c) => c.kind === 'text' && has(perms[c.id] ?? 0, P.SEND_MESSAGES));
-	const canDelete = meta.createdBy === myId || has(workspacePerms, P.MANAGE_CHANNELS);
+	const canDelete = meta.level === 'manage';
 
 	const update = async (patch: PagePatch) => {
 		setMenu(null);
@@ -491,6 +500,17 @@ function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms,
 								className='menu-item'
 								onClick={() => {
 									setMenu(null);
+									setSharing(true);
+								}}
+							>
+								<Icon name='users' size={16} /> {meta.level === 'manage' ? 'Gérer l’accès…' : 'Voir qui a accès'}
+							</button>
+							<button
+								type='button'
+								role='menuitem'
+								className='menu-item'
+								onClick={() => {
+									setMenu(null);
 									void navigator.clipboard.writeText(link).then(() => setNotice('Lien copié'));
 								}}
 							>
@@ -505,6 +525,7 @@ function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms,
 						</Floating>
 					)}
 				</div>
+				{sharing && <ShareDialog workspaceId={workspaceId} kind='page' id={meta.id} title={pageLabel(meta)} onClose={() => setSharing(false)} onChanged={() => void refreshPages(workspaceId).catch(() => undefined)} />}
 				<div ref={moreRef} className='canvas-anchor'>
 					<button type='button' className='icon-btn' aria-label='Plus d’actions' aria-haspopup='menu' aria-expanded={menu === 'more'} onClick={() => setMenu(menu === 'more' ? null : 'more')}>
 						<Icon name='more' />

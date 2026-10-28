@@ -1,0 +1,119 @@
+.sh-dialog {
+	min-width: min(460px, 100%);
+}
+
+.sh-banner {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	border-radius: var(--r-sm);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	color: var(--text);
+}
+
+.sh-banner > .grow {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.sh-banner-own {
+	background: var(--accent-soft);
+	border-color: transparent;
+}
+
+.sh-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sh-general {
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--line);
+}
+
+.sh-level {
+	flex: none;
+}
+
+.sh-level-btn {
+	gap: 6px;
+	max-width: 230px;
+	font-size: 13px;
+}
+
+/* Quatre crans : voir, commenter, modifier, accès complet. */
+.sh-meter {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 2px;
+	height: 12px;
+	flex: none;
+}
+
+.sh-meter i {
+	width: 3px;
+	border-radius: 1px;
+	background: var(--line);
+}
+
+.sh-meter i:nth-child(1) {
+	height: 5px;
+}
+
+.sh-meter i:nth-child(2) {
+	height: 7px;
+}
+
+.sh-meter i:nth-child(3) {
+	height: 9px;
+}
+
+.sh-meter i:nth-child(4) {
+	height: 12px;
+}
+
+.sh-meter i.on {
+	background: var(--accent);
+}
+
+.sh-option {
+	align-items: center;
+}
+
+.sh-option-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.sh-hint {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.sh-count {
+	margin: 0;
+	font-size: 13px;
+	color: var(--muted);
+}
+
+.sh-count strong {
+	color: var(--text);
+	font-weight: 600;
+}
+
+@media (max-width: 860px) {
+	.sh-banner {
+		flex-wrap: wrap;
+	}
+
+	.sh-level-btn {
+		max-width: 150px;
+	}
+}

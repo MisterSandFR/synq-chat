@@ -5,6 +5,7 @@ import { AI_HUB_LIMITS, type AiAction, type AiCard, type AiConversation, type Ai
 import type { Message } from '../shared/types';
 import { plain } from './ai-chat';
 import { listEvents } from './calendar';
+import { pageAccess, readableBases } from './access';
 import { loadActor } from './grades';
 import { workspaceStub } from './http';
 import { fold, searchTerms } from './mail/search';
@@ -62,9 +63,9 @@ async function pageSources(env: Env, workspaceId: string, words: string[], actor
 	if (!actor) {
 		return [];
 	}
-	const rights = await workspaceStub(env, workspaceId).canvasAccess(actor, results.map((row) => row.channel_id));
+	const { levels } = await pageAccess(env, workspaceId, actor);
 	return results
-		.filter((_, i) => rights[i])
+		.filter((row) => levels.has(row.id))
 		.slice(0, AI_HUB_LIMITS.perSource)
 		.map((row) => ({ kind: 'page', id: row.id, title: row.title || 'Sans titre', snippet: clip(oneLine(row.excerpt), SNIPPET), href: `/w/${workspaceId}/canevas/${row.id}`, at: row.updated_at }));
 }
@@ -72,18 +73,18 @@ async function pageSources(env: Env, workspaceId: string, words: string[], actor
 async function itemSources(env: Env, workspaceId: string, words: string[], actorId: string): Promise<AiSource[]> {
 	const where = words.map(() => '(i.title LIKE ? OR i.description LIKE ?)').join(' OR ');
 	const { results } = await env.DB.prepare(
-		`SELECT i.id, i.title, i.description, i.updated_at, l.id AS list_id, l.title AS list_title, l.channel_id FROM list_items i JOIN lists l ON l.id = i.list_id
+		`SELECT i.id, i.title, i.description, i.updated_at, l.id AS list_id, l.title AS list_title, l.channel_id, l.created_by AS list_created_by, l.restricted FROM list_items i JOIN lists l ON l.id = i.list_id
 		WHERE l.workspace_id = ? AND (${where}) ORDER BY i.updated_at DESC LIMIT 20`,
 	)
 		.bind(workspaceId, ...words.flatMap((w) => [like(w), like(w)]))
-		.all<{ id: string; title: string; description: string; updated_at: number; list_id: string; list_title: string; channel_id: string | null }>();
+		.all<{ id: string; title: string; description: string; updated_at: number; list_id: string; list_title: string; channel_id: string | null; list_created_by: string; restricted: number }>();
 	const actor = results.length ? await loadActor(env.DB, workspaceId, actorId) : null;
 	if (!actor) {
 		return [];
 	}
-	const rights = await workspaceStub(env, workspaceId).listRights(actor, results.map((row) => row.channel_id));
+	const readable = await readableBases(env, workspaceId, actor, results.map((row) => ({ id: row.list_id, channel_id: row.channel_id, created_by: row.list_created_by, restricted: row.restricted })));
 	return results
-		.filter((_, i) => rights[i]?.view)
+		.filter((row) => readable.has(row.list_id))
 		.slice(0, AI_HUB_LIMITS.perSource)
 		.map((row) => ({
 			kind: 'item',
