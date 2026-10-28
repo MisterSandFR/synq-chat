@@ -59,7 +59,7 @@ export function CanvasLinkCard({ workspaceId, body, lookup }: { workspaceId: str
 			</span>
 			<span className='canvas-card-main'>
 				<strong className='ellipsis'>{meta.title}</strong>
-				<span className='canvas-card-excerpt'>{meta.excerpt || 'Canevas vide pour l’instant'}</span>
+				<span className='canvas-card-excerpt'>{meta.excerpt || 'Page vide pour l’instant'}</span>
 				<span className='canvas-card-foot'>
 					<span className='canvas-card-editors'>
 						{meta.editors.slice(0, 4).map((uid) => {
@@ -67,7 +67,7 @@ export function CanvasLinkCard({ workspaceId, body, lookup }: { workspaceId: str
 							return member ? <Avatar key={uid} name={member.name} url={member.avatarUrl} size={20} /> : null;
 						})}
 					</span>
-					Canevas
+					Page
 					{meta.access === 'read' && <span className='canvas-card-pill'>Lecture seule</span>}
 				</span>
 			</span>

@@ -17,6 +17,7 @@ import { CallControls } from './voice/CallView';
 import { useContextMenu } from './ContextMenu';
 import { DraftMark, DraftsNavLink } from './drafts/Marks';
 import { ThreadsNavLink } from './dm-threads';
+import { PagesSection } from './canvas/PageTree';
 import { FavoritesSection } from './favorites/FavoritesSection';
 import { useFavoritesLoader } from './favorites/store';
 import { voiceDrag, type MemberMenu } from './members/useMemberMenu';
@@ -86,9 +87,9 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 						<div className='nav-section sb-links'>
 							<ThreadsNavLink active={channelId === 'fils'} unread={state.dmThreads.unreadThreads} onOpen={() => open('fils')} />
 							<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => open('brouillons')} />
-							<SideLink icon='file' label='Canevas' active={pageActive('canevas')} onOpen={() => open('canevas')} />
 							<SideLink icon='list' label='Listes' active={pageActive('listes')} onOpen={() => open('listes')} />
 						</div>
+						<PagesSection workspaceId={workspaceId} activeId={location.pathname.match(/^\/w\/[\w-]+\/(?:canevas|pages)\/([\w-]+)/)?.[1] ?? null} pagesActive={pageActive('canevas') || pageActive('pages')} />
 						<FavoritesSection
 							workspaceId={workspaceId}
 							state={state}

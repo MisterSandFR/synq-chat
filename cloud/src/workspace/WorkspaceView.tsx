@@ -128,7 +128,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	useDraftsLoader(workspaceId, state.connId);
 	const active = channels?.find((c) => c.id === channelId);
 	// Pages de l'espace hors salon, ouvertes depuis la barre d'apps.
-	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : channelId === 'brouillons' ? 'drafts' : channelId === 'listes' ? 'lists' : channelId === 'canevas' ? 'canvases' : null;
+	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : channelId === 'brouillons' ? 'drafts' : channelId === 'listes' ? 'lists' : channelId === 'canevas' || channelId === 'pages' ? 'canvases' : null;
 	const view: ContentView = page === 'dms' || page === 'threads' ? page : null;
 	const openView = (next: Exclude<ContentView, null>) => navigate(`/w/${workspaceId}/${next === 'dms' ? 'messages' : 'fils'}`);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
@@ -513,7 +513,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					{page && (
 						<h1>
 							<Icon name={page === 'lists' ? 'list' : page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : page === 'drafts' ? 'compose' : page === 'canvases' ? 'file' : 'thread'} />
-							<span className='ellipsis'>{page === 'lists' ? 'Listes' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Canevas' : 'Fils'}</span>
+							<span className='ellipsis'>{page === 'lists' ? 'Listes' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Pages' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
@@ -563,7 +563,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							{ key: 'messages', label: active.kind === 'voice' ? 'Chat' : 'Messages', icon: 'chat', active: active.kind === 'voice' ? voiceChat : panel !== 'pins' && panel !== 'drive', badge: active.kind === 'voice' && !voiceChat ? (state.unread[active.id] ?? 0) : 0, onSelect: () => (active.kind === 'voice' ? setVoiceChat(!voiceChat) : setPanel(null)) },
 							{ key: 'pins', label: 'Épinglés', icon: 'pin', active: panel === 'pins', onSelect: () => setPanel(panel === 'pins' ? null : 'pins') },
 							{ key: 'files', label: 'Fichiers', icon: 'drive', active: panel === 'drive', onSelect: () => setPanel(panel === 'drive' ? null : 'drive') },
-							...(active.kind !== 'voice' ? [{ key: 'canvas', label: 'Canevas', icon: 'file' as const, onSelect: () => void openChannelCanvas(workspaceId, active.id) }] : []),
+							...(active.kind !== 'voice' ? [{ key: 'canvas', label: 'Page', icon: 'file' as const, onSelect: () => void openChannelCanvas(workspaceId, active.id) }] : []),
 							...(active.kind === 'text' ? [{ key: 'lists', label: 'Listes', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
 						]}
 					/>

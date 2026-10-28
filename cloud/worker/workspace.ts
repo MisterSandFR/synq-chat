@@ -2841,4 +2841,26 @@ export class Workspace extends DurableObject<Env> {
 	private seesChannel(actor: Actor, channelId: string): boolean {
 		return this.channelRow(channelId) !== null && this.can(actor, channelId, P.VIEW_CHANNEL);
 	}
+
+	// --- Pages ---
+
+	// Mention dans un commentaire de page : seulement pour qui voit la page.
+	async pageMentioned(actor: Actor, userIds: string[], input: { workspaceId: string; scope: string | null; pageId: string; threadId: string; title: string; body: string }): Promise<void> {
+		for (const userId of new Set(userIds)) {
+			const target = await loadActor(this.env.DB, input.workspaceId, userId);
+			const [access] = target ? this.canvasAccess(target, [input.scope]) : [null];
+			if (!access) {
+				continue;
+			}
+			this.pushNotification({
+				userId,
+				kind: 'mention',
+				channelId: null,
+				actorId: actor.id,
+				title: `${actor.name} t’a mentionné dans une page`,
+				body: `${input.title} · ${input.body}`,
+				link: `/w/${input.workspaceId}/canevas/${input.pageId}?commentaire=${input.threadId}`,
+			});
+		}
+	}
 }

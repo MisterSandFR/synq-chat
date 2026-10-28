@@ -3,15 +3,16 @@ import { PluginKey } from '@tiptap/pm/state';
 import Suggestion, { type SuggestionOptions, type SuggestionProps } from '@tiptap/suggestion';
 import { useRef, type RefObject } from 'react';
 
+import type { PageRef } from '../../../shared/canvas';
 import type { Member } from '../../../shared/types';
 import { Floating } from '../../floating';
 import { Avatar, Icon, type IconName } from '../../ui';
 
 export type Block = { id: string; label: string; hint: string; icon: IconName | null; mark?: string; keywords: string; run: (editor: Editor, range: Range) => void };
 
-export type MenuItem = { kind: 'block'; block: Block } | { kind: 'member'; member: Member };
+export type MenuItem = { kind: 'block'; block: Block } | { kind: 'member'; member: Member } | { kind: 'page'; page: PageRef };
 
-export type MenuState = { kind: 'slash' | 'mention'; items: MenuItem[]; index: number; rect: DOMRect | null; pick: (item: MenuItem) => void } | null;
+export type MenuState = { kind: 'slash' | 'mention' | 'link'; items: MenuItem[]; index: number; rect: DOMRect | null; pick: (item: MenuItem) => void } | null;
 
 const fold = (s: string) =>
 	s
@@ -20,7 +21,7 @@ const fold = (s: string) =>
 		.toLowerCase();
 
 // Pont entre le cycle de vie des suggestions TipTap et un état React.
-export function suggestionRender(kind: 'slash' | 'mention', set: (next: MenuState | ((prev: MenuState) => MenuState)) => void, current: RefObject<MenuState>) {
+export function suggestionRender(kind: 'slash' | 'mention' | 'link', set: (next: MenuState | ((prev: MenuState) => MenuState)) => void, current: RefObject<MenuState>) {
 	return () => {
 		const show = (props: SuggestionProps<MenuItem, MenuItem>, keep: boolean) =>
 			set((prev) => ({
@@ -85,6 +86,34 @@ export function slashExtension(blocks: () => Block[], render: SuggestionOptions<
 	});
 }
 
+// `[[` ouvre la recherche de pages à lier.
+export function linkExtension(items: (query: string) => MenuItem[], render: SuggestionOptions<MenuItem, MenuItem>['render'], pick: (editor: Editor, range: Range, item: MenuItem) => void) {
+	return Extension.create({
+		name: 'pageLinkSuggest',
+		addProseMirrorPlugins() {
+			return [
+				Suggestion<MenuItem, MenuItem>({
+					editor: this.editor,
+					char: '[[',
+					allowSpaces: true,
+					pluginKey: new PluginKey('pageLinkSuggest'),
+					items: ({ query }) => items(query),
+					command: ({ editor, range, props }) => pick(editor, range, props),
+					render,
+				}),
+			];
+		},
+	});
+}
+
+export const pageItems = (pages: Iterable<PageRef>, query: string, max = 8): MenuItem[] => {
+	const q = fold(query);
+	return [...pages]
+		.filter((p) => !q || fold(p.title).includes(q))
+		.slice(0, max)
+		.map((page) => ({ kind: 'page', page }));
+};
+
 export const memberItems = (members: Iterable<Member>, query: string): MenuItem[] => {
 	const q = fold(query);
 	return [...members]
@@ -100,13 +129,13 @@ export function SuggestionMenu({ menu, onHover }: { menu: NonNullable<MenuState>
 		<>
 			<span ref={anchor} className='canvas-caret-anchor' style={rect ? { left: rect.left, top: rect.top, height: rect.height } : { display: 'none' }} />
 			{rect && (
-				<Floating anchor={anchor} placement='bottom-start' className='popover canvas-menu' role='listbox' aria-label={menu.kind === 'slash' ? 'Insérer un bloc' : 'Mentionner'}>
+				<Floating anchor={anchor} placement='bottom-start' className='popover canvas-menu' role='listbox' aria-label={menu.kind === 'slash' ? 'Insérer un bloc' : menu.kind === 'link' ? 'Lier une page' : 'Mentionner'}>
 					{menu.items.length === 0 ? (
-						<p className='canvas-menu-empty'>{menu.kind === 'slash' ? 'Aucun bloc ne correspond' : 'Personne ne correspond'}</p>
+						<p className='canvas-menu-empty'>{menu.kind === 'slash' ? 'Aucun bloc ne correspond' : menu.kind === 'link' ? 'Aucune page ne correspond' : 'Personne ne correspond'}</p>
 					) : (
 						menu.items.map((item, i) => (
 							<button
-								key={item.kind === 'block' ? item.block.id : item.member.id}
+								key={item.kind === 'block' ? item.block.id : item.kind === 'page' ? `p-${item.page.id}` : item.member.id}
 								type='button'
 								role='option'
 								aria-selected={i === menu.index}
@@ -122,6 +151,11 @@ export function SuggestionMenu({ menu, onHover }: { menu: NonNullable<MenuState>
 											<span className='canvas-menu-label'>{item.block.label}</span>
 											<span className='canvas-menu-hint'>{item.block.hint}</span>
 										</span>
+									</>
+								) : item.kind === 'page' ? (
+									<>
+										<span className='canvas-menu-glyph'>{item.page.icon ?? <Icon name='file' size={16} />}</span>
+										<span className='grow ellipsis'>{item.page.title || 'Sans titre'}</span>
 									</>
 								) : (
 									<>
