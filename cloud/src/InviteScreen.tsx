@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react';
 
 import { api, errorText } from './api';
 import { navigate } from './router';
-import { Logo } from './ui';
+import { Logo, SpaceLogo } from './ui';
 
 export function InviteScreen({ code, onJoined }: { code: string; onJoined: () => Promise<unknown> }) {
-	const [invite, setInvite] = useState<{ workspaceId: string; workspaceName: string } | null>(null);
+	const [invite, setInvite] = useState<{ workspaceId: string; workspaceName: string; logoUrl: string | null } | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
 	useEffect(() => {
-		api<{ workspaceId: string; workspaceName: string }>('GET', `/invites/${code}`)
+		api<{ workspaceId: string; workspaceName: string; logoUrl: string | null }>('GET', `/invites/${code}`)
 			.then(setInvite)
 			.catch((err) => setError(errorText(err)));
 	}, [code]);
@@ -40,9 +40,13 @@ export function InviteScreen({ code, onJoined }: { code: string; onJoined: () =>
 					</>
 				) : invite ? (
 					<>
-						<span className='avatar avatar-square' style={{ width: 64, height: 64, fontSize: 26, background: 'var(--text)', color: 'var(--bg)' }}>
-							{invite.workspaceName.charAt(0).toUpperCase()}
-						</span>
+						{invite.logoUrl ? (
+							<SpaceLogo name={invite.workspaceName} url={invite.logoUrl} size={64} />
+						) : (
+							<span className='avatar avatar-square' style={{ width: 64, height: 64, fontSize: 26, background: 'var(--text)', color: 'var(--bg)' }}>
+								{invite.workspaceName.charAt(0).toUpperCase()}
+							</span>
+						)}
 						<p className='muted'>Tu es invité à rejoindre</p>
 						<h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em' }}>{invite.workspaceName}</h1>
 						<button type='button' className='btn btn-primary btn-lg btn-block' onClick={join} disabled={busy}>

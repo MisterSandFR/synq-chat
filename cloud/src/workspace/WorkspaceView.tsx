@@ -165,6 +165,15 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	useBrowserNotifications(state.lastNotification, lookup, (item) => openNotification(item, openMessage));
 
 	useEffect(() => rememberWorkspace(workspaceId), [workspaceId]);
+	// Barre d'apps lue depuis /me : resynchronise après un changement d'identité poussé par members_changed.
+	const summary = me.workspaces.find((w) => w.id === workspaceId);
+	const info = state.info;
+	const stale = Boolean(info && summary && (summary.name !== info.name || summary.accent !== info.accent || summary.logoUrl !== info.logoUrl));
+	useEffect(() => {
+		if (stale) {
+			void onMeChanged();
+		}
+	}, [stale, onMeChanged]);
 
 	const dmUnread = (channels ?? []).reduce((sum, c) => sum + (c.kind === 'dm' ? (state.unread[c.id] ?? 0) : 0), 0);
 	useEffect(() => onBadges?.({ activity: state.notificationsUnread, dms: dmUnread }), [onBadges, state.notificationsUnread, dmUnread]);

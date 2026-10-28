@@ -19,6 +19,16 @@ export function Avatar({ name, url, size = 36, square, online, className = '' }:
 	);
 }
 
+// Logo d'espace, sinon initiale sur la couleur d'accent.
+export function SpaceLogo({ name, accent, url, size = 26 }: { name: string; accent?: string; url?: string | null; size?: number }) {
+	const style = { width: size, height: size, fontSize: Math.max(11, Math.round(size * 0.44)), background: url ? 'var(--surface)' : (accent ?? 'var(--text)'), color: '#fff' };
+	return (
+		<span className='avatar avatar-square' style={style} aria-hidden>
+			{url ? <img src={url} alt='' style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} /> : name.charAt(0).toUpperCase() || ' '}
+		</span>
+	);
+}
+
 export function Logo({ height = 28 }: { height?: number }) {
 	return (
 		<>

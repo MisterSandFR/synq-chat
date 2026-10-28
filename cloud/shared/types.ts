@@ -48,6 +48,7 @@ export interface WorkspaceSummary {
 	name: string;
 	owner: boolean;
 	accent: string;
+	logoUrl: string | null;
 }
 
 export interface Member {
@@ -63,6 +64,7 @@ export interface WorkspaceDetail {
 	id: string;
 	name: string;
 	accent: string;
+	logoUrl: string | null;
 	owner: boolean;
 	perms: number;
 	top: number;
