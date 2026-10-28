@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 
-import { isMemberKey, type Layout } from '../../shared/categories';
+import { BANNER_SIZE, BANNER_TYPES, isMemberKey, type Layout } from '../../shared/categories';
+import { P } from '../../shared/permissions';
 import type { ChannelOverrides } from '../../shared/types';
 import { listGrades } from '../grades';
-import { fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
+import { denyUnless, fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
 
 export const categoryRoutes = new Hono<AppEnv>();
 
@@ -40,7 +41,84 @@ categoryRoutes.patch('/w/:wid/categories/:id', async (c) => {
 	return unwrap(c, await stub(c).updateCategory(c.get('actor'), c.req.param('id'), typeof name === 'string' ? name : ''));
 });
 
-categoryRoutes.delete('/w/:wid/categories/:id', async (c) => unwrap(c, await stub(c).deleteCategory(c.get('actor'), c.req.param('id'))));
+categoryRoutes.delete('/w/:wid/categories/:id', async (c) => {
+	const id = c.req.param('id');
+	const banner = (await stub(c).categories(c.get('actor'))).find((k) => k.id === id)?.bannerKey;
+	const removed = await stub(c).deleteCategory(c.get('actor'), id);
+	if (removed.ok) {
+		await dropBanner(c, id, banner);
+	}
+	return unwrap(c, removed);
+});
+
+const bannerObject = (workspaceId: string, categoryId: string, key: string) => `category-banners/${workspaceId}/${categoryId}/${key}`;
+
+async function dropBanner(c: Ctx, categoryId: string, key: string | null | undefined): Promise<void> {
+	if (key) {
+		await c.env.FILES.delete(bannerObject(c.get('workspaceId'), categoryId, key));
+	}
+}
+
+// Recadrée en 4:1 côté client ; le serveur ne vérifie que type et poids.
+categoryRoutes.post('/w/:wid/categories/:id/banner', async (c) => {
+	const denied = denyUnless(c, P.MANAGE_CHANNELS);
+	if (denied) {
+		return denied;
+	}
+	const type = c.req.header('Content-Type')?.split(';')[0]?.trim() ?? '';
+	const size = Number(c.req.header('Content-Length'));
+	if (!BANNER_TYPES.includes(type)) {
+		return fail(c, 400, 'Image PNG, JPEG ou WebP attendue');
+	}
+	if (!Number.isInteger(size) || size <= 0 || !c.req.raw.body) {
+		return fail(c, 400, 'Fichier vide ou taille inconnue');
+	}
+	if (size > BANNER_SIZE) {
+		return fail(c, 413, 'Image trop lourde (2 Mo max)');
+	}
+	const categoryId = c.req.param('id');
+	const key = crypto.randomUUID();
+	const stream = new FixedLengthStream(size);
+	await Promise.all([c.env.FILES.put(bannerObject(c.get('workspaceId'), categoryId, key), stream.readable, { httpMetadata: { contentType: type } }), c.req.raw.body.pipeTo(stream.writable)]);
+	const saved = await stub(c).setCategoryBanner(c.get('actor'), categoryId, key);
+	if (!saved.ok) {
+		await dropBanner(c, categoryId, key);
+		return fail(c, saved.status, saved.error);
+	}
+	await dropBanner(c, categoryId, saved.value.previous);
+	return c.json({ bannerKey: key }, 201);
+});
+
+categoryRoutes.delete('/w/:wid/categories/:id/banner', async (c) => {
+	const denied = denyUnless(c, P.MANAGE_CHANNELS);
+	if (denied) {
+		return denied;
+	}
+	const categoryId = c.req.param('id');
+	const saved = await stub(c).setCategoryBanner(c.get('actor'), categoryId, null);
+	if (!saved.ok) {
+		return fail(c, saved.status, saved.error);
+	}
+	await dropBanner(c, categoryId, saved.value.previous);
+	return c.json({ bannerKey: null });
+});
+
+// Session seule, comme les logos : clé neuve à chaque envoi.
+categoryRoutes.get('/category-banners/:wid/:id/:key', async (c) => {
+	const object = await c.env.FILES.get(bannerObject(c.req.param('wid'), c.req.param('id'), c.req.param('key')));
+	if (!object) {
+		return fail(c, 404, 'Bannière introuvable');
+	}
+	return new Response(object.body, {
+		headers: {
+			'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+			'Content-Length': String(object.size),
+			'Content-Security-Policy': "default-src 'none'; sandbox",
+			'X-Content-Type-Options': 'nosniff',
+			'Cache-Control': 'private, max-age=31536000, immutable',
+		},
+	});
+});
 
 categoryRoutes.get('/w/:wid/categories/:id/overrides', async (c) => unwrap(c, await stub(c).getCategoryOverrides(c.get('actor'), c.req.param('id'))));
 

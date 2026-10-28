@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AI_CHAT_LIMITS } from '../shared/ai-chat';
 
-import type { Category, Layout } from '../shared/categories';
+import { cleanChannelIcon, type Category, type Layout } from '../shared/categories';
 import { appUserId, type CommandConfig, type CommandInput, type SlashCommand } from '../shared/commands';
 import type { PinInfo, Reaction } from '../shared/chat';
 import { DM_MAX_MEMBERS, DM_PERMS, type DirectChange, type DirectConversation, type FollowedThread, type ThreadView } from '../shared/dm-threads';
@@ -42,6 +42,7 @@ import {
 	removeCategory,
 	renameCategory,
 	resolveCategory,
+	setCategoryBanner,
 	validLayout,
 	writeCategoryOverrides,
 } from './categories';
@@ -114,6 +115,7 @@ type ChannelRow = {
 	user_limit: number;
 	position: number;
 	created_at: number;
+	icon: string;
 };
 
 type MessageRow = {
@@ -356,6 +358,8 @@ const MIGRATIONS = [
 		user_id TEXT NOT NULL,
 		PRIMARY KEY (grade_id, user_id)
 	);`,
+	`ALTER TABLE channels ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+	ALTER TABLE categories ADD COLUMN banner_key TEXT;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -387,6 +391,7 @@ const toChannel = (row: ChannelRow): Channel => ({
 	userLimit: row.user_limit,
 	position: row.position,
 	createdAt: row.created_at,
+	icon: row.icon,
 });
 
 const toMessage = (row: MessageRow): Message => ({
@@ -690,17 +695,22 @@ export class Workspace extends DurableObject<Env> {
 		if (categoryId === undefined) {
 			return err(404, 'Catégorie introuvable');
 		}
+		const icon = input.icon === undefined ? current.icon : cleanChannelIcon(input.icon);
+		if (icon === null) {
+			return err(400, 'Icône invalide : un emoji ou :nom:');
+		}
 		const moved = categoryId !== current.category_id;
 		let changed = moved;
 		this.ctx.storage.transactionSync(() => {
 			this.sql.exec(
-				'UPDATE channels SET name = ?, topic = ?, category_id = ?, synced = ?, user_limit = ?, position = ? WHERE id = ?',
+				'UPDATE channels SET name = ?, topic = ?, category_id = ?, synced = ?, user_limit = ?, position = ?, icon = ? WHERE id = ?',
 				name,
 				input.topic === undefined ? current.topic : input.topic.trim().slice(0, LIMITS.topicLength),
 				categoryId,
 				moved && !categoryId ? 0 : current.synced,
 				current.kind === 'voice' ? this.clampLimit(input.userLimit ?? current.user_limit) : 0,
 				input.position ?? (moved ? nextPosition(this.sql, categoryId) : current.position),
+				icon,
 				id,
 			);
 			if (moved && categoryId && current.synced === 1) {
@@ -1825,6 +1835,17 @@ export class Workspace extends DurableObject<Env> {
 		const category = renameCategory(this.sql, id, name)!;
 		this.resync();
 		return ok(category);
+	}
+
+	// Ancienne clé renvoyée pour nettoyage R2 par la route.
+	setCategoryBanner(actor: Actor, id: string, key: string | null): Result<{ previous: string | null }> {
+		const denied = this.categoryDenied<{ previous: string | null }>(actor, id);
+		if (denied) {
+			return denied;
+		}
+		const previous = setCategoryBanner(this.sql, id, key);
+		this.resync();
+		return ok({ previous });
 	}
 
 	deleteCategory(actor: Actor, id: string): Result<null> {

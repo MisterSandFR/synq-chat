@@ -88,6 +88,8 @@ export interface Channel {
 	userLimit: number;
 	position: number;
 	createdAt: number;
+	// Emoji Unicode ou :nom: d'espace ; vide = icône du type.
+	icon: string;
 }
 
 export interface ChannelInput {
@@ -99,6 +101,7 @@ export interface ChannelInput {
 	readOnly?: boolean;
 	userLimit?: number;
 	position?: number;
+	icon?: string;
 }
 
 export interface Attachment {

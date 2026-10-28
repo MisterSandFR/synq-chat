@@ -1,21 +1,23 @@
 import { useRef, useState, type ReactNode } from 'react';
 
+import { isSpaceEmoji } from '../../shared/categories';
 import { Floating } from '../floating';
 import { PRESENCE_LABEL, type Presence } from '../../shared/rc';
 
 import { P, has } from '../../shared/permissions';
 import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
 import { api } from '../api';
-import { navigate } from '../router';
+import { navigate, readPref, writePref } from '../router';
 import { Avatar, Icon, SpaceLogo, useDismiss } from '../ui';
 import { CategoryNav } from './categories/CategoryNav';
-import { memberColor } from './grades';
+import { memberColor, memberGrades } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
 import { useContextMenu } from './ContextMenu';
 import { voiceDrag, type MemberMenu } from './members/useMemberMenu';
 import type { VoiceControls } from './voice/useVoice';
 import type { WorkspaceState } from './useWorkspace';
+import './sidebar.css';
 
 type Props = {
 	me: Me;
@@ -41,6 +43,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 	const grades = state.info?.grades ?? [];
 	const channels = state.channels ?? [];
 	const connectedChannel = voice.snapshot ? channels.find((c) => c.id === voice.snapshot!.channelId) : undefined;
+	const canScreen = voice.snapshot?.status === 'connected' && has(state.perms[voice.snapshot.channelId] ?? 0, P.VOICE_SCREEN);
 
 	const open = (id: string) => {
 		onNavigate();
@@ -49,8 +52,8 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 
 	return (
 		<aside className='sidebar' style={{ width: width.width }} aria-label='Navigation de l’espace'>
-			<div className='sidebar-top'>
-				<WorkspaceSwitcher me={me} workspaceId={workspaceId} name={state.info?.name ?? ''} accent={state.info?.accent} logoUrl={state.info?.logoUrl} />
+			<div className='sidebar-top sb-head'>
+				<WorkspaceSwitcher me={me} workspaceId={workspaceId} name={state.info?.name ?? ''} accent={state.info?.accent} logoUrl={state.info?.logoUrl} memberCount={members.size} />
 				<button type='button' className='icon-btn' aria-label='Réglages de l’espace' title='Réglages de l’espace' onClick={onOpenSettings}>
 					<Icon name='settings' />
 				</button>
@@ -116,6 +119,21 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 				</div>
 			)}
 
+			{(staff || canScreen) && (
+				<div className='sb-quick'>
+					{staff && (
+						<button type='button' className='sb-quick-btn' onClick={() => onCreateChannel('text')}>
+							<Icon name='plus' size={15} strokeWidth={2} /> Créer un salon
+						</button>
+					)}
+					{canScreen && (
+						<button type='button' className='sb-quick-btn' aria-pressed={voice.snapshot!.screen} onClick={voice.toggleScreen}>
+							<Icon name={voice.snapshot!.screen ? 'screen-off' : 'screen'} size={15} /> {voice.snapshot!.screen ? 'Arrêter' : 'Partager l’écran'}
+						</button>
+					)}
+				</div>
+			)}
+
 			<MeBar me={me} status={state.status} presence={presence} presenceText={presenceText} menu={meMenu} />
 
 			<ResizeHandle resize={width} label='Redimensionner la barre latérale' />
@@ -128,16 +146,14 @@ function TextChannelRow({ channel, active, unread, mentions, onOpen }: { channel
 	return (
 		<a
 			href={`#${channel.id}`}
-			className={`channel${showUnread ? ' channel-unread' : ''}`}
+			className={`channel sb-pill${showUnread ? ' channel-unread' : ''}`}
 			aria-current={active ? 'page' : undefined}
 			onClick={(e) => {
 				e.preventDefault();
 				onOpen();
 			}}
 		>
-			<span className='channel-icon'>
-				<Icon name={channel.readOnly ? 'megaphone' : 'hash'} size={16} />
-			</span>
+			<ChannelTile channel={channel} />
 			<span className='channel-name'>{channel.name}</span>
 			{!active && mentions > 0 ? <span className='pill'>{mentions > 99 ? '99+' : mentions}</span> : showUnread && <span className='dot' aria-label='Non lu' />}
 		</a>
@@ -158,15 +174,32 @@ type VoiceRowProps = {
 	memberMenu?: MemberMenu;
 };
 
+// Emoji d'espace (:nom:) : icône du type tant que le rendu image n'est pas branché.
+function ChannelTile({ channel }: { channel: Channel }) {
+	const emoji = channel.icon && !isSpaceEmoji(channel.icon) ? channel.icon : '';
+	return (
+		<span className='sb-tile' aria-hidden>
+			{emoji ? <span className='sb-tile-emoji'>{emoji}</span> : <Icon name={channel.kind === 'voice' ? 'speaker' : channel.readOnly ? 'megaphone' : 'hash'} size={15} />}
+		</span>
+	);
+}
+
+const foldKey = (channelId: string) => `voice_folded_${channelId}`;
+
 function VoiceChannelRow({ channel, active, unread, mentions, participants, members, grades, speaking, onOpen, onJoin, memberMenu }: VoiceRowProps) {
 	const ctx = useContextMenu();
 	const [over, setOver] = useState(false);
+	const [folded, setFolded] = useState(() => readPref(foldKey(channel.id)) === '1');
 	const droppable = () => Boolean(memberMenu && voiceDrag.userId && memberMenu.canMove(voiceDrag.userId, channel.id));
+	const fold = () => {
+		writePref(foldKey(channel.id), folded ? '0' : '1');
+		setFolded(!folded);
+	};
 	return (
-		<>
+		<div className={`sb-voice${participants.length > 0 ? ' sb-voice-foldable' : ''}`}>
 			<a
 				href={`#${channel.id}`}
-				className={`channel${over ? ' channel-drop' : ''}`}
+				className={`channel sb-pill${over ? ' channel-drop' : ''}${!active && unread > 0 ? ' channel-unread' : ''}`}
 				onDragOver={(e) => {
 					if (droppable()) {
 						e.preventDefault();
@@ -197,26 +230,32 @@ function VoiceChannelRow({ channel, active, unread, mentions, participants, memb
 					onJoin();
 				}}
 			>
-				<span className='channel-icon'>
-					<Icon name='speaker' size={16} />
-				</span>
+				<ChannelTile channel={channel} />
 				<span className='channel-name'>{channel.name}</span>
 				{!active && mentions > 0 ? <span className='pill'>{mentions > 99 ? '99+' : mentions}</span> : !active && unread > 0 && <span className='dot' aria-label='Messages non lus' />}
 				{(participants.length > 0 || channel.userLimit > 0) && (
-					<span className='channel-meta'>
+					<span className='sb-count' title={channel.userLimit > 0 ? `${participants.length} sur ${channel.userLimit} places` : `${participants.length} en vocal`}>
 						{participants.length}
 						{channel.userLimit > 0 && `/${channel.userLimit}`}
 					</span>
 				)}
 			</a>
 			{participants.length > 0 && (
-				<ul className='voice-users'>
+				<button type='button' className='sb-fold' aria-expanded={!folded} aria-label={folded ? `Afficher les participants de ${channel.name}` : `Masquer les participants de ${channel.name}`} onClick={fold}>
+					<Icon name='chevron' size={14} strokeWidth={2.2} />
+				</button>
+			)}
+			{participants.length > 0 && !folded && (
+				<ul className='sb-users'>
 					{participants.map((p) => {
 						const member = members.get(p.userId);
+						const badges = memberGrades(member, grades)
+							.filter((g) => g.color)
+							.slice(0, 3);
 						return (
 							<li
 								key={p.userId}
-								className={`voice-user${speaking?.has(p.userId) ? ' voice-user-speaking' : ''}`}
+								className={`sb-user${speaking?.has(p.userId) ? ' sb-user-speaking' : ''}`}
 								{...(memberMenu ? ctx.bind(() => memberMenu.items(p.userId)) : {})}
 								draggable={memberMenu?.canDrag(p.userId) || undefined}
 								onDragStart={(e) => {
@@ -231,34 +270,58 @@ function VoiceChannelRow({ channel, active, unread, mentions, participants, memb
 									voiceDrag.userId = null;
 								}}
 							>
-								<Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={22} />
-								<span className='grow ellipsis' style={{ color: memberColor(member, grades) }}>
+								<Avatar name={member?.name ?? '?'} url={member?.avatarUrl} size={24} />
+								<span className='sb-user-name' style={{ color: memberColor(member, grades) }}>
 									{member?.name ?? 'Membre'}
 								</span>
-								<span className='voice-user-icons'>
-									{p.screen && <Icon name='screen' size={14} />}
-									{p.video && <Icon name='video' size={14} />}
-									{p.deafened ? <Icon name='headphones-off' size={14} /> : p.muted && <Icon name='mic-off' size={14} />}
+								<span className='sb-user-state'>
+									{p.screen && <span className='sb-live'>En direct</span>}
+									{p.video && (
+										<span title='Caméra active' style={{ display: 'inline-grid' }}>
+											<Icon name='video' size={14} />
+										</span>
+									)}
+									{p.deafened ? (
+										<span className='sb-off' title='Son coupé'>
+											<Icon name='headphones-off' size={14} />
+										</span>
+									) : (
+										p.muted && (
+											<span className='sb-off' title='Micro coupé'>
+												<Icon name='mic-off' size={14} />
+											</span>
+										)
+									)}
 								</span>
+								{badges.length > 0 && (
+									<span className='sb-grades'>
+										{badges.map((g) => (
+											<span key={g.id} className='sb-grade' style={{ background: g.color }} title={g.name} />
+										))}
+									</span>
+								)}
 							</li>
 						);
 					})}
 				</ul>
 			)}
 			{ctx.menu}
-		</>
+		</div>
 	);
 }
 
-function WorkspaceSwitcher({ me, workspaceId, name, accent, logoUrl }: { me: Me; workspaceId: string; name: string; accent?: string; logoUrl?: string | null }) {
+function WorkspaceSwitcher({ me, workspaceId, name, accent, logoUrl, memberCount }: { me: Me; workspaceId: string; name: string; accent?: string; logoUrl?: string | null; memberCount: number }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	useDismiss(ref, open, () => setOpen(false));
 	return (
 		<div className='switcher' ref={ref}>
 			<button type='button' className='switcher-btn' aria-haspopup='menu' aria-expanded={open} onClick={() => setOpen(!open)}>
-				<SpaceLogo name={name} accent={accent} url={logoUrl} size={30} />
-				<span className='switcher-name'>{name}</span>
+				<SpaceLogo name={name} accent={accent} url={logoUrl} size={38} />
+				<span className='sb-head-text'>
+					<span className='switcher-name'>{name}</span>
+					{memberCount > 0 && <span className='sb-head-sub'>{memberCount > 1 ? `${memberCount} membres` : '1 membre'}</span>}
+				</span>
 				<Icon name='chevron' size={16} />
 			</button>
 			{open && (

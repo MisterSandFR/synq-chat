@@ -106,6 +106,7 @@ export async function openDirect(
 		userLimit: 0,
 		position: 0,
 		createdAt: conversation.createdAt,
+		icon: '',
 	};
 	return { conversation, channel, perms: DM_PERMS, guestInvites };
 }
