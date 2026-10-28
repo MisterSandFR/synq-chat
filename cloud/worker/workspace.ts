@@ -75,6 +75,7 @@ import {
 	lastReplyId,
 	listDirects,
 	loadDmMembers,
+	syncHolders,
 	markThreadRead,
 	unfollow,
 } from './dm-threads';
@@ -344,6 +345,17 @@ const MIGRATIONS = [
 	`CREATE TABLE guests (user_id TEXT PRIMARY KEY);`,
 	AUDIT_MIGRATION,
 	`ALTER TABLE messages ADD COLUMN mail_card TEXT;`,
+	`CREATE TABLE dm_grades (
+		channel_id TEXT NOT NULL,
+		grade_id TEXT NOT NULL,
+		PRIMARY KEY (channel_id, grade_id)
+	);
+	CREATE INDEX dm_grades_grade ON dm_grades (grade_id);
+	CREATE TABLE grade_holders (
+		grade_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		PRIMARY KEY (grade_id, user_id)
+	);`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -561,11 +573,16 @@ export class Workspace extends DurableObject<Env> {
 	gradeDeleted(gradeId: string): void {
 		this.sql.exec('DELETE FROM channel_overrides WHERE grade_id = ?', gradeId);
 		this.sql.exec('DELETE FROM category_overrides WHERE subject_id = ?', gradeId);
+		this.sql.exec('DELETE FROM dm_grades WHERE grade_id = ?', gradeId);
+		this.sql.exec('DELETE FROM grade_holders WHERE grade_id = ?', gradeId);
 		this.overrideCache.clear();
+		this.dmCache = null;
 	}
 
 	// Grades modifiés côté D1 : nouveaux acteurs pour les sockets ouverts, puis resynchronisation.
 	refreshActors(actors: Actor[]): void {
+		this.ctx.storage.transactionSync(() => syncHolders(this.sql, actors));
+		this.dmCache = null;
 		const byId = new Map(actors.map((a) => [a.id, a]));
 		for (const ws of this.ctx.getWebSockets()) {
 			const conn = this.conn(ws);
@@ -576,6 +593,7 @@ export class Workspace extends DurableObject<Env> {
 			}
 		}
 		this.resync();
+		this.pushGradeDirects();
 		this.broadcast({ t: 'members_changed' });
 	}
 
@@ -937,6 +955,9 @@ export class Workspace extends DurableObject<Env> {
 			.toArray()) {
 			this.setRead(userId, channel_id, max);
 		}
+		// Tout membre porte le grade `default`.
+		this.sql.exec('INSERT OR IGNORE INTO grade_holders (grade_id, user_id) VALUES (?, ?)', DEFAULT_GRADE, userId);
+		this.dmCache = null;
 		this.broadcast({ t: 'members_changed' });
 	}
 
@@ -954,6 +975,8 @@ export class Workspace extends DurableObject<Env> {
 		}
 		this.sql.exec('DELETE FROM reads WHERE user_id = ?', userId);
 		this.sql.exec('DELETE FROM guests WHERE user_id = ?', userId);
+		this.sql.exec('DELETE FROM grade_holders WHERE user_id = ?', userId);
+		this.dmCache = null;
 		forgetNotifications(this.sql, userId);
 		for (const channelId of channels) {
 			this.broadcastVoice(channelId, userId);
@@ -1408,47 +1431,67 @@ export class Workspace extends DurableObject<Env> {
 	// Messages directs et fils.
 
 	directs(actor: Actor): DirectConversation[] {
-		return listDirects(this.sql, actor.id);
+		return listDirects(this.sql, actor.id, this.dmMap());
 	}
 
-	// Participants validés comme membres par la route, auteur compris.
-	openDirect(actor: Actor, userIds: string[], name: string): Result<DirectConversation> {
-		if (!userIds.includes(actor.id) || userIds.length < 2 || userIds.length > DM_MAX_MEMBERS) {
+	// Participants validés comme membres par la route, auteur compris ; grades validés en D1, porteurs lus dans `actors`.
+	openDirect(actor: Actor, userIds: string[], name: string, gradeIds: string[] = [], actors: Actor[] = []): Result<DirectConversation> {
+		if (!userIds.includes(actor.id) || userIds.length > DM_MAX_MEMBERS || (userIds.length < 2 && !gradeIds.length)) {
 			return err(400, 'Participants invalides');
 		}
-		this.dmCache ??= loadDmMembers(this.sql);
-		const existing = name ? null : findDirect(this.dmCache, userIds);
-		if (existing) {
-			return ok(directById(this.sql, existing)!);
+		if (gradeIds.length && actor.guest) {
+			return err(403, DENIED);
 		}
-		const id = this.ctx.storage.transactionSync(() => createDirect(this.sql, userIds, name));
+		const existing = name || gradeIds.length ? null : findDirect(this.sql, userIds);
+		if (existing) {
+			return ok(directById(this.sql, existing, this.dmMap())!);
+		}
+		const id = this.ctx.storage.transactionSync(() => {
+			if (gradeIds.length) {
+				syncHolders(this.sql, actors);
+			}
+			return createDirect(this.sql, userIds, name, gradeIds);
+		});
 		this.dmCache = null;
-		const conversation = directById(this.sql, id)!;
-		this.sendTo(userIds, { t: 'channel_upsert', channel: this.channelView(id)!, perms: DM_PERMS });
-		this.sendTo(userIds, { t: 'dm', conversation });
+		const conversation = directById(this.sql, id, this.dmMap())!;
+		this.sendTo(conversation.memberIds, { t: 'channel_upsert', channel: this.channelView(id)!, perms: DM_PERMS });
+		this.sendTo(conversation.memberIds, { t: 'dm', conversation });
 		return ok(conversation);
 	}
 
 	// Groupes seulement, par un participant ; null pour qui vient de partir.
-	updateDirect(actor: Actor, channelId: string, change: DirectChange): Result<DirectConversation | null> {
-		const current = directById(this.sql, channelId);
+	updateDirect(actor: Actor, channelId: string, change: DirectChange, actors: Actor[] = []): Result<DirectConversation | null> {
+		const current = directById(this.sql, channelId, this.dmMap());
 		if (!current || !current.memberIds.includes(actor.id)) {
 			return err(404, 'Conversation introuvable');
 		}
 		if (!current.group) {
 			return err(400, 'Réservé aux groupes');
 		}
-		if (change.remove !== undefined && !current.memberIds.includes(change.remove)) {
+		// Un porteur de grade reste tant qu'il a le grade : seul un participant ajouté se retire.
+		if (change.remove !== undefined && !current.addedIds.includes(change.remove)) {
 			return err(404, 'Participant introuvable');
 		}
-		const add = [...new Set(change.add ?? [])].filter((id) => !current.memberIds.includes(id));
-		if (current.memberIds.length + add.length > DM_MAX_MEMBERS) {
-			return err(400, `${DM_MAX_MEMBERS} participants maximum`);
+		const grading = (change.addGrades?.length ?? 0) > 0 || change.removeGrade !== undefined;
+		if (grading && actor.guest) {
+			return err(403, DENIED);
 		}
-		this.ctx.storage.transactionSync(() => changeDirect(this.sql, channelId, { add, remove: change.remove, name: change.name }));
+		if (change.removeGrade !== undefined && !current.gradeIds.includes(change.removeGrade)) {
+			return err(404, 'Grade introuvable');
+		}
+		const add = [...new Set(change.add ?? [])].filter((id) => !current.addedIds.includes(id));
+		if (add.length && current.addedIds.length + add.length > DM_MAX_MEMBERS) {
+			return err(400, `${DM_MAX_MEMBERS} personnes ajoutées une à une maximum`);
+		}
+		this.ctx.storage.transactionSync(() => {
+			if (grading) {
+				syncHolders(this.sql, actors);
+			}
+			changeDirect(this.sql, channelId, { add, remove: change.remove, name: change.name, addGrades: change.addGrades, removeGrade: change.removeGrade });
+		});
 		this.dmCache = null;
 		this.resync();
-		const conversation = directById(this.sql, channelId)!;
+		const conversation = directById(this.sql, channelId, this.dmMap())!;
 		this.sendTo(conversation.memberIds, { t: 'dm', conversation });
 		return ok(conversation.memberIds.includes(actor.id) ? conversation : null);
 	}
@@ -1559,9 +1602,23 @@ export class Workspace extends DurableObject<Env> {
 		return ok(root);
 	}
 
-	private dmMembers(channelId: string): string[] | null {
+	private dmMap(): Map<string, string[]> {
 		this.dmCache ??= loadDmMembers(this.sql);
-		return this.dmCache.get(channelId) ?? null;
+		return this.dmCache;
+	}
+
+	private dmMembers(channelId: string): string[] | null {
+		return this.dmMap().get(channelId) ?? null;
+	}
+
+	// Porteurs changés : chaque groupe lié à un grade est renvoyé à ses participants.
+	private pushGradeDirects(): void {
+		for (const { channel_id } of this.sql.exec<{ channel_id: string }>('SELECT DISTINCT channel_id FROM dm_grades').toArray()) {
+			const conversation = directById(this.sql, channel_id, this.dmMap());
+			if (conversation) {
+				this.sendTo(conversation.memberIds, { t: 'dm', conversation });
+			}
+		}
 	}
 
 	// Un DM n'est pas un salon d'espace : ni réglages ni suppression par les gestionnaires.
@@ -2278,7 +2335,7 @@ export class Workspace extends DurableObject<Env> {
 	// Participants des groupes de l'invité, lui compris ; vide s'il n'en a plus.
 	guestContacts(userId: string): string[] {
 		const contacts = new Set<string>();
-		for (const members of (this.dmCache ??= loadDmMembers(this.sql)).values()) {
+		for (const members of this.dmMap().values()) {
 			if (members.includes(userId)) {
 				members.forEach((id) => contacts.add(id));
 			}
@@ -2288,7 +2345,7 @@ export class Workspace extends DurableObject<Env> {
 
 	// Groupe seulement ; un invité déjà entré doit en faire encore partie.
 	guestConversation(channelId: string, userId: string | null): DirectConversation | null {
-		const conversation = directById(this.sql, channelId);
+		const conversation = directById(this.sql, channelId, this.dmMap());
 		if (!conversation?.group || (userId !== null && !conversation.memberIds.includes(userId))) {
 			return null;
 		}
@@ -2313,7 +2370,7 @@ export class Workspace extends DurableObject<Env> {
 		if (max !== null) {
 			this.setRead(userId, channelId, max);
 		}
-		const conversation = directById(this.sql, channelId)!;
+		const conversation = directById(this.sql, channelId, this.dmMap())!;
 		this.sendTo(conversation.memberIds, { t: 'dm', conversation });
 		this.broadcast({ t: 'members_changed' });
 		return ok(conversation);
