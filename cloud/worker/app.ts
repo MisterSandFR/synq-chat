@@ -36,6 +36,7 @@ import { mailSharerRoutes } from './routes/mail-sharers';
 import { aiRoutes } from './routes/ai';
 import { eventCardRoutes } from './routes/event-cards';
 import { voiceRoutes } from './routes/voice';
+import { dropEmojis, emojiRoutes } from './routes/emojis';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
 import { guestRoutes } from './routes/guests';
@@ -500,6 +501,7 @@ app.delete('/w/:wid/info', async (c) => {
 	await stub(c).destroy();
 	await c.env.DB.prepare('DELETE FROM workspaces WHERE id = ?').bind(c.get('workspaceId')).run();
 	await dropLogo(c, c.get('workspaceId'), logo?.logo_key);
+	await dropEmojis(c, c.get('workspaceId'));
 	return c.json({ ok: true });
 });
 
@@ -878,6 +880,7 @@ app.route('/', aiRoutes);
 app.route('/', aiChatRoutes);
 app.route('/', workspaceLogoRoutes);
 app.route('/', mailSharerRoutes);
+app.route('/', emojiRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

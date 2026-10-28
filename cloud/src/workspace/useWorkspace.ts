@@ -7,6 +7,7 @@ import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
 import { EVENT_CARD_EVENT } from './events/store';
 import { initialDmThreads, reduceDmThreads, type DmThreadsAction, type DmThreadsState } from './dm-threads/state';
+import { EMOJIS_EVENT } from './emojis/customEmojis';
 
 export interface ChannelMessages {
 	items: Message[];
@@ -220,6 +221,7 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		case 'calendar_reminder':
 		case 'members_changed':
 		case 'commands_changed':
+		case 'emojis_changed':
 			return state;
 		case 'thread':
 			return withMessage(state, event.root, 'update');
@@ -325,6 +327,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				}
 				if (event.t === 'commands_changed') {
 					window.dispatchEvent(new CustomEvent(COMMANDS_EVENT, { detail: workspaceId }));
+				}
+				if (event.t === 'emojis_changed') {
+					window.dispatchEvent(new CustomEvent(EMOJIS_EVENT, { detail: workspaceId }));
 				}
 				if (event.t === 'event_card') {
 					window.dispatchEvent(new CustomEvent(EVENT_CARD_EVENT, { detail: event.eventId }));

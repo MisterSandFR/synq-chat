@@ -302,7 +302,7 @@ export function MessageList({
 								) : (
 									message.body &&
 									!ai.hidesBody(message.id) && (
-										<div className={`msg-body${emojiOnly(message.body) ? ' msg-body-jumbo' : ''}`}>
+										<div className={`msg-body${emojiOnly(message.body, lookup.emojis) ? ' msg-body-jumbo' : ''}`}>
 											<RichText text={message.body} lookup={lookup} />
 											{message.editedAt && <span className='msg-edited'> (modifié)</span>}
 										</div>
@@ -431,6 +431,7 @@ export function MessageList({
 		{picker && (
 			<EmojiPicker
 				anchor={picker.anchor}
+				custom={lookup.emojis}
 				onClose={() => setPicker(null)}
 				onPick={(emoji) => {
 					const target = items.find((m) => m.id === picker.id);

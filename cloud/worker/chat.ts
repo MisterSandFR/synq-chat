@@ -1,5 +1,6 @@
 import { MAX_PINS, MAX_REACTIONS, type PinInfo, type Reaction } from '../shared/chat';
 import { emojiByChar } from '../shared/emoji';
+import { CUSTOM_REACTION_RE } from '../shared/emojis';
 import type { Message } from '../shared/types';
 import { err, ok, type Result } from './result';
 
@@ -39,7 +40,8 @@ export function decorate(sql: SqlStorage, messages: Message[]): Message[] {
 }
 
 export function toggleReaction(sql: SqlStorage, messageId: number, userId: string, emoji: string, add: boolean): Result<Reaction[]> {
-	if (!emojiByChar.has(emoji)) {
+	// `:nom:` vérifié dans D1 par la route.
+	if (!emojiByChar.has(emoji) && !CUSTOM_REACTION_RE.test(emoji)) {
 		return err(400, 'Emoji inconnu');
 	}
 	if (add) {

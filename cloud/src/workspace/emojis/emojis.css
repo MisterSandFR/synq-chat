@@ -1,0 +1,155 @@
+.emoji-custom {
+	display: inline-block;
+	width: auto;
+	height: 1.375em;
+	max-width: 3em;
+	vertical-align: -0.35em;
+	object-fit: contain;
+}
+
+.msg-body-jumbo .emoji-custom {
+	height: 48px;
+	max-width: 96px;
+	vertical-align: bottom;
+}
+
+.reaction-emoji .emoji-custom {
+	height: 18px;
+	vertical-align: middle;
+}
+
+.emoji-cell .emoji-custom {
+	height: 26px;
+	max-width: 32px;
+}
+
+.emoji-tab .emoji-custom {
+	height: 18px;
+}
+
+.emoji-foot-glyph .emoji-custom {
+	height: 24px;
+}
+
+.suggest .emoji-custom {
+	width: 24px;
+	height: 22px;
+}
+
+/* Page des réglages */
+
+.emoji-admin-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.emoji-admin-count {
+	font-size: 13px;
+	font-variant-numeric: tabular-nums;
+	color: var(--muted);
+}
+
+.emoji-drop {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	padding: 20px 16px;
+	border: 1px dashed var(--line);
+	border-radius: var(--r);
+	color: var(--muted);
+	font-size: 13px;
+	text-align: center;
+}
+
+.emoji-drop[data-over='true'] {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--text);
+}
+
+.emoji-drop strong {
+	color: var(--text);
+	font-weight: 600;
+}
+
+.emoji-admin-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.emoji-admin-card {
+	display: grid;
+	grid-template-columns: 40px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	padding: 8px 6px 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+}
+
+.emoji-admin-card > .emoji-custom {
+	width: 40px;
+	height: 40px;
+	max-width: none;
+}
+
+.emoji-admin-meta {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	gap: 1px;
+}
+
+.emoji-admin-name {
+	min-width: 0;
+	padding: 1px 4px;
+	margin-left: -4px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	text-align: left;
+}
+
+.emoji-admin-name:hover {
+	background: var(--hover);
+}
+
+.emoji-admin-name-input {
+	width: 100%;
+	min-width: 0;
+	padding: 1px 4px;
+	margin-left: -4px;
+	border: 1px solid var(--accent);
+	border-radius: var(--r-sm);
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.emoji-admin-name-input:focus {
+	outline: none;
+}
+
+.emoji-admin-author {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.emoji-admin-pending {
+	opacity: 0.6;
+}
