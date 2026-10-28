@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 
-import type { MailboxInfo, MailDraft, MailMessage, MailThreadDetail } from '../../shared/mail';
-import type { Me, WorkspaceDetail, WorkspaceSummary } from '../../shared/types';
+import type { MailAssignee, MailboxInfo, MailDraft, MailMessage, MailThreadDetail } from '../../shared/mail';
+import type { Me, WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
 import { Icon } from '../ui';
 import { AiBox } from './AiBox';
@@ -39,7 +39,7 @@ const typing = (target: EventTarget | null) => target instanceof HTMLElement && 
 export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onBack, onChanged, onCompose, onSent, onRead, onUnread }: Props) {
 	const [detail, setDetail] = useState<MailThreadDetail | null>(null);
 	const [drafts, setDrafts] = useState<MailDraft[]>([]);
-	const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
+	const [members, setMembers] = useState<MailAssignee[]>([]);
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [aiOpen, setAiOpen] = useState(false);
 	const [noting, setNoting] = useState(false);
@@ -69,28 +69,23 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 	}, [load, version]);
 
 	const box = detail ? boxes.find((b) => b.id === detail.thread.mailboxId) : undefined;
-	const shareKey = box?.shares.map((share) => share.workspaceId).join(',') ?? '';
+	const boxId = box?.id;
+	const boxReply = !!box?.access.reply;
 
-	// Assignables : membres des espaces de partage ; le serveur revérifie l'accès.
+	// Attribuables : au moins le niveau réponse, calculé par le serveur.
 	useEffect(() => {
+		if (!boxId || !boxReply) {
+			setMembers([]);
+			return;
+		}
 		let cancelled = false;
-		const ids = shareKey ? shareKey.split(',') : [];
-		void Promise.all(ids.map((wid) => api<WorkspaceDetail>('GET', `/w/${wid}/info`).catch(() => null))).then((infos) => {
-			if (cancelled) {
-				return;
-			}
-			const names = new Map<string, string>([[me.user.id, me.user.name]]);
-			for (const info of infos) {
-				for (const member of info?.members ?? []) {
-					names.set(member.id, member.name);
-				}
-			}
-			setMembers([...names].map(([memberId, name]) => ({ id: memberId, name })).sort((a, b) => a.name.localeCompare(b.name)));
-		});
+		void api<MailAssignee[]>('GET', `/mail/boxes/${boxId}/assignees`)
+			.then((list) => !cancelled && setMembers(list))
+			.catch(() => !cancelled && setMembers([]));
 		return () => {
 			cancelled = true;
 		};
-	}, [shareKey, me.user.id, me.user.name]);
+	}, [boxId, boxReply, version]);
 
 	const run = async (task: () => Promise<void>) => {
 		setBusy(true);

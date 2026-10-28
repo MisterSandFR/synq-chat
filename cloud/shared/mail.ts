@@ -9,10 +9,32 @@ export interface MailAccess {
 	manage: boolean;
 }
 
+export type MailLevel = 'view' | 'reply' | 'manage';
+
+export const MAIL_LEVELS: MailLevel[] = ['view', 'reply', 'manage'];
+
+export interface MailShareGrade {
+	gradeId: string;
+	level: MailLevel;
+}
+
 export interface MailShare {
 	workspaceId: string;
 	workspaceName: string;
 	channelIds: string[];
+	grades: MailShareGrade[];
+	// Membres de l'espace qui ouvrent la boîte, propriétaire compris.
+	reach: number;
+}
+
+export interface MailShareUpdate {
+	channelIds?: string[];
+	grades?: MailShareGrade[];
+}
+
+export interface MailAssignee {
+	id: string;
+	name: string;
 }
 
 export interface MailboxConfig {
@@ -224,6 +246,7 @@ export const MAIL_LIMITS = {
 	templateBody: 5000,
 	search: 200,
 	scheduleMax: 366 * 24 * 3600 * 1000,
+	shareGrades: 100,
 } as const;
 
 // Bornes des termes surlignés dans `MailThread.match`.

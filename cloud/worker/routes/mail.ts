@@ -6,6 +6,7 @@ import {
 	type MailAddress,
 	type MailAiInput,
 	type MailAiResult,
+	type MailAssignee,
 	type MailAttachment,
 	type MailboxInfo,
 	type MailboxInput,
@@ -13,11 +14,15 @@ import {
 	type MailDraft,
 	SEARCH_MARK,
 	type MailHtml,
+	MAIL_LEVELS,
+	type MailLevel,
 	type MailMessage,
 	type MailNote,
 	type MailScheduleInput,
 	type MailSendInput,
+	type MailShareGrade,
 	type MailShareInput,
+	type MailShareUpdate,
 	type MailStatus,
 	type MailTemplate,
 	type MailTemplateInput,
@@ -28,8 +33,8 @@ import {
 	type MailUpload,
 } from '../../shared/mail';
 import type { AiTextResult } from '../../shared/ai';
-import { P, has } from '../../shared/permissions';
-import { loadActor } from '../grades';
+import { DEFAULT_GRADE } from '../../shared/permissions';
+import { listGrades, loadActor } from '../grades';
 import { cleanName, fail, readJson, unwrap, workspaceStub, type AppEnv, type Ctx } from '../http';
 import { safeUrl } from '../media';
 import { aiText } from '../ai';
@@ -127,34 +132,41 @@ const parseIds = (raw: string): string[] => {
 	}
 };
 
-type PermCache = Map<string, number>;
-
 const mailboxStub = (env: Env, id: string) => env.MAILBOX.getByName(id);
 
 // Contexte minimal partagé par les routes et le cron d'envoi différé.
 type Scope = { env: Env; userId: string };
 const userOf = (c: Ctx | Scope) => ('userId' in c ? c.userId : c.get('user').id);
 
-// Accès hors propriétaire : union des permissions de grade des espaces de partage.
-async function accessFor(c: { env: Env }, box: BoxRow, userId: string, cache: PermCache = new Map()): Promise<MailAccess> {
+const RANK: Record<MailLevel, number> = { view: 1, reply: 2, manage: 3 };
+
+// Niveau d'un membre sur un partage : meilleur de ses grades, défaut compris ; propriétaire de l'espace = gestion. Invités jamais joints.
+const SHARE_MEMBERS = "mailbox_shares s JOIN members m ON m.workspace_id = s.workspace_id AND m.role != 'guest'";
+const SHARE_RANK = `CASE WHEN m.role = 'owner' THEN 3 ELSE (SELECT MAX(CASE sg.level WHEN 'manage' THEN 3 WHEN 'reply' THEN 2 ELSE 1 END) FROM mailbox_share_grades sg
+	WHERE sg.mailbox_id = s.mailbox_id AND sg.workspace_id = s.workspace_id
+		AND (sg.grade_id = '${DEFAULT_GRADE}' OR sg.grade_id IN (SELECT mg.grade_id FROM member_grades mg WHERE mg.workspace_id = s.workspace_id AND mg.user_id = m.user_id))) END`;
+
+const accessOf = (rank: number | null | undefined): MailAccess => {
+	const n = rank ?? 0;
+	return { owner: false, view: n >= RANK.view, reply: n >= RANK.reply, manage: n >= RANK.manage };
+};
+
+async function accessFor(c: { env: Env }, box: BoxRow, userId: string): Promise<MailAccess> {
 	if (box.owner_id === userId) {
 		return OWNER;
 	}
-	const { results } = await c.env.DB.prepare(
-		'SELECT s.workspace_id FROM mailbox_shares s JOIN members m ON m.workspace_id = s.workspace_id AND m.user_id = ? WHERE s.mailbox_id = ?',
-	)
+	const row = await c.env.DB.prepare(`SELECT MAX(${SHARE_RANK}) AS rank FROM ${SHARE_MEMBERS} AND m.user_id = ? WHERE s.mailbox_id = ?`)
 		.bind(userId, box.id)
-		.all<{ workspace_id: string }>();
-	let perms = 0;
-	for (const { workspace_id } of results) {
-		const key = `${workspace_id}:${userId}`;
-		if (!cache.has(key)) {
-			cache.set(key, (await loadActor(c.env.DB, workspace_id, userId))?.perms ?? 0);
-		}
-		perms |= cache.get(key)!;
-	}
-	const view = has(perms, P.MAIL_VIEW) || has(perms, P.MANAGE_MAIL);
-	return { owner: false, view, reply: view && has(perms, P.MAIL_REPLY), manage: has(perms, P.MANAGE_MAIL) };
+		.first<{ rank: number | null }>();
+	return accessOf(row?.rank);
+}
+
+async function shareRank(db: D1Database, boxId: string, workspaceId: string, userId: string): Promise<number> {
+	const row = await db
+		.prepare(`SELECT ${SHARE_RANK} AS rank FROM ${SHARE_MEMBERS} AND m.user_id = ? WHERE s.mailbox_id = ? AND s.workspace_id = ?`)
+		.bind(userId, boxId, workspaceId)
+		.first<{ rank: number | null }>();
+	return row?.rank ?? 0;
 }
 
 type Access = MailAccess & { box: BoxRow };
@@ -171,14 +183,14 @@ async function boxAccess(c: Ctx | Scope, id: string): Promise<Access | null> {
 async function visibleBoxes(c: Ctx): Promise<Access[]> {
 	const userId = c.get('user').id;
 	const { results } = await c.env.DB.prepare(
-		'SELECT DISTINCT b.* FROM mailboxes b LEFT JOIN mailbox_shares s ON s.mailbox_id = b.id LEFT JOIN members m ON m.workspace_id = s.workspace_id AND m.user_id = ? WHERE b.owner_id = ? OR m.user_id IS NOT NULL ORDER BY b.name COLLATE NOCASE',
+		`SELECT b.*, (SELECT MAX(${SHARE_RANK}) FROM ${SHARE_MEMBERS} AND m.user_id = ? WHERE s.mailbox_id = b.id) AS share_rank FROM mailboxes b
+		WHERE b.owner_id = ? OR b.id IN (SELECT s.mailbox_id FROM mailbox_shares s JOIN members m ON m.workspace_id = s.workspace_id AND m.user_id = ?) ORDER BY b.name COLLATE NOCASE`,
 	)
-		.bind(userId, userId)
-		.all<BoxRow>();
-	const cache: PermCache = new Map();
+		.bind(userId, userId, userId)
+		.all<BoxRow & { share_rank: number | null }>();
 	const out: Access[] = [];
-	for (const box of results) {
-		const access = await accessFor(c, box, userId, cache);
+	for (const { share_rank, ...box } of results) {
+		const access = box.owner_id === userId ? OWNER : accessOf(share_rank);
 		if (access.view) {
 			out.push({ ...access, box });
 		}
@@ -187,12 +199,17 @@ async function visibleBoxes(c: Ctx): Promise<Access[]> {
 }
 
 async function boxJson(c: Ctx, box: BoxRow, access: MailAccess, unread = 0): Promise<MailboxInfo> {
-	const [shares, owner] = await c.env.DB.batch([
+	const [shares, owner, rules, reach] = await c.env.DB.batch([
 		c.env.DB.prepare(
-			'SELECT s.workspace_id, w.name, s.channel_ids, EXISTS (SELECT 1 FROM members m WHERE m.workspace_id = s.workspace_id AND m.user_id = ?) AS mine FROM mailbox_shares s JOIN workspaces w ON w.id = s.workspace_id WHERE s.mailbox_id = ? ORDER BY w.name COLLATE NOCASE',
+			"SELECT s.workspace_id, w.name, s.channel_ids, EXISTS (SELECT 1 FROM members m WHERE m.workspace_id = s.workspace_id AND m.user_id = ? AND m.role != 'guest') AS mine FROM mailbox_shares s JOIN workspaces w ON w.id = s.workspace_id WHERE s.mailbox_id = ? ORDER BY w.name COLLATE NOCASE",
 		).bind(c.get('user').id, box.id),
 		c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(box.owner_id),
+		c.env.DB.prepare('SELECT sg.workspace_id, sg.grade_id, sg.level FROM mailbox_share_grades sg JOIN grades g ON g.workspace_id = sg.workspace_id AND g.id = sg.grade_id WHERE sg.mailbox_id = ? ORDER BY g.position DESC').bind(box.id),
+		c.env.DB.prepare(`SELECT s.workspace_id, COUNT(*) AS n FROM ${SHARE_MEMBERS} WHERE s.mailbox_id = ? AND (m.user_id = ? OR (${SHARE_RANK}) > 0) GROUP BY s.workspace_id`).bind(box.id, box.owner_id),
 	]);
+	const gradesOf = (workspaceId: string): MailShareGrade[] =>
+		(rules!.results as Array<{ workspace_id: string; grade_id: string; level: MailLevel }>).filter((rule) => rule.workspace_id === workspaceId).map((rule) => ({ gradeId: rule.grade_id, level: rule.level }));
+	const reachOf = new Map((reach!.results as Array<{ workspace_id: string; n: number }>).map((row) => [row.workspace_id, row.n]));
 	return {
 		id: box.id,
 		name: box.name,
@@ -202,7 +219,13 @@ async function boxJson(c: Ctx, box: BoxRow, access: MailAccess, unread = 0): Pro
 		access: { owner: access.owner, view: access.view, reply: access.reply, manage: access.manage },
 		shares: (shares!.results as Array<{ workspace_id: string; name: string; channel_ids: string; mine: number }>)
 			.filter((share) => access.owner || share.mine === 1)
-			.map((share) => ({ workspaceId: share.workspace_id, workspaceName: share.name, channelIds: parseIds(share.channel_ids) })),
+			.map((share) => ({
+				workspaceId: share.workspace_id,
+				workspaceName: share.name,
+				channelIds: parseIds(share.channel_ids),
+				grades: gradesOf(share.workspace_id),
+				reach: reachOf.get(share.workspace_id) ?? 0,
+			})),
 		syncedAt: box.synced_at,
 		syncError: box.sync_error,
 		config: access.owner ? { imapHost: box.imap_host, imapPort: box.imap_port, smtpHost: box.smtp_host, smtpPort: box.smtp_port, username: box.username } : null,
@@ -349,43 +372,114 @@ mailRoutes.post('/mail/boxes/:id/sync', async (c) => {
 	return c.json({ fetched, box: await boxJson(c, (await loadBox(c.env.DB, access.box.id))!, access) });
 });
 
-// Propriétaire : partage initial. Gestionnaire de l'espace : salons d'une boîte déjà partagée.
-mailRoutes.put('/mail/boxes/:id/shares/:wid', async (c) => {
+// Grades de l'espace seulement, un niveau par grade.
+function parseRules(value: unknown, known: Set<string>): MailShareGrade[] | null {
+	if (!Array.isArray(value) || value.length > MAIL_LIMITS.shareGrades) {
+		return null;
+	}
+	const out = new Map<string, MailLevel>();
+	for (const rule of value as Array<Partial<MailShareGrade> | null>) {
+		const gradeId = rule?.gradeId;
+		const level = rule?.level;
+		if (typeof gradeId !== 'string' || !known.has(gradeId) || !level || !MAIL_LEVELS.includes(level)) {
+			return null;
+		}
+		out.set(gradeId, level);
+	}
+	return [...out].map(([gradeId, level]) => ({ gradeId, level }));
+}
+
+const rulesWrite = (db: D1Database, boxId: string, workspaceId: string, rules: MailShareGrade[]) => [
+	db.prepare('DELETE FROM mailbox_share_grades WHERE mailbox_id = ? AND workspace_id = ?').bind(boxId, workspaceId),
+	...rules.map((rule) => db.prepare('INSERT INTO mailbox_share_grades (mailbox_id, workspace_id, grade_id, level) VALUES (?, ?, ?, ?)').bind(boxId, workspaceId, rule.gradeId, rule.level)),
+];
+
+type ShareTarget = { box: BoxRow; workspaceId: string; shared: boolean };
+
+// Propriétaire membre de l'espace : partage initial. Niveau gestion sur ce partage : salons et grades.
+async function shareTarget(c: Ctx): Promise<ShareTarget | Response> {
 	const userId = c.get('user').id;
-	const workspaceId = c.req.param('wid');
-	const box = await loadBox(c.env.DB, c.req.param('id'));
+	const workspaceId = c.req.param('wid')!;
+	const box = await loadBox(c.env.DB, c.req.param('id')!);
 	const actor = await loadActor(c.env.DB, workspaceId, userId);
-	if (!box || !actor) {
+	if (!box || !actor || actor.guest) {
 		return fail(c, 404, box ? 'Espace introuvable' : 'Boîte introuvable');
 	}
-	const shared = await c.env.DB.prepare('SELECT 1 FROM mailbox_shares WHERE mailbox_id = ? AND workspace_id = ?').bind(box.id, workspaceId).first();
-	if (!has(actor.perms, P.MANAGE_MAIL) || (box.owner_id !== userId && !shared)) {
+	const shared = !!(await c.env.DB.prepare('SELECT 1 FROM mailbox_shares WHERE mailbox_id = ? AND workspace_id = ?').bind(box.id, workspaceId).first());
+	if (box.owner_id !== userId && (!shared || (await shareRank(c.env.DB, box.id, workspaceId, userId)) < RANK.manage)) {
 		return fail(c, 403, 'Permission insuffisante');
 	}
-	const { channelIds } = await readJson<{ channelIds: string[] }>(c);
+	return { box, workspaceId, shared };
+}
+
+async function readRules(c: Ctx, workspaceId: string, value: unknown): Promise<MailShareGrade[] | null> {
+	return parseRules(value, new Set((await listGrades(c.env.DB, workspaceId)).map((grade) => grade.id)));
+}
+
+mailRoutes.put('/mail/boxes/:id/shares/:wid', async (c) => {
+	const target = await shareTarget(c);
+	if (target instanceof Response) {
+		return target;
+	}
+	const { box, workspaceId } = target;
+	const body = await readJson<MailShareUpdate>(c);
+	const rules = body.grades === undefined ? null : await readRules(c, workspaceId, body.grades);
+	if (body.grades !== undefined && !rules) {
+		return fail(c, 400, 'Grades invalides');
+	}
+	const actor = (await loadActor(c.env.DB, workspaceId, c.get('user').id))!;
 	const visible = new Set((await workspaceStub(c.env, workspaceId).channels(actor)).map((channel) => channel.id));
-	const ids = Array.isArray(channelIds) ? [...new Set(channelIds.filter((id): id is string => typeof id === 'string' && visible.has(id)))] : [];
-	await c.env.DB.prepare(
-		'INSERT INTO mailbox_shares (mailbox_id, workspace_id, channel_ids, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (mailbox_id, workspace_id) DO UPDATE SET channel_ids = excluded.channel_ids',
-	)
-		.bind(box.id, workspaceId, JSON.stringify(ids), Date.now())
-		.run();
-	return c.json(await boxJson(c, box, await accessFor(c, box, userId)));
+	const ids = Array.isArray(body.channelIds) ? [...new Set(body.channelIds.filter((id): id is string => typeof id === 'string' && visible.has(id)))] : [];
+	await c.env.DB.batch([
+		c.env.DB.prepare(
+			'INSERT INTO mailbox_shares (mailbox_id, workspace_id, channel_ids, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (mailbox_id, workspace_id) DO UPDATE SET channel_ids = excluded.channel_ids',
+		).bind(box.id, workspaceId, JSON.stringify(ids), Date.now()),
+		...(rules ? rulesWrite(c.env.DB, box.id, workspaceId, rules) : []),
+	]);
+	return c.json(await boxJson(c, box, await accessFor(c, box, c.get('user').id)));
+});
+
+mailRoutes.put('/mail/boxes/:id/shares/:wid/grades', async (c) => {
+	const target = await shareTarget(c);
+	if (target instanceof Response) {
+		return target;
+	}
+	const { box, workspaceId, shared } = target;
+	if (!shared) {
+		return fail(c, 404, 'Partage introuvable');
+	}
+	const rules = await readRules(c, workspaceId, (await readJson<MailShareUpdate>(c)).grades);
+	if (!rules) {
+		return fail(c, 400, 'Grades invalides');
+	}
+	await c.env.DB.batch(rulesWrite(c.env.DB, box.id, workspaceId, rules));
+	return c.json(await boxJson(c, box, await accessFor(c, box, c.get('user').id)));
 });
 
 mailRoutes.delete('/mail/boxes/:id/shares/:wid', async (c) => {
-	const userId = c.get('user').id;
-	const workspaceId = c.req.param('wid');
-	const box = await loadBox(c.env.DB, c.req.param('id'));
-	if (!box) {
+	const target = await shareTarget(c);
+	if (target instanceof Response) {
+		return target;
+	}
+	await c.env.DB.prepare('DELETE FROM mailbox_shares WHERE mailbox_id = ? AND workspace_id = ?').bind(target.box.id, target.workspaceId).run();
+	return c.json({ ok: true });
+});
+
+// Attribuables : au moins le niveau réponse.
+mailRoutes.get('/mail/boxes/:id/assignees', async (c) => {
+	const access = await boxAccess(c, c.req.param('id'));
+	if (!access) {
 		return fail(c, 404, 'Boîte introuvable');
 	}
-	const actor = await loadActor(c.env.DB, workspaceId, userId);
-	if (box.owner_id !== userId && !(actor && has(actor.perms, P.MANAGE_MAIL))) {
+	if (!access.reply) {
 		return fail(c, 403, 'Permission insuffisante');
 	}
-	await c.env.DB.prepare('DELETE FROM mailbox_shares WHERE mailbox_id = ? AND workspace_id = ?').bind(box.id, workspaceId).run();
-	return c.json({ ok: true });
+	const { results } = await c.env.DB.prepare(
+		`SELECT u.id, u.name FROM users u WHERE u.id = ? OR u.id IN (SELECT m.user_id FROM ${SHARE_MEMBERS} WHERE s.mailbox_id = ? AND (${SHARE_RANK}) >= ${RANK.reply}) ORDER BY u.name COLLATE NOCASE`,
+	)
+		.bind(access.box.owner_id, access.box.id)
+		.all<MailAssignee>();
+	return c.json(results);
 });
 
 type ThreadRow = {
@@ -655,8 +749,8 @@ mailRoutes.patch('/mail/threads/:tid', async (c) => {
 		if (body.assigneeId !== null && typeof body.assigneeId !== 'string') {
 			return fail(c, 400, 'Membre invalide');
 		}
-		if (body.assigneeId && !(await accessFor(c, access.box, body.assigneeId)).view) {
-			return fail(c, 400, 'Ce membre n’a pas accès à cette boîte');
+		if (body.assigneeId && !(await accessFor(c, access.box, body.assigneeId)).reply) {
+			return fail(c, 400, 'Ce membre ne peut pas répondre depuis cette boîte');
 		}
 		assignee = body.assigneeId || null;
 	}

@@ -1142,6 +1142,128 @@
 	font-size: 13px;
 }
 
+.mail-share-card,
+.mail-share-draft {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+}
+
+.mail-share-card .mail-share-item {
+	flex-wrap: wrap;
+}
+
+.mail-share-card .mail-share-item span {
+	flex: 1 1 180px;
+}
+
+.mail-share-card .mail-share-item small {
+	display: block;
+}
+
+.mail-share-draft-title {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.mail-grades {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.mail-grades .field-hint {
+	margin: 0;
+}
+
+.mail-grade-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 0 2px 0 4px;
+	border-radius: var(--r-sm);
+	font-size: 14px;
+}
+
+.mail-grade-row:hover {
+	background: var(--surface);
+}
+
+.mail-grade-name {
+	display: flex;
+	flex: 1;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.mail-grade-name small,
+.mail-grade-option small {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.mail-level {
+	gap: 4px;
+	height: 28px;
+	padding: 0 8px;
+	font-size: 13px;
+}
+
+.mail-level:disabled {
+	opacity: 1;
+	color: var(--muted);
+}
+
+.mail-grade-add {
+	align-self: flex-start;
+	gap: 6px;
+	height: 30px;
+	padding: 0 8px;
+	font-size: 13px;
+}
+
+.mail-level-menu {
+	min-width: 220px;
+	max-width: min(300px, calc(100vw - 16px));
+	padding: 4px;
+	overflow-y: auto;
+}
+
+.mail-level-item {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 1px;
+	height: auto;
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+
+.mail-level-item small {
+	color: var(--muted);
+	font-size: 12px;
+	white-space: normal;
+}
+
+.mail-grade-option {
+	gap: 8px;
+}
+
+.mail-grade-option span:not(.grade-dot) {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 @media (max-width: 860px) {
 	.mail {
 		grid-template-columns: minmax(0, 1fr);
