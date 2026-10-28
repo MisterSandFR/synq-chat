@@ -1152,6 +1152,18 @@
 	border-radius: var(--r);
 }
 
+.mail-share-card .mail-share-item {
+	flex-wrap: wrap;
+}
+
+.mail-share-card .mail-share-item span {
+	flex: 1 1 180px;
+}
+
+.mail-share-card .mail-share-item small {
+	display: block;
+}
+
 .mail-share-draft-title {
 	margin: 0;
 	font-size: 13px;
