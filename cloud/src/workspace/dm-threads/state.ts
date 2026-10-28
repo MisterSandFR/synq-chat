@@ -9,11 +9,13 @@ export interface DmThreadsState {
 	// Réponses des fils déjà ouverts, par message racine.
 	threads: Record<number, Message[]>;
 	ring: { channelId: string; by: string } | null;
+	unreadThreads: number;
+	threadsVersion: number;
 }
 
 export type DmThreadsAction = { type: 'dm_threads'; update: (current: DmThreadsState) => DmThreadsState };
 
-export const initialDmThreads: DmThreadsState = { dms: null, threads: {}, ring: null };
+export const initialDmThreads: DmThreadsState = { dms: null, threads: {}, ring: null, unreadThreads: 0, threadsVersion: 0 };
 
 export const dismissRing = (state: DmThreadsState): DmThreadsState => (state.ring ? { ...state, ring: null } : state);
 
@@ -46,7 +48,9 @@ export function reduceDmThreads(state: DmThreadsState, event: ServerEvent): DmTh
 			// Grade retiré : le groupe quitte la liste avec son salon.
 			return state.dms ? { ...state, dms: state.dms.filter((d) => event.channels.some((c) => c.id === d.id)) } : state;
 		case 'thread':
-			return putReply(event.rootId, event.message)(state);
+			return { ...putReply(event.rootId, event.message)(state), threadsVersion: state.threadsVersion + 1 };
+		case 'threads_unread':
+			return { ...state, unreadThreads: event.count };
 		case 'message': {
 			const { message } = event;
 			const dm = state.dms?.find((d) => d.id === message.channelId);
@@ -119,6 +123,9 @@ export function useDirectsLoader(workspaceId: string, connId: string | null, dis
 		let live = true;
 		api<DirectConversation[]>('GET', `/w/${workspaceId}/dms`)
 			.then((dms) => live && dispatch({ type: 'dm_threads', update: (current) => ({ ...current, dms }) }))
+			.catch(() => undefined);
+		api<{ count: number }>('GET', `/w/${workspaceId}/threads/unread`)
+			.then(({ count }) => live && dispatch({ type: 'dm_threads', update: (current) => ({ ...current, unreadThreads: count }) }))
 			.catch(() => undefined);
 		return () => {
 			live = false;

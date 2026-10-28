@@ -8,14 +8,17 @@ import { P, has } from '../../shared/permissions';
 import type { Channel, Grade, Me, Member, VoiceParticipant } from '../../shared/types';
 import { api } from '../api';
 import { navigate, readPref, writePref } from '../router';
-import { Avatar, Icon, SpaceLogo, useDismiss } from '../ui';
+import { Avatar, Icon, SpaceLogo, useDismiss, type IconName } from '../ui';
 import { CategoryNav } from './categories/CategoryNav';
 import { CustomEmojiImg, customOf, type EmojiMap } from './emojis/customEmojis';
 import { memberColor, memberGrades } from './grades';
 import { ResizeHandle, type Resizable } from './resizable';
 import { CallControls } from './voice/CallView';
 import { useContextMenu } from './ContextMenu';
-import { DraftMark } from './drafts/Marks';
+import { DraftMark, DraftsNavLink } from './drafts/Marks';
+import { ThreadsNavLink } from './dm-threads';
+import { FavoritesSection } from './favorites/FavoritesSection';
+import { useFavoritesLoader } from './favorites/store';
 import { voiceDrag, type MemberMenu } from './members/useMemberMenu';
 import type { VoiceControls } from './voice/useVoice';
 import type { WorkspaceState } from './useWorkspace';
@@ -47,6 +50,8 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 	const channels = state.channels ?? [];
 	const connectedChannel = voice.snapshot ? channels.find((c) => c.id === voice.snapshot!.channelId) : undefined;
 	const canScreen = voice.snapshot?.status === 'connected' && has(state.perms[voice.snapshot.channelId] ?? 0, P.VOICE_SCREEN);
+	useFavoritesLoader(workspaceId, state.connId);
+	const pageActive = (slug: string) => location.pathname === `/w/${workspaceId}/${slug}`;
 
 	const open = (id: string) => {
 		onNavigate();
@@ -76,6 +81,27 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 				info={state.info ?? null}
 				channels={channels.filter((c) => c.kind !== 'dm')}
 				footer={directs}
+				header={
+					<>
+						<div className='nav-section sb-links'>
+							<ThreadsNavLink active={channelId === 'fils'} unread={state.dmThreads.unreadThreads} onOpen={() => open('fils')} />
+							<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => open('brouillons')} />
+							<SideLink icon='file' label='Canevas' active={pageActive('canevas')} onOpen={() => open('canevas')} />
+							<SideLink icon='list' label='Listes' active={pageActive('listes')} onOpen={() => open('listes')} />
+						</div>
+						<FavoritesSection
+							workspaceId={workspaceId}
+							state={state}
+							channelId={channelId}
+							members={members}
+							myId={me.user.id}
+							onNavigate={onNavigate}
+							renderChannel={(channel) => (
+								<TextChannelRow channel={channel} active={channel.id === channelId} unread={state.unread[channel.id] ?? 0} mentions={state.mentions[channel.id] ?? 0} onOpen={() => open(channel.id)} />
+							)}
+						/>
+					</>
+				}
 				channelId={channelId}
 				staff={staff}
 				onOpenChannel={open}
@@ -143,6 +169,17 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 			<ResizeHandle resize={width} label='Redimensionner la barre latérale' />
 		</aside>
 		</TileEmojis.Provider>
+	);
+}
+
+function SideLink({ icon, label, active, onOpen }: { icon: IconName; label: string; active: boolean; onOpen: () => void }) {
+	return (
+		<button type='button' className='channel dm-nav-btn sb-link-minor' aria-current={active ? 'page' : undefined} onClick={onOpen}>
+			<span className='channel-icon'>
+				<Icon name={icon} size={15} />
+			</span>
+			<span className='channel-name'>{label}</span>
+		</button>
 	);
 }
 

@@ -458,3 +458,187 @@
 	gap: 2px;
 	font-size: 13px;
 }
+
+.th-count {
+	font-size: 13px;
+	color: var(--muted);
+}
+
+.th-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin: 0;
+	padding: 0 0 24px;
+	list-style: none;
+}
+
+.th-card {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 10px 14px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-lg);
+	background: var(--surface);
+}
+
+.th-card-unread {
+	border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.th-card-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-height: 30px;
+}
+
+.th-card-where {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	max-width: 100%;
+	margin-left: -4px;
+	padding: 3px 6px 3px 4px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: none;
+	font: inherit;
+	font-size: 14px;
+	color: var(--text);
+	cursor: pointer;
+}
+
+.th-card-where:hover {
+	background: var(--hover);
+}
+
+.th-card-where svg {
+	flex: none;
+	color: var(--muted);
+}
+
+.th-act {
+	height: 28px;
+	padding: 0 8px;
+	font-size: 13px;
+}
+
+.th-msg {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+
+.th-msg-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.th-msg-top {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 14px;
+}
+
+.th-msg-top time {
+	flex: none;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.th-msg-body {
+	font-size: 14px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
+.th-msg-root .th-msg-body {
+	font-size: 15px;
+}
+
+.th-file {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 13px;
+	color: var(--muted);
+}
+
+.th-replies {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-left: 17px;
+	padding-left: 18px;
+	border-left: 2px solid var(--line);
+}
+
+.th-more {
+	align-self: flex-start;
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--accent);
+	cursor: pointer;
+}
+
+.th-more:hover {
+	text-decoration: underline;
+}
+
+.th-reply {
+	display: flex;
+	align-items: flex-end;
+	gap: 6px;
+	margin-left: 37px;
+	padding: 3px 3px 3px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--bg);
+}
+
+.th-reply:focus-within {
+	border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+
+.th-input {
+	flex: 1;
+	min-width: 0;
+	max-height: 120px;
+	padding: 7px 0;
+	border: 0;
+	background: none;
+	resize: none;
+	field-sizing: content;
+	font: inherit;
+	font-size: 14px;
+	color: var(--text);
+}
+
+.th-input:focus {
+	outline: none;
+}
+
+@media (max-width: 860px) {
+	.th-replies {
+		margin-left: 12px;
+		padding-left: 12px;
+	}
+
+	.th-reply {
+		margin-left: 0;
+	}
+
+	.th-act-label {
+		display: none;
+	}
+}

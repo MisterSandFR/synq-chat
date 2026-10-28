@@ -7,6 +7,7 @@ import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
 import { EVENT_CARD_EVENT } from './events/store';
 import { DRAFTS_EVENT } from './drafts/store';
+import { FAVORITES_EVENT } from './favorites/store';
 import { initialDmThreads, reduceDmThreads, type DmThreadsAction, type DmThreadsState } from './dm-threads/state';
 import { EMOJIS_EVENT } from './emojis/customEmojis';
 
@@ -236,6 +237,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		case 'event_card':
 		case 'draft':
 		case 'scheduled':
+		case 'favorites':
+		case 'threads_unread':
 			return state;
 	}
 }
@@ -344,6 +347,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				}
 				if (event.t === 'draft' || event.t === 'scheduled') {
 					window.dispatchEvent(new CustomEvent(DRAFTS_EVENT, { detail: event }));
+				}
+				if (event.t === 'favorites') {
+					window.dispatchEvent(new CustomEvent(FAVORITES_EVENT));
 				}
 				dispatch({ type: 'event', event, activeChannelId: activeRef.current, myId, focused: isFocused() });
 			};

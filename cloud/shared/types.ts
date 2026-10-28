@@ -239,7 +239,9 @@ export type ServerEvent =
 	| { t: 'emojis_changed' }
 	| { t: 'draft'; channelId: string; threadRoot: number; draft: Draft | null }
 	| { t: 'scheduled'; items: ScheduledMessage[] }
-	| { t: 'list_changed'; listId: string; channelId: string | null };
+	| { t: 'list_changed'; listId: string; channelId: string | null }
+	| { t: 'favorites' }
+	| { t: 'threads_unread'; count: number };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

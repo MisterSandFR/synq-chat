@@ -59,4 +59,7 @@ export interface ThreadView {
 export interface FollowedThread {
 	root: Message;
 	unread: number;
+	// Trois dernières réponses, plus anciennes d'abord ; `total` compte tout le fil.
+	replies: Message[];
+	total: number;
 }

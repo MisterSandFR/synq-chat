@@ -6,6 +6,7 @@ import { api, ApiError } from '../../api';
 import { Floating } from '../../floating';
 import { navigate, usePath } from '../../router';
 import { Avatar, Dialog, Icon, useDismiss, type IconName } from '../../ui';
+import { FavoriteStar } from '../favorites/FavoritesSection';
 import { Cell, optionsOf, Pill, TYPE_ICON } from './cells';
 import { ItemPanel } from './ItemPanel';
 import './lists.css';
@@ -399,6 +400,7 @@ function ListPage({ workspaceId, listId, members, rooms, version }: { workspaceI
 						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 					/>
 					{room && <span className='tag hide-mobile'># {room.name}</span>}
+					<FavoriteStar kind='list' refId={list.id} title={list.title} />
 					<span className='grow' />
 					<a className='btn btn-ghost hide-mobile' href={`/api${base}/export`} download>
 						<Icon name='download' size={16} /> Exporter en CSV

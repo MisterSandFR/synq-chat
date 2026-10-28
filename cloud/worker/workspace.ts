@@ -5,6 +5,7 @@ import { cleanChannelIcon, type Category, type Layout } from '../shared/categori
 import { appUserId, type CommandConfig, type CommandInput, type SlashCommand } from '../shared/commands';
 import type { PinInfo, Reaction } from '../shared/chat';
 import { DM_MAX_MEMBERS, DM_PERMS, type DirectChange, type DirectConversation, type FollowedThread, type ThreadView } from '../shared/dm-threads';
+import { FAVORITES_MAX, type FavoriteRef } from '../shared/favorites';
 import type { CalendarReminder } from '../shared/calendar';
 import { DEFAULT_GRADE, P, READ_ONLY_DENY, channelPerms, has, PERMISSIONS, type Override } from '../shared/permissions';
 import {
@@ -80,6 +81,7 @@ import {
 	markThreadRead,
 	unfollow,
 } from './dm-threads';
+import { FAVORITES_MIGRATION, deleteFavorite, favoriteRows, insertFavorite, reorderFavorites, type FavoriteRow } from './favorites';
 import type { AuditKind, AuditPage } from '../shared/audit';
 import { AUDIT_MIGRATION, insertAudit, readAudit, type AuditInput } from './audit';
 import { err, ok, type Result } from './result';
@@ -382,6 +384,7 @@ const MIGRATIONS = [
 	`ALTER TABLE channels ADD COLUMN icon TEXT NOT NULL DEFAULT '';
 	ALTER TABLE categories ADD COLUMN banner_key TEXT;`,
 	DRAFTS_MIGRATION,
+	FAVORITES_MIGRATION,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -1588,6 +1591,7 @@ export class Workspace extends DurableObject<Env> {
 		for (const { user_id: userId } of followers) {
 			this.pushNotification({ userId, kind: 'thread', channelId, messageId: rootId, actorId: actor.id, title: `${actor.name} a répondu dans un fil`, body: text || attachment?.name || '' });
 		}
+		this.pushThreadsUnread([actor.id, ...followers.map((f) => f.user_id)]);
 		if (broadcast) {
 			this.setRead(actor.id, channelId, id);
 			this.broadcastIn(channelId, { t: 'message', message });
@@ -1608,6 +1612,7 @@ export class Workspace extends DurableObject<Env> {
 		} else {
 			unfollow(this.sql, actor.id, rootId);
 		}
+		this.pushThreadsUnread([actor.id]);
 		return ok({ following });
 	}
 
@@ -1617,15 +1622,44 @@ export class Workspace extends DurableObject<Env> {
 			return err(found.status, found.error);
 		}
 		markThreadRead(this.sql, actor.id, rootId);
+		this.pushThreadsUnread([actor.id]);
 		return ok(null);
 	}
 
 	followedThreads(actor: Actor): FollowedThread[] {
+		return this.followedRoots(actor)
+			.sort((a, b) => (b.root.thread?.lastAt ?? b.root.createdAt) - (a.root.thread?.lastAt ?? a.root.createdAt))
+			.slice(0, 50)
+			.map((t) => ({ ...t, ...this.threadTail(t.root.id) }));
+	}
+
+	threadsUnread(actor: Actor): number {
+		return this.followedRoots(actor).filter((t) => t.unread > 0).length;
+	}
+
+	private followedRoots(actor: Actor): Array<{ root: Message; unread: number }> {
 		return followedRows(this.sql, actor.id)
 			.map((row) => ({ root: this.message(row.rootId), unread: row.unread }))
-			.filter((t): t is FollowedThread => t.root !== null && this.can(actor, t.root.channelId, P.VIEW_CHANNEL))
-			.sort((a, b) => (b.root.thread?.lastAt ?? b.root.createdAt) - (a.root.thread?.lastAt ?? a.root.createdAt))
-			.slice(0, 50);
+			.filter((t): t is { root: Message; unread: number } => t.root !== null && this.can(actor, t.root.channelId, P.VIEW_CHANNEL));
+	}
+
+	// Trois dernières réponses, dans l'ordre de lecture.
+	private threadTail(rootId: number): { replies: Message[]; total: number } {
+		const replies = this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.thread_root = ? ORDER BY m.id DESC LIMIT 3`, rootId).toArray().map(toMessage).reverse();
+		const total = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM messages WHERE thread_root = ?', rootId).one().n;
+		return { replies, total };
+	}
+
+	// Pastille des fils non lus, sur chaque appareil connecté.
+	private pushThreadsUnread(userIds: string[]): void {
+		for (const userId of new Set(userIds)) {
+			const sockets = this.ctx.getWebSockets(userId);
+			const actor = sockets.map((ws) => this.conn(ws)?.actor).find((a) => a !== undefined);
+			if (actor) {
+				const event: ServerEvent = { t: 'threads_unread', count: this.threadsUnread(actor) };
+				sockets.forEach((ws) => this.send(ws, event));
+			}
+		}
 	}
 
 	private threadRoot(actor: Actor, rootId: number): Result<Message> {
@@ -2776,5 +2810,35 @@ export class Workspace extends DurableObject<Env> {
 				link: `/w/${input.workspaceId}/listes/${input.listId}?element=${input.itemId}`,
 			});
 		}
+	}
+
+	// --- Favoris ---
+
+	// Salons filtrés ici ; canevas et listes, rangés en D1, filtrés par la route.
+	favorites(actor: Actor): FavoriteRow[] {
+		return favoriteRows(this.sql, actor.id).filter((f) => f.kind !== 'channel' || this.seesChannel(actor, f.refId));
+	}
+
+	setFavorite(actor: Actor, ref: FavoriteRef, favorite: boolean): Result<null> {
+		if (favorite && ref.kind === 'channel' && !this.seesChannel(actor, ref.refId)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!favorite) {
+			deleteFavorite(this.sql, actor.id, ref);
+		} else if (!insertFavorite(this.sql, actor.id, ref)) {
+			return err(400, `${FAVORITES_MAX} favoris maximum`);
+		}
+		this.sendTo([actor.id], { t: 'favorites' });
+		return ok(null);
+	}
+
+	orderFavorites(actor: Actor, refs: FavoriteRef[]): Result<null> {
+		this.ctx.storage.transactionSync(() => reorderFavorites(this.sql, actor.id, refs));
+		this.sendTo([actor.id], { t: 'favorites' });
+		return ok(null);
+	}
+
+	private seesChannel(actor: Actor, channelId: string): boolean {
+		return this.channelRow(channelId) !== null && this.can(actor, channelId, P.VIEW_CHANNEL);
 	}
 }

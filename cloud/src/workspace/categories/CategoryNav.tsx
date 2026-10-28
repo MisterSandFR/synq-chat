@@ -6,6 +6,8 @@ import { api, errorText, upload } from '../../api';
 import { Dialog, Icon } from '../../ui';
 import { EmojiPicker } from '../chat/EmojiPicker';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
+import { favoriteDragProps, favoriteItem } from '../favorites/FavoritesSection';
+import { endFavoriteDrag, startFavoriteDrag } from '../favorites/store';
 import { AccessDialog } from '../grade-access/AccessDialog';
 import { ChannelPermissions, OverridesEditor } from './OverridesEditor';
 import { useCategories } from './useCategories';
@@ -22,6 +24,7 @@ type Props = {
 	renderChannel: (channel: Channel) => ReactNode;
 	// Rendu en fin de liste, dans la même zone de défilement.
 	footer?: ReactNode;
+	header?: ReactNode;
 };
 
 type Group = { category: Category | null; items: Channel[] };
@@ -94,7 +97,7 @@ async function bannerFile(file: File): Promise<File> {
 	return new File([blob], 'banniere', { type: blob.type });
 }
 
-export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel, footer }: Props) {
+export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel, footer, header }: Props) {
 	const [tick, setTick] = useState(0);
 	const loaded = useCategories(workspaceId, channels, tick);
 	const categories = useMemo(() => loaded ?? [], [loaded]);
@@ -208,6 +211,9 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					onDragStart: (e: DragEvent) => {
 						e.stopPropagation();
 						drag.current = { type, id };
+						if (type === 'channel') {
+							startFavoriteDrag({ kind: 'channel', refId: id });
+						}
 						e.dataTransfer.effectAllowed = 'move';
 						e.dataTransfer.setData('text/plain', id);
 					},
@@ -229,9 +235,12 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					onDragEnd: () => {
 						drag.current = null;
 						setOver(null);
+						endFavoriteDrag();
 					},
 				}
-			: {};
+			: type === 'channel'
+				? favoriteDragProps({ kind: 'channel', refId: id })
+				: {};
 
 	const createIn = (category: Category | null, kind: ChannelKind): Prompt => ({
 		title: kind === 'voice' ? 'Créer un salon vocal' : 'Créer un salon',
@@ -287,6 +296,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 		const items: ContextMenuItem[] = [
 			{ label: 'Ouvrir', icon: channel.kind === 'voice' ? 'speaker' : 'hash', onSelect: () => onOpenChannel(channel.id) },
 			{ label: 'Marquer comme lu', icon: 'check', onSelect: () => void api('POST', `/w/${workspaceId}/channels/${channel.id}/read`).catch(report) },
+			favoriteItem({ kind: 'channel', refId: channel.id }),
 			{ label: 'Copier le lien', onSelect: () => void navigator.clipboard?.writeText(`${location.origin}/w/${workspaceId}/${channel.id}`).catch(report) },
 		];
 		if (staff) {
@@ -356,6 +366,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 
 	return (
 		<nav className='nav' aria-label='Salons' {...context.bind(navItems)}>
+			{header}
 			{groups.map((group) => {
 				const category = group.category;
 				if (!category && group.items.length === 0) {

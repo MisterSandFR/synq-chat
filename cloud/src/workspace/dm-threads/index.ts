@@ -1,7 +1,7 @@
 export { CallRing } from './CallRing';
 export { channelLabel, directName } from './DirectAvatar';
 export { DirectMessagesView } from './DirectMessagesView';
-export { DirectSection, type ContentView } from './DirectSection';
+export { DirectSection, ThreadsNavLink, type ContentView } from './DirectSection';
 export { GroupDialog } from './GroupDialog';
 export { NewDirectDialog } from './NewDirectDialog';
 export { dismissRing, openDirect, upsertDirect, useDirectsLoader } from './state';

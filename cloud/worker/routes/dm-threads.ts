@@ -120,6 +120,8 @@ dmThreadsRoutes.delete('/w/:wid/dms/:cid/members/:uid', async (c) => {
 
 dmThreadsRoutes.get('/w/:wid/threads', async (c) => c.json(await stub(c).followedThreads(c.get('actor'))));
 
+dmThreadsRoutes.get('/w/:wid/threads/unread', async (c) => c.json({ count: await stub(c).threadsUnread(c.get('actor')) }));
+
 dmThreadsRoutes.get('/w/:wid/messages/:mid/thread', async (c) => unwrap(c, await stub(c).threadView(c.get('actor'), messageId(c))));
 
 dmThreadsRoutes.post('/w/:wid/messages/:mid/thread', async (c) => {
