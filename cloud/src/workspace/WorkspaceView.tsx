@@ -303,14 +303,18 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 		dispatch({ type: 'message', message });
 	};
 
-	const startDirect = async (userIds: string[], name = '', gradeIds: string[] = []) => {
-		const { conversation, channel, perms } = await openDirect(workspaceId, userIds, name, gradeIds);
+	// Prestataires invités : la fenêtre reste ouverte pour montrer les liens.
+	const startDirect = async (userIds: string[], name = '', gradeIds: string[] = [], guestEmails: string[] = []) => {
+		const { conversation, channel, perms, guestInvites } = await openDirect(workspaceId, userIds, name, gradeIds, guestEmails);
 		dispatch({ type: 'dm_threads', update: upsertDirect(conversation) });
 		if (!channels?.some((c) => c.id === channel.id)) {
 			dispatch({ type: 'event', event: { t: 'channel_upsert', channel, perms }, activeChannelId: channelId, myId, focused });
 		}
-		setNewDirect(false);
+		if (!guestInvites.length) {
+			setNewDirect(false);
+		}
 		openChannel(channel.id);
+		return guestInvites;
 	};
 
 	const messagePane = active && (

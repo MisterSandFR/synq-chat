@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 
-import { DM_MAX_MEMBERS } from '../../shared/dm-threads';
+import { DM_MAX_MEMBERS, type DirectOpened, type GuestOutcome } from '../../shared/dm-threads';
 import type { Attachment } from '../../shared/types';
 import { loadActors } from '../grades';
-import { guestLeft } from '../guests';
+import { createGuestInvite, guestLeft } from '../guests';
 import { cleanName, fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
 
 export const dmThreadsRoutes = new Hono<AppEnv>();
@@ -42,22 +42,39 @@ async function gradeList(c: Ctx, value: unknown): Promise<string[] | null> {
 dmThreadsRoutes.get('/w/:wid/dms', async (c) => c.json(await stub(c).directs(c.get('actor'))));
 
 dmThreadsRoutes.post('/w/:wid/dms', async (c) => {
-	const body = await readJson<{ userIds: string[]; name: string; gradeIds: string[] }>(c);
+	const body = await readJson<{ userIds: string[]; name: string; gradeIds: string[]; guestEmails: string[] }>(c);
 	const others = userList(body.userIds);
 	const grades = await gradeList(c, body.gradeIds);
-	if (!others || !grades) {
+	const emails = body.guestEmails === undefined ? [] : userList(body.guestEmails);
+	if (!others || !grades || !emails) {
 		return fail(c, 400, 'Requête invalide');
 	}
 	const actor = c.get('actor');
 	const ids = [...new Set([actor.id, ...others])];
-	if ((ids.length < 2 && !grades.length) || ids.length > DM_MAX_MEMBERS) {
+	if ((ids.length < 2 && !grades.length && !emails.length) || ids.length + emails.length > DM_MAX_MEMBERS) {
 		return fail(c, 400, `Choisis un grade ou entre 1 et ${DM_MAX_MEMBERS - 1} personnes`);
 	}
 	if (!(await allMembers(c, ids))) {
 		return fail(c, 400, 'Membre introuvable');
 	}
 	const actors = grades.length ? await loadActors(c.env.DB, c.get('workspaceId')) : [];
-	return unwrap(c, await stub(c).openDirect(actor, ids, cleanName(body.name), grades, actors));
+	// Sans nom : les adresses des prestataires, seuls autres participants avant leur arrivée.
+	const name = cleanName(body.name) || (emails.length ? cleanName(emails.map((email) => email.split('@')[0]).join(', ')).slice(0, 64) : '');
+	const opened = await stub(c).openDirect(actor, ids, name, grades, actors, emails.length);
+	if (!opened.ok || !emails.length) {
+		return unwrap(c, opened);
+	}
+	// Groupe créé d'abord : un email refusé ne doit pas empêcher les autres.
+	const guestInvites: GuestOutcome[] = [];
+	for (const email of emails) {
+		const created = await createGuestInvite(c, opened.value.id, email, true, opened.value.name);
+		guestInvites.push(
+			created.ok
+				? { email, link: created.value.link, emailed: created.value.emailed, error: created.value.mailError }
+				: { email, link: null, emailed: false, error: created.error },
+		);
+	}
+	return c.json({ ...opened.value, guestInvites } satisfies DirectOpened);
 });
 
 dmThreadsRoutes.patch('/w/:wid/dms/:cid', async (c) => {

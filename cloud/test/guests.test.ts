@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
-import type { DirectConversation } from '../shared/dm-threads';
+import type { DirectConversation, DirectOpened } from '../shared/dm-threads';
 import type { GuestInviteCreated, GuestInviteList, GuestLanding } from '../shared/guests';
 import type { Attachment, Channel, Me, Message, ServerEvent, WorkspaceDetail } from '../shared/types';
 import { Client, signup, workspaceWithMember } from './helpers';
@@ -253,5 +253,33 @@ describe('invités externes', () => {
 		const { guest, wid, dm } = await setup();
 		expect((await guest.req('DELETE', `/api/w/${wid}/dms/${dm.id}/members/${guest.user.id}`)).status).toBe(200);
 		expect((await guest.req('GET', `/api/w/${wid}/info`)).status).toBe(401);
+	});
+});
+
+describe('prestataire invité dès la création du groupe', () => {
+	it('crée un groupe avec seulement un email externe et renvoie le lien', async () => {
+		const { owner: alice, wid } = await workspaceWithMember();
+		const opened = await alice.req<DirectOpened>('POST', `/api/w/${wid}/dms`, { userIds: [], name: '', guestEmails: ['presta@externe.fr', 'pas-un-email'] });
+		expect(opened.status).toBe(200);
+		expect(opened.data.group).toBe(true);
+		expect(opened.data.memberIds).toEqual([alice.user.id]);
+		expect(opened.data.guestInvites).toEqual([
+			expect.objectContaining({ email: 'presta@externe.fr', emailed: false, link: expect.stringContaining('/invite/guest/') }),
+			{ email: 'pas-un-email', link: null, emailed: false, error: 'Email invalide' },
+		]);
+		// Le lien ouvre la conversation au prestataire.
+		const guest = new Client();
+		const joined = await guest.req<{ channelId: string }>('POST', `/api/guest/${tokenOf(opened.data.guestInvites![0]!.link!)}`, { name: 'Gina' });
+		expect(joined.data.channelId).toBe(opened.data.id);
+		// Même destinataire sans email : nouveau groupe à chaque fois, jamais le DM existant.
+		const again = await alice.req<DirectOpened>('POST', `/api/w/${wid}/dms`, { userIds: [], guestEmails: ['presta@externe.fr'] });
+		expect(again.data.id).not.toBe(opened.data.id);
+	});
+
+	it('refuse au-delà de la limite et pour un invité', async () => {
+		const { alice, guest, wid } = await setup();
+		const many = Array.from({ length: 9 }, (_, i) => `p${i}@externe.fr`);
+		expect((await alice.req('POST', `/api/w/${wid}/dms`, { userIds: [], guestEmails: many })).status).toBe(400);
+		expect((await guest.req('POST', `/api/w/${wid}/dms`, { userIds: [alice.user.id], guestEmails: ['x@externe.fr'] })).status).toBeGreaterThanOrEqual(400);
 	});
 });

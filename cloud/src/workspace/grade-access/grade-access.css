@@ -121,3 +121,14 @@
 	justify-content: space-between;
 	gap: 8px;
 }
+
+.ga-mail {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--accent) 14%, transparent);
+	color: var(--accent);
+}

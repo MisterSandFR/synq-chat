@@ -32,16 +32,22 @@ type Props = {
 	autoFocus?: boolean;
 	onGrade: (id: string) => void;
 	onMember: (id: string) => void;
+	// Adresse tapée en entier : proposée comme prestataire externe.
+	onEmail?: (email: string) => void;
+	pickedEmails?: string[];
 };
 
+export const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
+
 // Sélecteur unique : grades d'abord, puis membres, filtrés par la recherche.
-export function PeoplePicker({ grades, members, everyone, online, pickedGrades, pickedMembers, membersFull = false, autoFocus, onGrade, onMember }: Props) {
+export function PeoplePicker({ grades, members, everyone, online, pickedGrades, pickedMembers, membersFull = false, autoFocus, onGrade, onMember, onEmail, pickedEmails = [] }: Props) {
 	const anchor = useRef<HTMLSpanElement>(null);
 	const [query, setQuery] = useState('');
 	const [open, setOpen] = useState(false);
 	const needle = query.trim().toLowerCase();
 	const gradeHits = grades.filter((g) => !pickedGrades.includes(g.id) && gradeLabel(g).toLowerCase().includes(needle)).sort((a, b) => b.position - a.position);
 	const memberHits = members.filter((m) => !pickedMembers.includes(m.id) && m.name.toLowerCase().includes(needle)).sort((a, b) => a.name.localeCompare(b.name));
+	const email = onEmail && EMAIL_RE.test(needle) && !pickedEmails.includes(needle) ? needle : null;
 
 	// Menu refermé après un choix : il masquerait les puces ajoutées sous le champ.
 	const pick = (select: () => void) => {
@@ -79,9 +85,18 @@ export function PeoplePicker({ grades, members, everyone, online, pickedGrades, 
 				/>
 			</span>
 			{/* Liste vide sans recherche : rien à proposer, le menu masquerait la liste dessous. */}
-			{open && (gradeHits.length + memberHits.length > 0 || needle !== '') && (
+			{open && (gradeHits.length + memberHits.length > 0 || needle !== '' || email) && (
 				// Clic dans la liste : le champ garde le focus, la liste reste ouverte.
 				<Floating anchor={anchor} matchWidth className='popover ga-menu' role='listbox' onMouseDown={(e) => e.preventDefault()}>
+					{email && (
+						<button type='button' role='option' aria-selected={false} className='menu-item ga-option' disabled={membersFull} onClick={() => pick(() => onEmail!(email))}>
+							<span className='ga-mail'>
+								<Icon name='mail' size={14} />
+							</span>
+							<span className='grow ellipsis'>Inviter {email}</span>
+							<span className='ga-count'>Externe</span>
+						</button>
+					)}
 					{gradeHits.length > 0 && <p className='ga-group'>Grades</p>}
 					{gradeHits.map((grade) => (
 						<button key={grade.id} type='button' role='option' aria-selected={false} className='menu-item ga-option' onClick={() => pick(() => onGrade(grade.id))}>
@@ -106,7 +121,7 @@ export function PeoplePicker({ grades, members, everyone, online, pickedGrades, 
 							<span className='grow ellipsis'>{member.name}</span>
 						</button>
 					))}
-					{gradeHits.length + memberHits.length === 0 && <p className='muted ga-empty'>Aucun résultat.</p>}
+					{gradeHits.length + memberHits.length === 0 && !email && <p className='muted ga-empty'>{onEmail ? 'Aucun résultat. Tape une adresse email pour inviter un prestataire.' : 'Aucun résultat.'}</p>}
 				</Floating>
 			)}
 		</div>

@@ -73,14 +73,14 @@ export function findDirect(sql: SqlStorage, userIds: string[]): string | null {
 }
 
 // Rangée `channels` de type dm : messages, non-lus, fichiers, vocal et temps réel réutilisés tels quels.
-export function createDirect(sql: SqlStorage, userIds: string[], name: string, gradeIds: string[] = []): string {
+export function createDirect(sql: SqlStorage, userIds: string[], name: string, gradeIds: string[] = [], forceGroup = false): string {
 	const id = crypto.randomUUID();
 	sql.exec(
 		"INSERT INTO channels (id, name, kind, topic, category, position, created_at, dm_group, dm_name) VALUES (?, ?, 'dm', '', '', 0, ?, ?, ?)",
 		id,
 		`dm-${id}`,
 		Date.now(),
-		userIds.length > 2 || name || gradeIds.length ? 1 : 0,
+		forceGroup || userIds.length > 2 || name || gradeIds.length ? 1 : 0,
 		name,
 	);
 	for (const userId of userIds) {

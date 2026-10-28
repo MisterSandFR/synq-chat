@@ -1,6 +1,6 @@
 import type { DirectConversation } from '../../../shared/dm-threads';
 import type { Channel, Member } from '../../../shared/types';
-import { Avatar } from '../../ui';
+import { Avatar, Icon } from '../../ui';
 
 const timeFormat = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
@@ -40,7 +40,7 @@ export function DirectAvatar({ conversation, members, myId, online, size }: Prop
 	}
 	return (
 		<span className='avatar avatar-square dm-group-avatar' style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.42)) }} aria-hidden>
-			{others.length}
+			{others.length || <Icon name='users' size={Math.round(size * 0.55)} />}
 		</span>
 	);
 }

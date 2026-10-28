@@ -1435,14 +1435,15 @@ export class Workspace extends DurableObject<Env> {
 	}
 
 	// Participants validés comme membres par la route, auteur compris ; grades validés en D1, porteurs lus dans `actors`.
-	openDirect(actor: Actor, userIds: string[], name: string, gradeIds: string[] = [], actors: Actor[] = []): Result<DirectConversation> {
-		if (!userIds.includes(actor.id) || userIds.length > DM_MAX_MEMBERS || (userIds.length < 2 && !gradeIds.length)) {
+	// `guests` : places réservées aux prestataires invités par email juste après ; toujours un groupe neuf.
+	openDirect(actor: Actor, userIds: string[], name: string, gradeIds: string[] = [], actors: Actor[] = [], guests = 0): Result<DirectConversation> {
+		if (!userIds.includes(actor.id) || userIds.length + guests > DM_MAX_MEMBERS || (userIds.length < 2 && !gradeIds.length && !guests)) {
 			return err(400, 'Participants invalides');
 		}
-		if (gradeIds.length && actor.guest) {
+		if ((gradeIds.length || guests) && actor.guest) {
 			return err(403, DENIED);
 		}
-		const existing = name || gradeIds.length ? null : findDirect(this.sql, userIds);
+		const existing = name || gradeIds.length || guests ? null : findDirect(this.sql, userIds);
 		if (existing) {
 			return ok(directById(this.sql, existing, this.dmMap())!);
 		}
@@ -1450,7 +1451,7 @@ export class Workspace extends DurableObject<Env> {
 			if (gradeIds.length) {
 				syncHolders(this.sql, actors);
 			}
-			return createDirect(this.sql, userIds, name, gradeIds);
+			return createDirect(this.sql, userIds, name, gradeIds, guests > 0);
 		});
 		this.dmCache = null;
 		const conversation = directById(this.sql, id, this.dmMap())!;

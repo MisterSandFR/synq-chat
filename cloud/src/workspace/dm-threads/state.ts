@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { DM_PERMS, type DirectConversation } from '../../../shared/dm-threads';
+import { DM_PERMS, type DirectConversation, type DirectOpened, type GuestOutcome } from '../../../shared/dm-threads';
 import type { Channel, Message, ServerEvent } from '../../../shared/types';
 import { api } from '../../api';
 
@@ -86,8 +86,14 @@ export function reduceDmThreads(state: DmThreadsState, event: ServerEvent): DmTh
 }
 
 // Salon renvoyé avec la conversation : la navigation n'attend pas l'event temps réel.
-export async function openDirect(workspaceId: string, userIds: string[], name = '', gradeIds: string[] = []): Promise<{ conversation: DirectConversation; channel: Channel; perms: number }> {
-	const conversation = await api<DirectConversation>('POST', `/w/${workspaceId}/dms`, { userIds, name, gradeIds });
+export async function openDirect(
+	workspaceId: string,
+	userIds: string[],
+	name = '',
+	gradeIds: string[] = [],
+	guestEmails: string[] = [],
+): Promise<{ conversation: DirectConversation; channel: Channel; perms: number; guestInvites: GuestOutcome[] }> {
+	const { guestInvites = [], ...conversation } = await api<DirectOpened>('POST', `/w/${workspaceId}/dms`, { userIds, name, gradeIds, guestEmails });
 	const channel: Channel = {
 		id: conversation.id,
 		name: `dm-${conversation.id}`,
@@ -101,7 +107,7 @@ export async function openDirect(workspaceId: string, userIds: string[], name = 
 		position: 0,
 		createdAt: conversation.createdAt,
 	};
-	return { conversation, channel, perms: DM_PERMS };
+	return { conversation, channel, perms: DM_PERMS, guestInvites };
 }
 
 export function useDirectsLoader(workspaceId: string, connId: string | null, dispatch: (action: DmThreadsAction) => void): void {

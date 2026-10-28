@@ -32,6 +32,16 @@ export interface DirectConversation {
 	last: DirectLast | null;
 }
 
+// Prestataire invité par email à la création d'un groupe ; lien affiché une seule fois.
+export interface GuestOutcome {
+	email: string;
+	link: string | null;
+	emailed: boolean;
+	error: string | null;
+}
+
+export type DirectOpened = DirectConversation & { guestInvites?: GuestOutcome[] };
+
 export interface DirectChange {
 	add?: string[];
 	remove?: string;
