@@ -6,7 +6,7 @@ import type { Channel, ChannelOverrides, WorkspaceDetail } from '../../../shared
 import { api, errorText } from '../../api';
 import { Avatar, Dialog, Icon } from '../../ui';
 import { ChannelPermissions } from '../categories/OverridesEditor';
-import { GradeDot, PeoplePicker, gradeLabel, holderCount } from './PeoplePicker';
+import { GradeDot, PeoplePicker, gradeLabel, holderCount, plural } from './PeoplePicker';
 import './grade-access.css';
 
 type Props = { info: WorkspaceDetail; channel: Channel; onClose: () => void };
@@ -135,7 +135,7 @@ export function AccessDialog({ info, channel, onClose }: Props) {
 									</span>
 									<span className='ga-name'>
 										<span className='ellipsis'>{gradeLabel(grade)}</span>
-										<span className='ga-via'>Grade · {holderCount(info.members, key)} membre(s)</span>
+										<span className='ga-via'>Grade · {plural(holderCount(info.members, key))}</span>
 									</span>
 									<button type='button' className='btn btn-ghost' disabled={busy} onClick={() => remove(key)}>
 										Retirer

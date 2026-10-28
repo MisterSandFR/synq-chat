@@ -13,7 +13,7 @@ export const holdsGrade = (member: Member | undefined, gradeId: string) => !!mem
 
 export const holderCount = (members: Iterable<Member>, gradeId: string) => [...members].filter((m) => holdsGrade(m, gradeId)).length;
 
-const plural = (n: number) => `${n} membre${n > 1 ? 's' : ''}`;
+export const plural = (n: number) => `${n} membre${n > 1 ? 's' : ''}`;
 
 export function GradeDot({ grade }: { grade: Grade | undefined }) {
 	return <span className='ga-dot' style={{ background: grade?.color || 'var(--muted)' }} />;
@@ -43,9 +43,11 @@ export function PeoplePicker({ grades, members, everyone, online, pickedGrades, 
 	const gradeHits = grades.filter((g) => !pickedGrades.includes(g.id) && gradeLabel(g).toLowerCase().includes(needle)).sort((a, b) => b.position - a.position);
 	const memberHits = members.filter((m) => !pickedMembers.includes(m.id) && m.name.toLowerCase().includes(needle)).sort((a, b) => a.name.localeCompare(b.name));
 
+	// Menu refermé après un choix : il masquerait les puces ajoutées sous le champ.
 	const pick = (select: () => void) => {
 		select();
 		setQuery('');
+		setOpen(false);
 	};
 
 	return (
@@ -76,7 +78,8 @@ export function PeoplePicker({ grades, members, everyone, online, pickedGrades, 
 					}}
 				/>
 			</span>
-			{open && (
+			{/* Liste vide sans recherche : rien à proposer, le menu masquerait la liste dessous. */}
+			{open && (gradeHits.length + memberHits.length > 0 || needle !== '') && (
 				// Clic dans la liste : le champ garde le focus, la liste reste ouverte.
 				<Floating anchor={anchor} matchWidth className='popover ga-menu' role='listbox' onMouseDown={(e) => e.preventDefault()}>
 					{gradeHits.length > 0 && <p className='ga-group'>Grades</p>}
