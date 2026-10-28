@@ -25,6 +25,7 @@ export const P = {
 	VIEW_EVENTS: 1 << 23,
 	CREATE_EVENTS: 1 << 24,
 	MANAGE_EVENTS: 1 << 25,
+	// Bits 26-28 : anciens droits mail, remplacés par les grades du partage. Ne pas réutiliser.
 	MAIL_VIEW: 1 << 26,
 	MAIL_REPLY: 1 << 27,
 	MANAGE_MAIL: 1 << 28,
@@ -42,7 +43,7 @@ export const DEFAULT_MEMBER_PERMS =
 
 export const READ_ONLY_DENY = P.SEND_MESSAGES | P.ATTACH_FILES | P.DRIVE_UPLOAD;
 
-export type PermGroup = 'Espace' | 'Salons' | 'Messages' | 'Fichiers' | 'Vocal' | 'Mail';
+export type PermGroup = 'Espace' | 'Salons' | 'Messages' | 'Fichiers' | 'Vocal';
 
 // `channel` : réglable par salon dans la matrice.
 export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; group: PermGroup; channel: boolean }> = [
@@ -72,9 +73,6 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'VIEW_EVENTS', label: 'Voir le calendrier', hint: 'Voir les événements de l’espace.', group: 'Espace', channel: false },
 	{ key: 'CREATE_EVENTS', label: 'Créer des événements', hint: 'Créer des événements et modifier les siens.', group: 'Espace', channel: false },
 	{ key: 'MANAGE_EVENTS', label: 'Gérer les événements', hint: 'Modifier et supprimer les événements des autres.', group: 'Espace', channel: false },
-	{ key: 'MAIL_VIEW', label: 'Voir les boîtes mail', hint: 'Lire les boîtes mail partagées à l’espace.', group: 'Mail', channel: false },
-	{ key: 'MAIL_REPLY', label: 'Répondre aux mails', hint: 'Répondre, assigner, changer le statut et annoter.', group: 'Mail', channel: false },
-	{ key: 'MANAGE_MAIL', label: 'Gérer les boîtes mail', hint: 'Partager une boîte à l’espace et la rattacher à des salons.', group: 'Mail', channel: false },
 ];
 
 export type Override = { allow: number; deny: number };

@@ -2,7 +2,6 @@ import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 
 import type { MailboxInfo, MailThread, MailThreadDetail } from '../shared/mail';
-import { DEFAULT_MEMBER_PERMS, P } from '../shared/permissions';
 import { ImapClient } from '../worker/mail/imap';
 import { parseMail } from '../worker/mail/mime';
 import { seal, unseal } from '../worker/mail/secret';
@@ -287,13 +286,12 @@ describe('mail : routes', () => {
 		expect((await bob.req<MailboxInfo[]>('GET', '/api/mail/boxes')).data.map((b) => b.id)).not.toContain(id);
 		expect((await bob.req('PATCH', `/api/mail/boxes/${id}`, INPUT)).status).toBe(404);
 
-		// Bob sans MANAGE_MAIL ne partage pas, même sa propre boîte.
-		const own = await bob.req<MailboxInfo>('POST', '/api/mail/boxes', { ...INPUT, name: 'Bob' });
-		expect((await bob.req('PUT', `/api/mail/boxes/${own.data.id}/shares/${wid}`, { channelIds: [] })).status).toBe(403);
+		// Bob ne partage pas la boîte d'Alice.
+		expect((await bob.req('PUT', `/api/mail/boxes/${id}/shares/${wid}`, { channelIds: [] })).status).toBe(403);
 
 		const shared = await alice.req<MailboxInfo>('PUT', `/api/mail/boxes/${id}/shares/${wid}`, { channelIds: [general.id, 'inconnu'] });
-		expect(shared.data.shares).toEqual([{ workspaceId: wid, workspaceName: 'Équipe', channelIds: [general.id] }]);
-		// Partagée mais grade par défaut sans MAIL_VIEW.
+		expect(shared.data.shares).toEqual([{ workspaceId: wid, workspaceName: 'Équipe', channelIds: [general.id], grades: [], reach: 1 }]);
+		// Partagée sans grade : rien pour Bob.
 		expect((await bob.req<MailboxInfo[]>('GET', '/api/mail/boxes')).data.map((b) => b.id)).not.toContain(id);
 
 		expect((await alice.req('POST', `/api/mail/boxes/${id}/sync`)).status).toBe(200);
@@ -304,17 +302,12 @@ describe('mail : routes', () => {
 		expect((await alice.req<MailThread[]>('GET', `/api/mail/threads?workspace=${wid}`)).data).toHaveLength(1);
 
 		expect((await alice.req('PATCH', `/api/mail/threads/${thread.id}`, { assigneeId: bob.user.id })).status).toBe(400);
-		expect((await alice.req('PATCH', `/api/w/${wid}/grades/default`, { permissions: DEFAULT_MEMBER_PERMS | P.MAIL_VIEW })).status).toBe(200);
+		expect((await alice.req('PUT', `/api/mail/boxes/${id}/shares/${wid}/grades`, { grades: [{ gradeId: 'default', level: 'view' }] })).status).toBe(200);
 		const seen = (await bob.req<MailboxInfo[]>('GET', '/api/mail/boxes')).data.find((b) => b.id === id)!;
 		expect(seen.access).toEqual({ owner: false, view: true, reply: false, manage: false });
 		expect(seen.config).toBeNull();
-
-		const socket = await bob.socket(wid);
-		const assigned = await alice.req<MailThread>('PATCH', `/api/mail/threads/${thread.id}`, { assigneeId: bob.user.id, status: 'done' });
-		expect(assigned.data).toMatchObject({ assigneeId: bob.user.id, assigneeName: 'Bob', status: 'done' });
-		expect(await socket.next('mail_assigned')).toMatchObject({ threadId: thread.id, mailboxId: id, by: alice.user.id });
-		socket.ws.close();
-		expect((await bob.req<MailThread[]>('GET', '/api/mail/threads?status=done&mine=1')).data.map((t) => t.id)).toEqual([thread.id]);
+		// Lecture seule : pas attribuable.
+		expect((await alice.req('PATCH', `/api/mail/threads/${thread.id}`, { assigneeId: bob.user.id })).status).toBe(400);
 
 		const detail = await bob.req<MailThreadDetail>('GET', `/api/mail/threads/${thread.id}`);
 		expect(detail.data.messages.map((m) => m.body)).toEqual(['Bonjour, la facture est fausse depuis l’été.', 'Toujours bloqué & urgent']);
@@ -325,6 +318,14 @@ describe('mail : routes', () => {
 		const file = await bob.raw('GET', `/api/mail/messages/${first.id}/attachments/${first.attachments[0]!.index}`);
 		expect(file.headers.get('content-disposition')).toContain('attachment');
 		expect(new TextDecoder().decode(await file.arrayBuffer())).toBe('%PDF-1.4');
+
+		expect((await alice.req('PUT', `/api/mail/boxes/${id}/shares/${wid}/grades`, { grades: [{ gradeId: 'default', level: 'reply' }] })).status).toBe(200);
+		const socket = await bob.socket(wid);
+		const assigned = await alice.req<MailThread>('PATCH', `/api/mail/threads/${thread.id}`, { assigneeId: bob.user.id, status: 'done' });
+		expect(assigned.data).toMatchObject({ assigneeId: bob.user.id, assigneeName: 'Bob', status: 'done' });
+		expect(await socket.next('mail_assigned')).toMatchObject({ threadId: thread.id, mailboxId: id, by: alice.user.id });
+		socket.ws.close();
+		expect((await bob.req<MailThread[]>('GET', '/api/mail/threads?status=done&mine=1')).data.map((t) => t.id)).toEqual([thread.id]);
 
 		expect((await alice.req('POST', `/api/mail/threads/${thread.id}/notes`, { body: 'Client prioritaire' })).status).toBe(201);
 		const replied = await alice.req('POST', `/api/mail/threads/${thread.id}/reply`, { body: 'Merci, on corrige.' });
