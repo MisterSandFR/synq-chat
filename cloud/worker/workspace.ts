@@ -82,6 +82,27 @@ import {
 import type { AuditKind, AuditPage } from '../shared/audit';
 import { AUDIT_MIGRATION, insertAudit, readAudit, type AuditInput } from './audit';
 import { err, ok, type Result } from './result';
+import { DRAFT_LIMITS, type Draft, type ScheduledMessage, type SentPage } from '../shared/drafts';
+import {
+	DRAFTS_MIGRATION,
+	checkSendAt,
+	countScheduled,
+	deleteScheduled,
+	dropDraft,
+	dueScheduled,
+	failScheduled,
+	getScheduled,
+	insertScheduled,
+	listScheduled,
+	moveScheduled,
+	nextScheduledAt,
+	publicScheduled,
+	readDrafts,
+	writeDraft,
+	type ScheduleInput,
+	type ScheduledFull,
+} from './drafts';
+import { loadActor } from './grades';
 
 interface Voice {
 	channelId: string;
@@ -356,6 +377,7 @@ const MIGRATIONS = [
 		user_id TEXT NOT NULL,
 		PRIMARY KEY (grade_id, user_id)
 	);`,
+	DRAFTS_MIGRATION,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -447,6 +469,8 @@ export class Workspace extends DurableObject<Env> {
 	private readonly sql: SqlStorage;
 	private readonly overrideCache = new Map<string, ChannelOverrides>();
 	private dmCache: Map<string, string[]> | null = null;
+	// Envoi programmé en cours : le brouillon actuel du salon n'est pas celui du message.
+	private deliveringScheduled = false;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -835,6 +859,7 @@ export class Workspace extends DurableObject<Env> {
 			return row.id;
 		});
 		this.setRead(actor.id, channelId, id);
+		this.draftSent(actor.id, channelId, 0);
 		const message = this.message(id)!;
 		this.broadcastIn(channelId, { t: 'message', message });
 		if (attachments.length) {
@@ -1546,6 +1571,7 @@ export class Workspace extends DurableObject<Env> {
 			follow(this.sql, actor.id, rootId, row.id);
 			return row.id;
 		});
+		this.draftSent(actor.id, channelId, rootId);
 		const message = this.message(id)!;
 		this.broadcastIn(channelId, { t: 'thread', channelId, rootId, message, root: this.message(rootId)! });
 		const followers = this.sql.exec<{ user_id: string }>('SELECT user_id FROM thread_follows WHERE root_id = ? AND user_id != ?', rootId, actor.id).toArray();
@@ -2466,5 +2492,208 @@ export class Workspace extends DurableObject<Env> {
 			)
 			.toArray()
 			.map(toMessage);
+	}
+
+	// --- Brouillons et messages programmés ---
+
+	draftsList(actor: Actor): Draft[] {
+		const visible = this.visibleIds(actor);
+		return readDrafts(this.sql, actor.id).filter((d) => visible.has(d.channelId));
+	}
+
+	draftSave(actor: Actor, channelId: string, threadRoot: number, body: string, attachments: Attachment[]): Result<Draft | null> {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (threadRoot && !this.sql.exec('SELECT 1 FROM messages WHERE id = ? AND channel_id = ? AND thread_root IS NULL', threadRoot, channelId).toArray().length) {
+			return err(404, 'Fil introuvable');
+		}
+		if (body.length > LIMITS.messageLength) {
+			return err(400, `Message trop long (${LIMITS.messageLength} caractères max)`);
+		}
+		const draft = writeDraft(this.sql, actor.id, channelId, threadRoot, body, attachments);
+		this.sendTo([actor.id], { t: 'draft', channelId, threadRoot, draft });
+		return ok(draft);
+	}
+
+	draftDelete(actor: Actor, channelId: string, threadRoot: number): void {
+		if (dropDraft(this.sql, actor.id, channelId, threadRoot)) {
+			this.sendTo([actor.id], { t: 'draft', channelId, threadRoot, draft: null });
+		}
+	}
+
+	private draftSent(userId: string, channelId: string, threadRoot: number): void {
+		if (!this.deliveringScheduled && dropDraft(this.sql, userId, channelId, threadRoot)) {
+			this.sendTo([userId], { t: 'draft', channelId, threadRoot, draft: null });
+		}
+	}
+
+	scheduledList(actor: Actor): ScheduledMessage[] {
+		return listScheduled(this.sql, actor.id).map(publicScheduled);
+	}
+
+	async scheduleMessage(actor: Actor, workspaceId: string, input: ScheduleInput): Promise<Result<ScheduledMessage>> {
+		const when = checkSendAt(input.sendAt);
+		if (!when.ok) {
+			return err(when.status, when.error);
+		}
+		const { channelId, threadRoot, replyTo, attachments } = input;
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Salon introuvable');
+		}
+		if (!this.can(actor, channelId, P.SEND_MESSAGES)) {
+			return err(403, 'Tu ne peux pas écrire dans ce salon');
+		}
+		if (attachments.length && !this.can(actor, channelId, P.ATTACH_FILES)) {
+			return err(403, 'Tu ne peux pas joindre de fichier ici');
+		}
+		const body = input.body.trim();
+		if (!body && !attachments.length) {
+			return err(400, 'Message vide');
+		}
+		if (body.length > LIMITS.messageLength) {
+			return err(400, `Message trop long (${LIMITS.messageLength} caractères max)`);
+		}
+		if (threadRoot && attachments.length > 1) {
+			return err(400, 'Un seul fichier par réponse de fil');
+		}
+		const target = threadRoot || replyTo;
+		if (target && !this.sql.exec('SELECT 1 FROM messages WHERE id = ? AND channel_id = ?', target, channelId).toArray().length) {
+			return err(400, threadRoot ? 'Fil introuvable' : 'Message cité introuvable');
+		}
+		if (countScheduled(this.sql, actor.id) >= DRAFT_LIMITS.scheduledPerUser) {
+			return err(409, `${DRAFT_LIMITS.scheduledPerUser} messages programmés au plus`);
+		}
+		const row = this.ctx.storage.transactionSync(() => {
+			const created = insertScheduled(this.sql, workspaceId, actor.id, { ...input, body, sendAt: when.value });
+			this.draftSent(actor.id, channelId, threadRoot);
+			return created;
+		});
+		await this.armAlarm();
+		this.pushScheduled(actor.id);
+		return ok(publicScheduled(row));
+	}
+
+	async scheduledMove(actor: Actor, id: number, sendAt: unknown): Promise<Result<ScheduledMessage>> {
+		if (!this.ownScheduled(actor, id)) {
+			return err(404, 'Message programmé introuvable');
+		}
+		const when = checkSendAt(sendAt);
+		if (!when.ok) {
+			return err(when.status, when.error);
+		}
+		moveScheduled(this.sql, id, when.value);
+		await this.armAlarm();
+		this.pushScheduled(actor.id);
+		return ok(publicScheduled(getScheduled(this.sql, id)!));
+	}
+
+	async scheduledCancel(actor: Actor, id: number): Promise<Result<null>> {
+		if (!this.ownScheduled(actor, id)) {
+			return err(404, 'Message programmé introuvable');
+		}
+		deleteScheduled(this.sql, id);
+		await this.armAlarm();
+		this.pushScheduled(actor.id);
+		return ok(null);
+	}
+
+	// Droits de l'acteur de la requête ; en cas d'échec le message reste programmé.
+	async scheduledSendNow(actor: Actor, id: number): Promise<Result<Message>> {
+		const row = this.ownScheduled(actor, id);
+		if (!row) {
+			return err(404, 'Message programmé introuvable');
+		}
+		const sent = this.deliverScheduled(actor, row);
+		if (sent.ok) {
+			deleteScheduled(this.sql, id);
+			await this.armAlarm();
+			this.pushScheduled(actor.id);
+		}
+		return sent;
+	}
+
+	sentMessages(actor: Actor, before: number | null): SentPage {
+		const visible = [...this.visibleIds(actor)];
+		if (!visible.length) {
+			return { messages: [], next: null };
+		}
+		const rows = this.sql
+			.exec<MessageRow>(
+				`${MESSAGE_SELECT} WHERE m.user_id = ? AND m.id < ? AND m.channel_id IN (${visible.map(() => '?').join(',')}) ORDER BY m.id DESC LIMIT ?`,
+				actor.id,
+				before ?? Number.MAX_SAFE_INTEGER,
+				...visible,
+				DRAFT_LIMITS.sentPage + 1,
+			)
+			.toArray();
+		const messages = decorate(this.sql, rows.slice(0, DRAFT_LIMITS.sentPage).map(toMessage));
+		return { messages, next: rows.length > DRAFT_LIMITS.sentPage ? messages.at(-1)!.id : null };
+	}
+
+	async alarm(): Promise<void> {
+		await this.sendDueScheduled(Date.now());
+		await this.armAlarm();
+	}
+
+	// Une seule alarme par DO : chaque source ajoute ici sa prochaine échéance.
+	private async armAlarm(): Promise<void> {
+		const wakes = [nextScheduledAt(this.sql)].filter((at): at is number => at !== null);
+		if (!wakes.length) {
+			await this.ctx.storage.deleteAlarm();
+			return;
+		}
+		const next = Math.min(...wakes);
+		if ((await this.ctx.storage.getAlarm()) !== next) {
+			await this.ctx.storage.setAlarm(next);
+		}
+	}
+
+	private async sendDueScheduled(now: number): Promise<void> {
+		for (const due of dueScheduled(this.sql, now)) {
+			// Membre et grades relus en D1 à l'heure de l'envoi.
+			const actor = await loadActor(this.env.DB, due.workspaceId, due.userId);
+			const row = getScheduled(this.sql, due.id);
+			// Supprimé, déplacé ou envoyé pendant la lecture D1.
+			if (!row || row.status !== 'pending' || row.sendAt > now) {
+				continue;
+			}
+			const sent: Result<Message> = actor ? this.deliverScheduled(actor, row) : err(403, 'Tu n’es plus membre de cet espace');
+			if (sent.ok) {
+				deleteScheduled(this.sql, row.id);
+			} else {
+				failScheduled(this.sql, row.id, sent.error);
+				const where = this.channelRow(row.channelId);
+				this.pushNotification({
+					userId: row.userId,
+					kind: 'scheduled',
+					channelId: null,
+					title: where && where.kind !== 'dm' ? `Message programmé non envoyé dans #${where.name}` : 'Message programmé non envoyé',
+					body: `${sent.error}. ${row.body}`,
+					link: `/w/${row.workspaceId}/brouillons`,
+				});
+			}
+			this.pushScheduled(row.userId);
+		}
+	}
+
+	private deliverScheduled(actor: Actor, row: ScheduledFull): Result<Message> {
+		this.deliveringScheduled = true;
+		try {
+			return row.threadRoot
+				? this.threadReply(actor, row.threadRoot, row.body, row.attachments[0] ?? null, false)
+				: this.postMessage(actor, row.channelId, row.body, row.attachments, row.replyTo);
+		} finally {
+			this.deliveringScheduled = false;
+		}
+	}
+
+	private ownScheduled(actor: Actor, id: number): ScheduledFull | null {
+		const row = getScheduled(this.sql, id);
+		return row?.userId === actor.id ? row : null;
+	}
+
+	private pushScheduled(userId: string): void {
+		this.sendTo([userId], { t: 'scheduled', items: listScheduled(this.sql, userId).map(publicScheduled) });
 	}
 }

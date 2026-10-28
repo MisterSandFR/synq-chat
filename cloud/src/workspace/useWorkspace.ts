@@ -6,6 +6,7 @@ import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
 import { EVENT_CARD_EVENT } from './events/store';
+import { DRAFTS_EVENT } from './drafts/store';
 import { initialDmThreads, reduceDmThreads, type DmThreadsAction, type DmThreadsState } from './dm-threads/state';
 
 export interface ChannelMessages {
@@ -226,6 +227,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 		case 'dm':
 		case 'call_ring':
 		case 'event_card':
+		case 'draft':
+		case 'scheduled':
 			return state;
 	}
 }
@@ -328,6 +331,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				}
 				if (event.t === 'event_card') {
 					window.dispatchEvent(new CustomEvent(EVENT_CARD_EVENT, { detail: event.eventId }));
+				}
+				if (event.t === 'draft' || event.t === 'scheduled') {
+					window.dispatchEvent(new CustomEvent(DRAFTS_EVENT, { detail: event }));
 				}
 				dispatch({ type: 'event', event, activeChannelId: activeRef.current, myId, focused: isFocused() });
 			};

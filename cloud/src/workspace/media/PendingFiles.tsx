@@ -16,7 +16,7 @@ export function PendingFiles({ items, onRemove }: { items: Upload[]; onRemove: (
 					)}
 					<span className='file-meta'>
 						<span>{u.file.name}</span>
-						<span role={u.error ? 'alert' : undefined}>{u.error ?? (u.attachment ? formatSize(u.file.size) : `Envoi : ${Math.round(u.ratio * 100)} %`)}</span>
+						<span role={u.error ? 'alert' : undefined}>{u.error ?? (u.attachment ? formatSize(u.attachment.size) : `Envoi : ${Math.round(u.ratio * 100)} %`)}</span>
 					</span>
 					<button type='button' className='icon-btn icon-btn-sm' aria-label={`Retirer ${u.file.name}`} title='Retirer' onClick={() => onRemove(u.id)}>
 						<Icon name='close' size={14} />

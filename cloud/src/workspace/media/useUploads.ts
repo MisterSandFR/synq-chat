@@ -48,6 +48,13 @@ export function useUploads(workspaceId: string) {
 		[workspaceId, commit, patch],
 	);
 
+	// Pièces jointes déjà envoyées sur R2 (brouillon restauré).
+	const restore = useCallback(
+		(attachments: Attachment[]) =>
+			commit((list) => [...list, ...attachments.map((attachment) => ({ id: crypto.randomUUID(), file: new File([], attachment.name, { type: attachment.type }), ratio: 1, attachment, error: null, preview: null }))]),
+		[commit],
+	);
+
 	const remove = useCallback(
 		(id: string) => {
 			revoke(current.current.filter((u) => u.id === id));
@@ -67,5 +74,5 @@ export function useUploads(workspaceId: string) {
 
 	const pending = items.some((u) => !u.attachment && !u.error);
 	const failed = items.some((u) => u.error);
-	return { items, notice, add, remove, clear, keys: items.flatMap((u) => (u.attachment ? [u.attachment.key] : [])), blocked: pending || failed };
+	return { items, notice, add, restore, remove, clear, keys: items.flatMap((u) => (u.attachment ? [u.attachment.key] : [])), blocked: pending || failed };
 }

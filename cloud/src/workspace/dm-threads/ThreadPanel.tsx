@@ -8,6 +8,7 @@ import { AiAssist } from '../../ai/AiAssist';
 import { AiBlock } from '../../ai/AiBlock';
 import { aiErrorText, isAbort } from '../../ai/parse';
 import { Avatar, Icon } from '../../ui';
+import { useDraft } from '../drafts';
 import { memberColor } from '../grades';
 import { RichText, toDisplay, toTokens, type Lookup } from '../richText';
 import type { WorkspaceState } from '../useWorkspace';
@@ -38,6 +39,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 	const [text, setText] = useState('');
 	const [alsoChannel, setAlsoChannel] = useState(false);
 	const [sending, setSending] = useState(false);
+	const draft = useDraft(workspaceId, channel.id, rootId, { body: text, keys: [] }, (saved) => setText(saved.body));
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const replyRef = useRef<HTMLTextAreaElement>(null);
 	const [summary, setSummary] = useState<{ text: string | null; error: string | null } | null>(null);
@@ -107,6 +109,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 		setSending(true);
 		setError(null);
 		try {
+			draft.sent();
 			const message = await api<Message>('POST', `/w/${workspaceId}/messages/${rootId}/thread`, { body, broadcast: alsoChannel });
 			dispatch({ type: 'dm_threads', update: putReply(rootId, message) });
 			setText('');
