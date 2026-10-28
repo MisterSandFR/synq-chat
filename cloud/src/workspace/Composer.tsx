@@ -14,6 +14,7 @@ import { FormatBar } from './chat/FormatBar';
 import { applyFormat, type FormatKind } from './chat/format';
 import { EphemeralNotes, SlashHint, SlashMenu } from './commands/SlashMenu';
 import { EventCardDialog } from './events/EventCardDialog';
+import { PollDialog } from './polls/PollDialog';
 import { useSlash } from './commands/useSlash';
 import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
@@ -54,6 +55,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 	const [picker, setPicker] = useState<DOMRect | null>(null);
 	// Titre proposé au dialogue d'événement ; null = fermé.
 	const [eventDraft, setEventDraft] = useState<string | null>(null);
+	const [pollDraft, setPollDraft] = useState<string | null>(null);
 	const lastTyping = useRef(0);
 	const fileInput = useRef<HTMLInputElement>(null);
 	const form = useRef<HTMLFormElement>(null);
@@ -204,6 +206,11 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		const asked = parseCommand(text.trimEnd());
 		if (asked?.name === 'evenement') {
 			setEventDraft(asked.args);
+			setText('');
+			return;
+		}
+		if (asked?.name === 'sondage') {
+			setPollDraft(asked.args);
 			setText('');
 			return;
 		}
@@ -431,6 +438,9 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 						>
 							<Icon name='calendar' />
 						</button>
+						<button type='button' className='icon-btn composer-poll' aria-label='Sondage' title='Créer un sondage' onClick={() => setPollDraft('')}>
+							<Icon name='poll' />
+						</button>
 						<input
 							ref={fileInput}
 							type='file'
@@ -485,6 +495,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 					onClose={() => setEventDraft(null)}
 				/>
 			)}
+			{pollDraft !== null && <PollDialog workspaceId={workspaceId} channelId={channel.id} lookup={lookup} initialQuestion={pollDraft} onClose={() => setPollDraft(null)} />}
 		</>
 	);
 }

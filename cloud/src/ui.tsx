@@ -165,6 +165,8 @@ const PATHS = {
 	share: 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4',
 	minus: 'M5 12h14',
 	expand: 'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
+	poll: 'M4 4h9v4H4zM4 10h16v4H4zM4 16h6v4H4z',
+	'chevron-up': 'M6 15l6-6 6 6',
 } as const;
 
 export type IconName = keyof typeof PATHS;
