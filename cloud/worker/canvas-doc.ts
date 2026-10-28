@@ -3,7 +3,7 @@ import * as decoding from 'lib0/decoding';
 import * as encoding from 'lib0/encoding';
 import * as Y from 'yjs';
 
-import { CANVAS_LIMITS, CANVAS_MSG, canvasFrame } from '../shared/canvas';
+import { CANVAS_LIMITS, CANVAS_MSG, canvasFrame, type TemplateNode } from '../shared/canvas';
 import { updateCanvasContent } from './canvases';
 
 export type CanvasPeer = { canvasId: string; userId: string; write: boolean };
@@ -23,6 +23,35 @@ const textOf = (node: Node): string =>
 		: node instanceof Y.XmlHook
 			? ''
 			: (node.toArray() as Node[]).map(textOf).join(' ');
+
+const LINK_NODES = new Set(['pageLink', 'subpage']);
+
+const linksOf = (node: Node, out: string[] = []): string[] => {
+	if (node instanceof Y.XmlElement && LINK_NODES.has(node.nodeName)) {
+		const id = node.getAttribute('id');
+		if (typeof id === 'string' && id) {
+			out.push(id);
+		}
+	}
+	if (node instanceof Y.XmlElement || node instanceof Y.XmlFragment) {
+		(node.toArray() as Node[]).forEach((child) => linksOf(child, out));
+	}
+	return out;
+};
+
+const toYNode = (node: TemplateNode): Y.XmlElement | Y.XmlText => {
+	if (node.type === 'text') {
+		const text = new Y.XmlText();
+		text.insert(0, node.text ?? '');
+		return text;
+	}
+	const element = new Y.XmlElement(node.type);
+	for (const [key, value] of Object.entries(node.attrs ?? {})) {
+		element.setAttribute(key, value as string);
+	}
+	element.insert(0, (node.content ?? []).map(toYNode));
+	return element;
+};
 
 // Un objet par canevas : état Yjs en SQLite, relais des mises à jour et de la présence.
 export class CanvasDoc extends DurableObject<Env> {
@@ -194,7 +223,7 @@ export class CanvasDoc extends DurableObject<Env> {
 		this.drop(ws);
 	}
 
-	// Titre, extrait et éditeurs recopiés en D1 pour les listes et cartes de partage.
+	// Titre, extrait, éditeurs et liens de pages recopiés en D1 pour les listes, cartes et rétroliens.
 	async alarm(): Promise<void> {
 		const canvasId = this.meta('canvas');
 		if (!canvasId) {
@@ -202,10 +231,57 @@ export class CanvasDoc extends DurableObject<Env> {
 		}
 		const doc = this.load();
 		const title = doc.getMap('meta').get('title');
-		const excerpt = textOf(doc.getXmlFragment('default')).replace(/\s+/g, ' ').trim();
+		const fragment = doc.getXmlFragment('default');
+		const excerpt = textOf(fragment).replace(/\s+/g, ' ').trim();
 		const editors = JSON.parse(this.meta('editors') ?? '[]') as string[];
 		this.sql.exec("DELETE FROM meta WHERE key = 'editors'");
-		await updateCanvasContent(this.env.DB, canvasId, { title: typeof title === 'string' ? title : null, excerpt, editors });
+		await updateCanvasContent(this.env.DB, canvasId, { title: typeof title === 'string' ? title : null, excerpt, editors, links: linksOf(fragment) });
+	}
+
+	// Modification côté serveur (modèle, titre, copie) relayée comme une édition.
+	private commit(canvasId: string, change: (doc: Y.Doc) => void): void {
+		this.setMeta('canvas', canvasId);
+		const doc = this.load();
+		let changed: Uint8Array | null = null;
+		const onUpdate = (update: Uint8Array) => {
+			changed = update;
+		};
+		doc.on('update', onUpdate);
+		try {
+			doc.transact(() => change(doc));
+		} finally {
+			doc.off('update', onUpdate);
+		}
+		if (changed) {
+			this.persist(changed);
+			this.broadcast(canvasFrame(CANVAS_MSG.update, changed), null);
+		}
+	}
+
+	async seed(canvasId: string, title: string, blocks: TemplateNode[]): Promise<void> {
+		this.commit(canvasId, (doc) => {
+			doc.getMap('meta').set('title', title);
+			const fragment = doc.getXmlFragment('default');
+			if (fragment.length === 0) {
+				fragment.insert(0, blocks.map(toYNode));
+			}
+		});
+	}
+
+	async setTitle(canvasId: string, title: string): Promise<void> {
+		this.commit(canvasId, (doc) => doc.getMap('meta').set('title', title));
+	}
+
+	async exportState(): Promise<Uint8Array> {
+		return Y.encodeStateAsUpdate(this.load());
+	}
+
+	async importState(canvasId: string, state: Uint8Array, title: string): Promise<void> {
+		this.commit(canvasId, (doc) => {
+			Y.applyUpdate(doc, state);
+			doc.getMap('meta').set('title', title);
+		});
+		await this.ctx.storage.setAlarm(Date.now() + FLUSH_DELAY);
 	}
 
 	async wipe(): Promise<void> {
