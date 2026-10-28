@@ -39,6 +39,7 @@ import { voiceRoutes } from './routes/voice';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
 import { guestRoutes } from './routes/guests';
+import { listRoutes } from './routes/lists';
 import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
 import { GUEST_SESSION_TTL } from '../shared/guests';
 
@@ -878,6 +879,7 @@ app.route('/', aiRoutes);
 app.route('/', aiChatRoutes);
 app.route('/', workspaceLogoRoutes);
 app.route('/', mailSharerRoutes);
+app.route('/', listRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

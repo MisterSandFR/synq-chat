@@ -2467,4 +2467,44 @@ export class Workspace extends DurableObject<Env> {
 			.toArray()
 			.map(toMessage);
 	}
+
+	// --- Listes ---
+
+	// Droits par salon rattaché (null = liste d'espace), dans l'ordre reçu.
+	listRights(actor: Actor, channelIds: Array<string | null>): Array<{ view: boolean; manage: boolean }> {
+		return channelIds.map((channelId) => {
+			if (!channelId) {
+				return { view: !actor.guest, manage: !actor.guest && (actor.owner || has(actor.perms, P.MANAGE_CHANNELS)) };
+			}
+			// Salon supprimé : la liste reste fermée plutôt que de devenir publique.
+			if (!this.roomRow(channelId)) {
+				return { view: false, manage: false };
+			}
+			return { view: this.can(actor, channelId, P.VIEW_CHANNEL), manage: this.can(actor, channelId, P.MANAGE_CHANNELS) };
+		});
+	}
+
+	listChanged(listId: string, channelId: string | null): void {
+		const event: ServerEvent = { t: 'list_changed', listId, channelId };
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			if (conn && !conn.actor.guest && (!channelId || this.can(conn.actor, channelId, P.VIEW_CHANNEL))) {
+				this.send(ws, event);
+			}
+		}
+	}
+
+	listAssigned(actor: Actor, userIds: string[], input: { workspaceId: string; listId: string; itemId: string; channelId: string | null; listTitle: string; itemTitle: string }): void {
+		for (const userId of new Set(userIds)) {
+			this.pushNotification({
+				userId,
+				kind: 'list',
+				channelId: input.channelId && this.roomRow(input.channelId) ? input.channelId : null,
+				actorId: actor.id,
+				title: `${actor.name} t’a attribué un élément`,
+				body: `${input.itemTitle || 'Sans titre'} · ${input.listTitle}`,
+				link: `/w/${input.workspaceId}/listes/${input.listId}?element=${input.itemId}`,
+			});
+		}
+	}
 }

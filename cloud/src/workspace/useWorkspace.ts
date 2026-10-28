@@ -39,6 +39,8 @@ export interface WorkspaceState {
 	// Incrémenté à chaque évènement de notification : le panneau Activité se recharge.
 	notificationsVersion: number;
 	lastNotification: NotificationItem | null;
+	// Incrémenté à chaque list_changed : les vues de listes relisent.
+	listsVersion: number;
 	dmThreads: DmThreadsState;
 }
 
@@ -80,6 +82,7 @@ const initial: WorkspaceState = {
 	notificationsUnread: 0,
 	notificationsVersion: 0,
 	lastNotification: null,
+	listsVersion: 0,
 	dmThreads: initialDmThreads,
 };
 
@@ -223,6 +226,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return state;
 		case 'thread':
 			return withMessage(state, event.root, 'update');
+		case 'list_changed':
+			return { ...state, listsVersion: state.listsVersion + 1 };
 		case 'dm':
 		case 'call_ring':
 		case 'event_card':

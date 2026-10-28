@@ -27,6 +27,7 @@ import { MembersPanel } from './MembersPanel';
 import { useMemberMenu } from './members/useMemberMenu';
 import { MessageList } from './MessageList';
 import { ActivityPanel } from './notifications/ActivityPanel';
+import { ListsView } from './lists/ListsView';
 import { openNotification, useBrowserNotifications } from './notifications/browser';
 import { DropZone } from './media/DropZone';
 import { PinsPanel } from './chat/PinsPanel';
@@ -116,7 +117,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const channels = state.channels;
 	const active = channels?.find((c) => c.id === channelId);
 	// Pages de l'espace hors salon, ouvertes depuis la barre d'apps.
-	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : null;
+	const page = channelId === 'activite' ? 'activity' : channelId === 'messages' ? 'dms' : channelId === 'fils' ? 'threads' : channelId === 'listes' ? 'lists' : null;
 	const view: ContentView = page === 'dms' || page === 'threads' ? page : null;
 	const openView = (next: Exclude<ContentView, null>) => navigate(`/w/${workspaceId}/${next === 'dms' ? 'messages' : 'fils'}`);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
@@ -496,8 +497,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					</button>
 					{page && (
 						<h1>
-							<Icon name={page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : 'thread'} />
-							<span className='ellipsis'>{page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : 'Fils'}</span>
+							<Icon name={page === 'lists' ? 'list' : page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : 'thread'} />
+							<span className='ellipsis'>{page === 'lists' ? 'Listes' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
@@ -552,6 +553,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							<Icon name='megaphone' />
 						</button>
 					)}
+					{active?.kind === 'text' && (
+						<button type='button' className='icon-btn' aria-label='Listes du salon' title='Listes du salon' onClick={() => navigate(`/w/${workspaceId}/listes?salon=${active.id}`)}>
+							<Icon name='list' />
+						</button>
+					)}
 					<button type='button' className='icon-btn hide-mobile' aria-label='Annuaire' title='Annuaire' onClick={() => setDirectory(true)}>
 						<Icon name='list' />
 					</button>
@@ -583,7 +589,9 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 
 				<div className='body'>
 					<div className='content'>
-						{page === 'activity' ? (
+						{page === 'lists' ? (
+							<ListsView workspaceId={workspaceId} members={members} channels={rooms} version={state.listsVersion} />
+						) : page === 'activity' ? (
 							<ActivityPanel
 								workspaceId={workspaceId}
 								channels={channels ?? []}

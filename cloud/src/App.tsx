@@ -68,7 +68,7 @@ export function App() {
 	if (invite) {
 		return <InviteScreen code={invite[1]!} onJoined={refresh} />;
 	}
-	const workspace = path.match(/^\/w\/([\w-]+)(?:\/([\w-]+))?$/);
+	const workspace = path.match(/^\/w\/([\w-]+)(?:\/([\w-]+))?(?:\/[\w-]+)?$/);
 	const inWorkspace = Boolean(workspace && me.workspaces.some((w) => w.id === workspace[1]));
 	const last = lastWorkspace();
 	const currentId = inWorkspace ? workspace![1]! : me.workspaces.some((w) => w.id === last) ? last : (me.workspaces[0]?.id ?? null);
