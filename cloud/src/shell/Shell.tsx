@@ -1,7 +1,8 @@
-import { useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 
 import { Floating } from '../floating';
 import type { Me } from '../../shared/types';
+import { SynqAiPanel, useAiShortcut } from '../ai/hub/SynqAi';
 import { api } from '../api';
 import { navigate } from '../router';
 import { useTheme, type Theme } from '../theme';
@@ -31,6 +32,9 @@ const go = (href: string) => (event: MouseEvent) => {
 export function Shell({ me, workspaceId, items, children }: Props) {
 	const workspace = me.workspaces.find((w) => w.id === workspaceId);
 	const [theme, setTheme] = useTheme();
+	const [aiOpen, setAiOpen] = useState(false);
+	const toggleAi = useCallback(() => setAiOpen((open) => !open && !me.guest), [me.guest]);
+	useAiShortcut(toggleAi);
 	return (
 		<div className='shell themed' style={{ '--accent': workspace?.accent ?? '#6A4BFF' } as CSSProperties}>
 			<nav className='rail' aria-label='Applications'>
@@ -45,6 +49,14 @@ export function Shell({ me, workspaceId, items, children }: Props) {
 							<span className='rail-label'>{item.label}</span>
 						</a>
 					))}
+					{!me.guest && (
+						<button type='button' className='rail-item' aria-pressed={aiOpen} title='Synq IA (Ctrl J)' onClick={toggleAi}>
+							<span className='rail-tile'>
+								<Icon name='sparkle' size={20} />
+							</span>
+							<span className='rail-label'>Synq IA</span>
+						</button>
+					)}
 				</div>
 				<span className='grow' />
 				<CreateMenu workspaceId={workspaceId} guest={Boolean(me.guest)} />
@@ -60,6 +72,7 @@ export function Shell({ me, workspaceId, items, children }: Props) {
 				<ProfileMenu me={me} />
 			</nav>
 			<div className='shell-main'>{children}</div>
+			{aiOpen && <SynqAiPanel workspaceId={workspaceId} onClose={() => setAiOpen(false)} />}
 		</div>
 	);
 }
