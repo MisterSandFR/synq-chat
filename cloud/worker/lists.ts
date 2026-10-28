@@ -1,14 +1,19 @@
 import {
+	CARD_REMINDERS,
+	COVER_GRADIENTS,
 	DATE_RE,
 	LIST_COLUMN_TYPES,
 	LIST_LIMITS,
 	LIST_TEMPLATES,
 	PRIORITIES,
 	STATUS_COLORS,
+	type ActivityChange,
+	type CommentReaction,
 	type ListActivity,
 	type ListColumn,
 	type ListComment,
 	type ListItem,
+	type ListLabel,
 	type ListOption,
 	type ListSummary,
 	type ListTemplate,
@@ -51,6 +56,17 @@ type ItemRow = {
 	checks_done?: number;
 	attachments?: number;
 	page_id?: string | null;
+	icon: string;
+	cover_mode: string;
+	cover_y: number;
+	members: string;
+	start_time: string | null;
+	due_time: string | null;
+	reminder: string | null;
+	estimate: number | null;
+	estimate_unit: string;
+	archived_at: number | null;
+	template: number;
 };
 
 const parse = <T>(raw: string, fallback: T): T => {
@@ -94,6 +110,17 @@ const toItem = (row: ItemRow): ListItem => ({
 	checks: { done: row.checks_done ?? 0, total: row.checks_total ?? 0 },
 	attachments: row.attachments ?? 0,
 	pageId: row.page_id ?? null,
+	icon: row.icon ?? '',
+	coverMode: row.cover_mode === 'full' ? 'full' : 'top',
+	coverY: row.cover_y ?? 50,
+	members: parse<string[]>(row.members ?? '[]', []),
+	startTime: row.start_time ?? null,
+	dueTime: row.due_time ?? null,
+	reminder: row.reminder === '1d' || row.reminder === '1h' ? row.reminder : null,
+	estimate: row.estimate ?? null,
+	estimateUnit: row.estimate_unit === 'h' ? 'h' : 'pts',
+	archivedAt: row.archived_at ?? null,
+	template: Boolean(row.template),
 });
 
 const LIST_SELECT = 'SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS item_count FROM lists l';
@@ -114,7 +141,12 @@ export async function listRow(db: D1Database, workspaceId: string, id: string): 
 }
 
 export async function listItems(db: D1Database, listId: string): Promise<ListItem[]> {
-	const { results } = await db.prepare(`${ITEM_SELECT} WHERE i.list_id = ? ORDER BY i.position, i.created_at`).bind(listId).all<ItemRow>();
+	const { results } = await db.prepare(`${ITEM_SELECT} WHERE i.list_id = ? AND i.archived_at IS NULL ORDER BY i.position, i.created_at`).bind(listId).all<ItemRow>();
+	return results.map(toItem);
+}
+
+export async function archivedItems(db: D1Database, listId: string): Promise<ListItem[]> {
+	const { results } = await db.prepare(`${ITEM_SELECT} WHERE i.list_id = ? AND i.archived_at IS NOT NULL ORDER BY i.archived_at DESC LIMIT 200`).bind(listId).all<ItemRow>();
 	return results.map(toItem);
 }
 
@@ -275,6 +307,96 @@ export function changedFields(columns: ListColumn[], before: ListItem, input: { 
 	return names;
 }
 
+const CHANGE_FIELDS = [
+	['labels', 'Étiquettes'],
+	['cover', 'Bannière'],
+	['startDate', 'Début'],
+	['dueDate', 'Échéance'],
+	['done', 'Terminé'],
+	['icon', 'Icône'],
+	['coverMode', 'Affichage de la bannière'],
+	['coverY', 'Recadrage'],
+	['members', 'Membres'],
+	['startTime', 'Heure de début'],
+	['dueTime', 'Heure d’échéance'],
+	['reminder', 'Rappel'],
+	['estimate', 'Estimation'],
+	['estimateUnit', 'Unité d’estimation'],
+	['template', 'Modèle'],
+] as const;
+
+const clip = (value: string) => (value.length > 120 ? `${value.slice(0, 119)}…` : value);
+
+function fieldText(list: ListRow, key: (typeof CHANGE_FIELDS)[number][0], value: unknown): string | null {
+	if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) {
+		return null;
+	}
+	switch (key) {
+		case 'labels': {
+			const labels = parse<ListLabel[]>(list.labels, []);
+			return (value as string[]).map((id) => labels.find((l) => l.id === id)?.name ?? '?').join(', ');
+		}
+		case 'cover': {
+			const cover = String(value);
+			return cover.startsWith('file:') ? 'Image' : cover.startsWith('grad:') ? `Dégradé ${COVER_GRADIENTS.find((g) => `grad:${g.id}` === cover)?.label ?? ''}`.trim() : cover;
+		}
+		case 'done':
+		case 'template':
+			return value ? 'Oui' : 'Non';
+		case 'coverMode':
+			return value === 'full' ? 'Pleine carte' : 'En haut';
+		case 'coverY':
+			return `${value} %`;
+		case 'members':
+			return (value as string[]).join(',');
+		case 'reminder':
+			return CARD_REMINDERS.find((r) => r.id === value)?.label ?? null;
+		case 'estimateUnit':
+			return value === 'h' ? 'Heures' : 'Points';
+		default:
+			return clip(String(value));
+	}
+}
+
+function cellText(column: ListColumn, value: ListValue | undefined): string | null {
+	if (value === undefined) {
+		return null;
+	}
+	if (column.type === 'status') {
+		return column.options?.find((o) => o.id === value)?.label ?? null;
+	}
+	if (column.type === 'priority') {
+		return PRIORITIES.find((p) => p.id === value)?.label ?? null;
+	}
+	if (column.type === 'checkbox') {
+		return value ? 'Oui' : 'Non';
+	}
+	return clip(String(value));
+}
+
+// Ancienne et nouvelle valeur lisibles, pour l'activité détaillée.
+export function fieldChanges(list: ListRow, before: ListItem, input: { title?: unknown; description?: unknown }, values: Record<string, ListValue>, fields: ItemFields): ActivityChange[] {
+	const out: ActivityChange[] = [];
+	const was = fieldsOf(before);
+	for (const [key, field] of CHANGE_FIELDS) {
+		if (JSON.stringify(was[key]) !== JSON.stringify(fields[key])) {
+			out.push({ field, from: fieldText(list, key, was[key]), to: fieldText(list, key, fields[key]), ...(key === 'members' && { kind: 'people' as const }) });
+		}
+	}
+	if (typeof input.title === 'string' && input.title.trim() !== before.title) {
+		out.push({ field: 'Titre', from: before.title || null, to: clip(input.title.trim()) || null });
+	}
+	if (typeof input.description === 'string' && input.description !== before.description) {
+		out.push({ field: 'Description', from: null, to: null });
+	}
+	for (const column of columnsOf(list)) {
+		if (JSON.stringify(before.values[column.id] ?? null) !== JSON.stringify(values[column.id] ?? null)) {
+			out.push({ field: column.name, from: cellText(column, before.values[column.id]), to: cellText(column, values[column.id]), ...(column.type === 'person' && { kind: 'people' as const }) });
+		}
+	}
+	return out;
+}
+
 export async function createList(db: D1Database, workspaceId: string, userId: string, input: { title?: unknown; template?: unknown; channelId?: string | null }): Promise<Result<ListRow>> {
 	const key = (typeof input.template === 'string' && input.template in LIST_TEMPLATES ? input.template : 'blank') as ListTemplate;
 	const template = LIST_TEMPLATES[key];
@@ -310,8 +432,8 @@ export async function updateList(db: D1Database, row: ListRow, input: { title?: 
 
 export const touchList = (db: D1Database, id: string) => db.prepare('UPDATE lists SET updated_at = ? WHERE id = ?').bind(Date.now(), id);
 
-const logActivity = (db: D1Database, itemId: string, userId: string, action: string) =>
-	db.prepare('INSERT INTO list_activity (item_id, user_id, action, created_at) VALUES (?, ?, ?, ?)').bind(itemId, userId, action, Date.now());
+export const logActivity = (db: D1Database, itemId: string, userId: string, action: string, changes?: ActivityChange[]) =>
+	db.prepare('INSERT INTO list_activity (item_id, user_id, action, detail, created_at) VALUES (?, ?, ?, ?, ?)').bind(itemId, userId, action, changes?.length ? JSON.stringify(changes) : null, Date.now());
 
 export async function createItem(db: D1Database, list: ListRow, userId: string, input: { title?: unknown; position?: unknown }, values: Record<string, ListValue>, fields: ItemFields = fieldsOf(null)): Promise<Result<ListItem>> {
 	if ((list.item_count ?? 0) >= LIST_LIMITS.items) {
@@ -326,8 +448,35 @@ export async function createItem(db: D1Database, list: ListRow, userId: string, 
 	const now = Date.now();
 	await db.batch([
 		db
-			.prepare('INSERT INTO list_items (id, list_id, position, title, vals, labels, cover, start_date, due_date, done, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-			.bind(id, list.id, position, cleanText(input.title, LIST_LIMITS.titleLength), JSON.stringify(values), JSON.stringify(fields.labels), fields.cover, fields.startDate, fields.dueDate, Number(fields.done), userId, now, now),
+			.prepare(
+				`INSERT INTO list_items (id, list_id, position, title, vals, labels, cover, start_date, due_date, done, created_by, created_at, updated_at,
+					icon, cover_mode, cover_y, members, start_time, due_time, reminder, estimate, estimate_unit, template) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.bind(
+				id,
+				list.id,
+				position,
+				cleanText(input.title, LIST_LIMITS.titleLength),
+				JSON.stringify(values),
+				JSON.stringify(fields.labels),
+				fields.cover,
+				fields.startDate,
+				fields.dueDate,
+				Number(fields.done),
+				userId,
+				now,
+				now,
+				fields.icon,
+				fields.coverMode,
+				fields.coverY,
+				JSON.stringify(fields.members),
+				fields.startTime,
+				fields.dueTime,
+				fields.reminder,
+				fields.estimate,
+				fields.estimateUnit,
+				Number(fields.template),
+			),
 		logActivity(db, id, userId, 'a créé l’élément'),
 		touchList(db, list.id),
 	]);
@@ -347,15 +496,44 @@ export async function updateItem(
 	const title = typeof input.title === 'string' ? cleanText(input.title, LIST_LIMITS.titleLength) : item.title;
 	const description = typeof input.description === 'string' ? input.description.slice(0, LIST_LIMITS.descriptionLength) : item.description;
 	const position = typeof input.position === 'number' && Number.isFinite(input.position) ? input.position : item.position;
-	const changed = changedFields(columnsOf(list), item, input, values, fields);
+	const changes = fieldChanges(list, item, input, values, fields);
 	const statements = [
 		db
-			.prepare('UPDATE list_items SET title = ?, description = ?, position = ?, vals = ?, labels = ?, cover = ?, start_date = ?, due_date = ?, done = ?, updated_at = ? WHERE id = ?')
-			.bind(title, description, position, JSON.stringify(values), JSON.stringify(fields.labels), fields.cover, fields.startDate, fields.dueDate, Number(fields.done), Date.now(), item.id),
+			.prepare(
+				`UPDATE list_items SET title = ?, description = ?, position = ?, vals = ?, labels = ?, cover = ?, start_date = ?, due_date = ?, done = ?, updated_at = ?,
+					icon = ?, cover_mode = ?, cover_y = ?, members = ?, start_time = ?, due_time = ?, reminder = ?, estimate = ?, estimate_unit = ?, archived_at = ?, template = ? WHERE id = ?`,
+			)
+			.bind(
+				title,
+				description,
+				position,
+				JSON.stringify(values),
+				JSON.stringify(fields.labels),
+				fields.cover,
+				fields.startDate,
+				fields.dueDate,
+				Number(fields.done),
+				Date.now(),
+				fields.icon,
+				fields.coverMode,
+				fields.coverY,
+				JSON.stringify(fields.members),
+				fields.startTime,
+				fields.dueTime,
+				fields.reminder,
+				fields.estimate,
+				fields.estimateUnit,
+				fields.archivedAt,
+				Number(fields.template),
+				item.id,
+			),
 		touchList(db, list.id),
 	];
-	if (changed.length) {
-		statements.push(logActivity(db, item.id, userId, `a modifié ${changed.join(', ')}`));
+	if (changes.length) {
+		statements.push(logActivity(db, item.id, userId, `a modifié ${changes.map((c) => c.field).join(', ')}`, changes));
+	}
+	if (fields.archivedAt !== item.archivedAt) {
+		statements.push(logActivity(db, item.id, userId, fields.archivedAt ? 'a archivé la carte' : 'a restauré la carte'));
 	}
 	if (automated) {
 		statements.push(logActivity(db, item.id, userId, automated > 1 ? `a déclenché ${automated} automatisations` : 'a déclenché une automatisation'));
@@ -365,11 +543,26 @@ export async function updateItem(
 }
 
 export async function itemHistory(db: D1Database, itemId: string): Promise<{ comments: ListComment[]; activity: ListActivity[] }> {
-	const [comments, activity] = await db.batch([
+	const [comments, activity, reactions] = await db.batch([
 		db.prepare('SELECT id, item_id AS itemId, user_id AS userId, body, created_at AS createdAt FROM list_comments WHERE item_id = ? ORDER BY created_at').bind(itemId),
-		db.prepare('SELECT id, user_id AS userId, action, created_at AS createdAt FROM list_activity WHERE item_id = ? ORDER BY id DESC LIMIT 50').bind(itemId),
+		db.prepare('SELECT id, user_id AS userId, action, detail, created_at AS createdAt FROM list_activity WHERE item_id = ? ORDER BY id DESC LIMIT 50').bind(itemId),
+		db.prepare('SELECT r.comment_id, r.user_id, r.emoji FROM list_comment_reactions r JOIN list_comments c ON c.id = r.comment_id WHERE c.item_id = ? ORDER BY r.created_at').bind(itemId),
 	]);
-	return { comments: comments!.results as ListComment[], activity: activity!.results as ListActivity[] };
+	const byComment = new Map<string, CommentReaction[]>();
+	for (const r of reactions!.results as Array<{ comment_id: string; user_id: string; emoji: string }>) {
+		const list = byComment.get(r.comment_id) ?? [];
+		const entry = list.find((x) => x.emoji === r.emoji);
+		if (entry) {
+			entry.users.push(r.user_id);
+		} else {
+			list.push({ emoji: r.emoji, users: [r.user_id] });
+		}
+		byComment.set(r.comment_id, list);
+	}
+	return {
+		comments: (comments!.results as Omit<ListComment, 'reactions'>[]).map((c) => ({ ...c, reactions: byComment.get(c.id) ?? [] })),
+		activity: (activity!.results as Array<Omit<ListActivity, 'changes'> & { detail: string | null }>).map(({ detail, ...a }) => ({ ...a, changes: detail ? parse<ActivityChange[]>(detail, []) : [] })),
+	};
 }
 
 export async function addComment(db: D1Database, list: ListRow, itemId: string, userId: string, raw: unknown): Promise<Result<ListComment>> {
@@ -377,7 +570,7 @@ export async function addComment(db: D1Database, list: ListRow, itemId: string, 
 	if (!body) {
 		return err(400, 'Commentaire vide');
 	}
-	const comment: ListComment = { id: crypto.randomUUID(), itemId, userId, body, createdAt: Date.now() };
+	const comment: ListComment = { id: crypto.randomUUID(), itemId, userId, body, createdAt: Date.now(), reactions: [] };
 	await db.batch([
 		db.prepare('INSERT INTO list_comments (id, item_id, user_id, body, created_at) VALUES (?, ?, ?, ?, ?)').bind(comment.id, itemId, userId, body, comment.createdAt),
 		logActivity(db, itemId, userId, 'a commenté'),

@@ -1,7 +1,12 @@
 import type { CanvasMeta } from '../shared/canvas';
 import {
 	BASE_LIMITS,
+	CARD_LIMITS,
+	CARD_REMINDERS,
+	COVER_GRADIENTS,
 	DATE_RE,
+	TIME_RE,
+	defaultCardFace,
 	LIST_TEMPLATES,
 	LIST_VIEW_KINDS,
 	STATUS_COLORS,
@@ -14,6 +19,10 @@ import {
 	type ListLabel,
 	type ListRule,
 	type ListSavedView,
+	type CardFace,
+	type CardReminder,
+	type CoverMode,
+	type EstimateUnit,
 	type ListTemplate,
 	type ListValue,
 	type RuleAction,
@@ -75,7 +84,24 @@ export function cleanLabels(raw: unknown): Result<ListLabel[]> {
 
 // --- Champs natifs d'un élément ---
 
-export type ItemFields = { labels: string[]; cover: string | null; startDate: string | null; dueDate: string | null; done: boolean };
+export type ItemFields = {
+	labels: string[];
+	cover: string | null;
+	startDate: string | null;
+	dueDate: string | null;
+	done: boolean;
+	icon: string;
+	coverMode: CoverMode;
+	coverY: number;
+	members: string[];
+	startTime: string | null;
+	dueTime: string | null;
+	reminder: CardReminder | null;
+	estimate: number | null;
+	estimateUnit: EstimateUnit;
+	archivedAt: number | null;
+	template: boolean;
+};
 
 export const fieldsOf = (item: ListItem | null): ItemFields => ({
 	labels: item?.labels ?? [],
@@ -83,12 +109,119 @@ export const fieldsOf = (item: ListItem | null): ItemFields => ({
 	startDate: item?.startDate ?? null,
 	dueDate: item?.dueDate ?? null,
 	done: item?.done ?? false,
+	icon: item?.icon ?? '',
+	coverMode: item?.coverMode ?? 'top',
+	coverY: item?.coverY ?? 50,
+	members: item?.members ?? [],
+	startTime: item?.startTime ?? null,
+	dueTime: item?.dueTime ?? null,
+	reminder: item?.reminder ?? null,
+	estimate: item?.estimate ?? null,
+	estimateUnit: item?.estimateUnit ?? 'pts',
+	archivedAt: item?.archivedAt ?? null,
+	template: item?.template ?? false,
 });
+
+export type CardInput = {
+	labels?: unknown;
+	cover?: unknown;
+	startDate?: unknown;
+	dueDate?: unknown;
+	done?: unknown;
+	icon?: unknown;
+	coverMode?: unknown;
+	coverY?: unknown;
+	members?: unknown;
+	startTime?: unknown;
+	dueTime?: unknown;
+	reminder?: unknown;
+	estimate?: unknown;
+	estimateUnit?: unknown;
+	archived?: unknown;
+	template?: unknown;
+};
+
+const cleanTime = (raw: unknown, current: string | null): Result<string | null> =>
+	raw === undefined ? ok(current) : raw === null || raw === '' ? ok(null) : typeof raw === 'string' && TIME_RE.test(raw) ? ok(raw) : err(400, 'Heure invalide');
+
+// Icône, bannière, membres, heures, rappel, estimation, archivage et modèle.
+async function cleanCard(db: D1Database, list: ListRow, next: ItemFields, input: CardInput): Promise<Result<ItemFields>> {
+	if (input.icon !== undefined) {
+		if (typeof input.icon !== 'string' || [...input.icon].length > CARD_LIMITS.icon || /\s/.test(input.icon)) {
+			return err(400, 'Icône invalide');
+		}
+		next.icon = input.icon;
+	}
+	if (input.coverMode !== undefined) {
+		if (input.coverMode !== 'top' && input.coverMode !== 'full') {
+			return err(400, 'Affichage de bannière invalide');
+		}
+		next.coverMode = input.coverMode;
+	}
+	if (input.coverY !== undefined) {
+		if (typeof input.coverY !== 'number' || !Number.isFinite(input.coverY)) {
+			return err(400, 'Recadrage invalide');
+		}
+		next.coverY = Math.round(Math.min(100, Math.max(0, input.coverY)));
+	}
+	if (input.members !== undefined) {
+		if (!Array.isArray(input.members) || input.members.length > CARD_LIMITS.members || !input.members.every(isUser) || !(await areMembers(db, list.workspace_id, input.members as string[]))) {
+			return err(400, 'Personne hors de l’espace');
+		}
+		next.members = [...new Set(input.members as string[])];
+	}
+	for (const key of ['startTime', 'dueTime'] as const) {
+		const time = cleanTime(input[key], next[key]);
+		if (!time.ok) {
+			return time;
+		}
+		next[key] = time.value;
+	}
+	// Une heure sans date n'a pas de sens : elle suit sa date.
+	next.startTime = next.startDate ? next.startTime : null;
+	next.dueTime = next.dueDate ? next.dueTime : null;
+	if (input.reminder !== undefined) {
+		if (input.reminder !== null && !CARD_REMINDERS.some((r) => r.id === input.reminder)) {
+			return err(400, 'Rappel invalide');
+		}
+		next.reminder = input.reminder as CardReminder | null;
+	}
+	if (next.reminder && !next.dueDate) {
+		if (input.reminder) {
+			return err(400, 'Un rappel demande une échéance');
+		}
+		next.reminder = null;
+	}
+	if (input.estimate !== undefined) {
+		if (input.estimate !== null && (typeof input.estimate !== 'number' || !Number.isFinite(input.estimate) || input.estimate < 0 || input.estimate > CARD_LIMITS.estimate)) {
+			return err(400, 'Estimation invalide');
+		}
+		next.estimate = input.estimate === null ? null : Math.round(input.estimate * 100) / 100;
+	}
+	if (input.estimateUnit !== undefined) {
+		if (input.estimateUnit !== 'pts' && input.estimateUnit !== 'h') {
+			return err(400, 'Unité invalide');
+		}
+		next.estimateUnit = input.estimateUnit;
+	}
+	for (const key of ['archived', 'template'] as const) {
+		if (input[key] !== undefined && typeof input[key] !== 'boolean') {
+			return err(400, 'Valeur invalide');
+		}
+	}
+	if (input.archived !== undefined) {
+		next.archivedAt = input.archived ? (next.archivedAt ?? Date.now()) : null;
+	}
+	if (input.template !== undefined) {
+		next.template = input.template as boolean;
+	}
+	return ok(next);
+}
 
 const cleanDate = (raw: unknown, current: string | null): Result<string | null> =>
 	raw === undefined ? ok(current) : raw === null || raw === '' ? ok(null) : typeof raw === 'string' && DATE_RE.test(raw) ? ok(raw) : err(400, 'Date invalide');
 
-export async function cleanFields(db: D1Database, list: ListRow, item: ListItem | null, input: { labels?: unknown; cover?: unknown; startDate?: unknown; dueDate?: unknown; done?: unknown }): Promise<Result<ItemFields>> {
+export async function cleanFields(db: D1Database, list: ListRow, item: ListItem | null, input: CardInput): Promise<Result<ItemFields>> {
 	const next = fieldsOf(item);
 	if (input.labels !== undefined) {
 		const known = new Set(labelsOf(list).map((l) => l.id));
@@ -102,10 +235,18 @@ export async function cleanFields(db: D1Database, list: ListRow, item: ListItem 
 			next.cover = null;
 		} else if (isColor(input.cover)) {
 			next.cover = input.cover.toLowerCase();
+		} else if (typeof input.cover === 'string' && input.cover.startsWith('grad:') && COVER_GRADIENTS.some((g) => `grad:${g.id}` === input.cover)) {
+			next.cover = input.cover;
 		} else if (typeof input.cover === 'string' && input.cover.startsWith('file:') && item) {
-			const file = await db.prepare("SELECT id FROM list_attachments WHERE id = ? AND item_id = ? AND type LIKE 'image/%'").bind(input.cover.slice(5), item.id).first();
+			const file = await db.prepare('SELECT type, size FROM list_attachments WHERE id = ? AND item_id = ?').bind(input.cover.slice(5), item.id).first<{ type: string; size: number }>();
 			if (!file) {
 				return err(400, 'Image de couverture introuvable');
+			}
+			if (!/^image\/(png|jpeg|gif|webp|avif)$/.test(file.type)) {
+				return err(400, 'La bannière doit être une image');
+			}
+			if (file.size > CARD_LIMITS.bannerSize) {
+				return err(413, 'Image trop lourde pour une bannière (10 Mo max)');
 			}
 			next.cover = input.cover;
 		} else {
@@ -131,7 +272,7 @@ export async function cleanFields(db: D1Database, list: ListRow, item: ListItem 
 		}
 		next.done = input.done;
 	}
-	return ok(next);
+	return cleanCard(db, list, next, input);
 }
 
 // --- Vues enregistrées ---
@@ -143,7 +284,10 @@ const toView = (row: ViewRow): ListSavedView => ({
 	listId: row.list_id,
 	name: row.name,
 	kind: (LIST_VIEW_KINDS.some((k) => k.id === row.kind) ? row.kind : 'table') as ListSavedView['kind'],
-	config: { ...defaultViewConfig(), ...parse<Partial<ViewConfig>>(row.config, {}) },
+	config: (() => {
+		const config = { ...defaultViewConfig(), ...parse<Partial<ViewConfig>>(row.config, {}) };
+		return { ...config, card: { ...defaultCardFace(), ...config.card } };
+	})(),
 	position: row.position,
 });
 
@@ -202,6 +346,28 @@ export function cleanConfig(raw: unknown, current: ViewConfig = defaultViewConfi
 			return err(400, 'Champ de date invalide');
 		}
 		next.dateField = input.dateField;
+	}
+	if (input.card !== undefined) {
+		const card = input.card as Partial<Record<keyof CardFace, unknown>> | null;
+		if (!card || typeof card !== 'object' || Array.isArray(card)) {
+			return err(400, 'Face de carte invalide');
+		}
+		const face: CardFace = { ...defaultCardFace(), ...current.card };
+		for (const key of ['cover', 'labels', 'members', 'dates', 'checklist', 'counts'] as const) {
+			if (card[key] !== undefined) {
+				if (typeof card[key] !== 'boolean') {
+					return err(400, 'Face de carte invalide');
+				}
+				face[key] = card[key];
+			}
+		}
+		if (card.props !== undefined) {
+			if (!Array.isArray(card.props) || card.props.length > CARD_LIMITS.faceProps || !card.props.every(isId)) {
+				return err(400, 'Propriétés de carte invalides');
+			}
+			face.props = [...new Set(card.props as string[])];
+		}
+		next.card = face;
 	}
 	return ok(next);
 }
@@ -596,7 +762,7 @@ export async function sendDueSoon(env: Env, now: number): Promise<number> {
 		`SELECT l.*, i.id AS item_id, i.title AS item_title, i.vals, i.due_date, i.created_by AS item_by,
 			(SELECT r.action FROM list_rules r WHERE r.list_id = l.id AND r.enabled = 1 AND json_extract(r.trigger, '$.kind') = 'due_soon' LIMIT 1) AS rule_action
 		FROM list_items i JOIN lists l ON l.id = i.list_id
-		WHERE i.done = 0 AND i.due_date IN (?, ?) AND (i.due_notified IS NULL OR i.due_notified != i.due_date) AND rule_action IS NOT NULL
+		WHERE i.done = 0 AND i.archived_at IS NULL AND i.due_date IN (?, ?) AND (i.due_notified IS NULL OR i.due_notified != i.due_date) AND rule_action IS NOT NULL
 		LIMIT 200`,
 	)
 		.bind(today, tomorrow)

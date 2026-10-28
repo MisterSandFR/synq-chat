@@ -1,21 +1,28 @@
-import { useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 
-import { dueState, fileCover, isoDay, type ListColumn, type ListDetail, type ListItem, type ListValue, type ViewConfig, type ViewFilter } from '../../../shared/lists';
+import { coverFill, defaultCardFace, dueState, fileCover, isoDay, type CardFace, type ListColumn, type ListDetail, type ListItem, type ListValue, type ViewConfig, type ViewFilter } from '../../../shared/lists';
 import type { Member } from '../../../shared/types';
 import { Avatar, Icon } from '../../ui';
 import { optionsOf, Pill } from './cells';
-import { between, type Patch } from './table';
+import { between, MenuButton, type Patch } from './table';
+import './cards.css';
 
 export type Quick = { mine: boolean; overdue: boolean; label: string | null };
+
+// Section du détail à ouvrir directement (raccourcis D, L, C).
+export type CardFocus = 'dates' | 'labels' | 'checklist';
 
 export type ViewProps = {
 	workspaceId: string;
 	list: ListDetail;
 	items: ListItem[];
 	members: Map<string, Member>;
+	myId: string;
+	face: CardFace;
 	onPatch: (item: ListItem, patch: Patch) => void;
 	onAdd: (values?: Record<string, ListValue>, title?: string, extra?: Patch) => Promise<ListItem | null>;
-	onOpen: (id: string) => void;
+	onOpen: (id: string, focus?: CardFocus) => void;
+	onFromTemplate: (template: ListItem, values: Record<string, ListValue>) => void;
 };
 
 const shortDay = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
@@ -57,7 +64,7 @@ export function datePatch(item: ListItem, field: string, day: string): Patch {
 	return { values: { [field]: day } };
 }
 
-const people = (list: ListDetail, item: ListItem) => [...new Set(list.columns.filter((c) => c.type === 'person' && typeof item.values[c.id] === 'string').map((c) => item.values[c.id] as string))];
+export const people = (list: ListDetail, item: ListItem) => [...new Set([...item.members, ...list.columns.filter((c) => c.type === 'person' && typeof item.values[c.id] === 'string').map((c) => item.values[c.id] as string)])];
 
 function filterHit(item: ListItem, f: ViewFilter): boolean {
 	if (f.field === 'labels') {
@@ -154,6 +161,8 @@ export function DuePill({ item }: { item: ListItem }) {
 		<span className={`bs-due is-${state}`} title={DUE_TEXT[state] || 'Échéance'}>
 			<Icon name={state === 'done' ? 'check' : 'clock'} size={12} />
 			{item.startDate && item.startDate !== item.dueDate ? `${dayLabel(item.startDate)} – ${dayLabel(item.dueDate)}` : dayLabel(item.dueDate)}
+			{item.dueTime && ` ${item.dueTime.replace(':', ' h ')}`}
+			{item.reminder && <Icon name='bell' size={11} />}
 		</span>
 	);
 }
@@ -161,9 +170,26 @@ export function DuePill({ item }: { item: ListItem }) {
 export function Cover({ workspaceId, item, tall }: { workspaceId: string; item: ListItem; tall?: boolean }) {
 	const url = coverUrl(workspaceId, item.listId, item.cover);
 	if (url) {
-		return <img className={`bs-cover-img${tall ? ' is-tall' : ''}`} src={url} alt='' loading='lazy' />;
+		return <img className={`bs-cover-img${tall ? ' is-tall' : ''}`} src={url} alt='' loading='lazy' style={{ objectPosition: `50% ${item.coverY}%` }} />;
 	}
-	return item.cover ? <span className='bs-cover' style={{ background: item.cover }} /> : null;
+	const fill = coverFill(item.cover);
+	return fill ? <span className={`bs-cover${tall ? ' is-tall' : ''}`} style={{ background: fill }} /> : null;
+}
+
+function PropChip({ column, value, members }: { column: ListColumn; value: ListValue | undefined; members: Map<string, Member> }) {
+	if (value === undefined || value === '') {
+		return null;
+	}
+	if (column.type === 'status' || column.type === 'priority') {
+		const option = optionsOf(column).find((o) => o.id === value);
+		return option ? <Pill option={option} /> : null;
+	}
+	const text = column.type === 'person' ? (members.get(value as string)?.name ?? '') : column.type === 'checkbox' ? (value ? 'Oui' : 'Non') : column.type === 'date' ? dayLabel(value as string) : String(value);
+	return (
+		<span className='k1-prop' title={column.name}>
+			<span className='muted'>{column.name}</span> {text}
+		</span>
+	);
 }
 
 export function LabelChips({ list, item }: { list: ListDetail; item: ListItem }) {
@@ -179,36 +205,70 @@ export function LabelChips({ list, item }: { list: ListDetail; item: ListItem })
 	) : null;
 }
 
-export function Card({ workspaceId, list, item, members, tall }: { workspaceId: string; list: ListDetail; item: ListItem; members: Map<string, Member>; tall?: boolean }) {
+export function Card({ workspaceId, list, item, members, tall, face = defaultCardFace() }: { workspaceId: string; list: ListDetail; item: ListItem; members: Map<string, Member>; tall?: boolean; face?: CardFace }) {
 	const priority = list.columns.find((c) => c.type === 'priority');
-	const prio = priority ? optionsOf(priority).find((o) => o.id === item.values[priority.id]) : undefined;
-	const who = people(list, item);
+	const prio = priority && !face.props.includes(priority.id) ? optionsOf(priority).find((o) => o.id === item.values[priority.id]) : undefined;
+	const who = face.members ? people(list, item) : [];
 	const complete = item.checks.total > 0 && item.checks.done === item.checks.total;
+	const title = (
+		<span className={`bs-card-title${item.done ? ' is-done' : ''}`}>
+			{item.icon && <span className='k1-card-icon'>{item.icon}</span>}
+			{item.title || <span className='muted'>Sans titre</span>}
+		</span>
+	);
+	// Bannière pleine carte façon Trello : le titre se pose sur l'image.
+	if (face.cover && item.cover && item.coverMode === 'full') {
+		const url = coverUrl(workspaceId, item.listId, item.cover);
+		return (
+			<span className={`k1-full${url ? ' has-image' : ''}${tall ? ' is-tall' : ''}`} style={{ background: url ? undefined : (coverFill(item.cover) ?? undefined) }}>
+				{url && <img src={url} alt='' loading='lazy' style={{ objectPosition: `50% ${item.coverY}%` }} />}
+				<span className='k1-full-body'>
+					{face.labels && <LabelChips list={list} item={item} />}
+					{title}
+					{item.template && <span className='k1-template-tag'>Modèle</span>}
+				</span>
+			</span>
+		);
+	}
 	return (
 		<>
-			<Cover workspaceId={workspaceId} item={item} tall={tall} />
+			{face.cover && <Cover workspaceId={workspaceId} item={item} tall={tall} />}
 			<span className='bs-card-body'>
-				<LabelChips list={list} item={item} />
-				<span className={`bs-card-title${item.done ? ' is-done' : ''}`}>{item.title || <span className='muted'>Sans titre</span>}</span>
+				{face.labels && <LabelChips list={list} item={item} />}
+				{title}
+				{face.props.length > 0 && (
+					<span className='k1-props'>
+						{face.props.map((id) => {
+							const column = list.columns.find((c) => c.id === id);
+							return column ? <PropChip key={id} column={column} value={item.values[id]} members={members} /> : null;
+						})}
+					</span>
+				)}
 				<span className='bs-badges'>
-					<DuePill item={item} />
+					{item.template && <span className='k1-template-tag'>Modèle</span>}
+					{face.dates && <DuePill item={item} />}
 					{prio && <Pill option={prio} />}
-					{item.checks.total > 0 && (
+					{face.counts && item.estimate !== null && (
+						<span className='bs-badge' title='Estimation'>
+							{item.estimate} {item.estimateUnit === 'h' ? 'h' : 'pts'}
+						</span>
+					)}
+					{face.checklist && item.checks.total > 0 && (
 						<span className={`bs-badge${complete ? ' is-complete' : ''}`} title='Checklist'>
 							<Icon name='check' size={12} /> {item.checks.done}/{item.checks.total}
 						</span>
 					)}
-					{item.comments > 0 && (
+					{face.counts && item.comments > 0 && (
 						<span className='bs-badge' title='Commentaires'>
 							<Icon name='chat' size={12} /> {item.comments}
 						</span>
 					)}
-					{item.attachments > 0 && (
+					{face.counts && item.attachments > 0 && (
 						<span className='bs-badge' title='Pièces jointes'>
 							<Icon name='paperclip' size={12} /> {item.attachments}
 						</span>
 					)}
-					{item.pageId && (
+					{face.counts && item.pageId && (
 						<span className='bs-badge' title='Document'>
 							<Icon name='file' size={12} />
 						</span>
@@ -271,10 +331,45 @@ function QuickAdd({ label, onAdd }: { label: string; onAdd: (title: string) => v
 	);
 }
 
-export function Board({ workspaceId, list, column, items, members, onPatch, onAdd, onOpen }: ViewProps & { column: ListColumn }) {
+const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+// Raccourcis Trello sur la carte survolée ou ciblée : Entrée, Espace, D, L, C.
+function useCardKeys(list: ListDetail, myId: string, onPatch: ViewProps['onPatch'], onOpen: ViewProps['onOpen']) {
+	const hovered = useRef<string | null>(null);
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.metaKey || e.ctrlKey || e.altKey || typing(e.target) || document.querySelector('.k1-panel, .popover, dialog[open]')) {
+				return;
+			}
+			const focused = document.activeElement instanceof HTMLElement ? document.activeElement.closest<HTMLElement>('[data-card]')?.dataset.card : undefined;
+			const item = list.items.find((i) => i.id === (focused ?? hovered.current));
+			if (!item) {
+				return;
+			}
+			const key = e.key.toLowerCase();
+			if (key === 'enter') {
+				onOpen(item.id);
+			} else if (key === ' ' && list.canEdit) {
+				onPatch(item, { members: item.members.includes(myId) ? item.members.filter((m) => m !== myId) : [...item.members, myId] });
+			} else if (key === 'd' || key === 'l' || key === 'c') {
+				onOpen(item.id, key === 'd' ? 'dates' : key === 'l' ? 'labels' : 'checklist');
+			} else {
+				return;
+			}
+			e.preventDefault();
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [list, myId]);
+	return { onMouseEnter: (id: string) => (hovered.current = id), onMouseLeave: () => (hovered.current = null) };
+}
+
+export function Board({ workspaceId, list, column, items, members, myId, face, onPatch, onAdd, onOpen, onFromTemplate }: ViewProps & { column: ListColumn }) {
 	const [drag, setDrag] = useState<string | null>(null);
 	const [over, setOver] = useState<string | null>(null);
 	const editable = list.canEdit;
+	const keys = useCardKeys(list, myId, onPatch, onOpen);
+	const templates = list.items.filter((i) => i.template);
 	const options = optionsOf(column);
 	const lanes = [...options.map((o) => ({ key: o.id, option: o })), { key: '', option: null }];
 
@@ -322,9 +417,12 @@ export function Board({ workspaceId, list, column, items, members, onPatch, onAd
 							{laneItems.map((item) => (
 								<article
 									key={item.id}
-									className={`bs-card${drag === item.id ? ' is-dragging' : ''}`}
+									className={`bs-card${drag === item.id ? ' is-dragging' : ''}${face.cover && item.cover && item.coverMode === 'full' ? ' is-full' : ''}`}
 									draggable={editable}
 									tabIndex={0}
+									data-card={item.id}
+									onMouseEnter={() => keys.onMouseEnter(item.id)}
+									onMouseLeave={keys.onMouseLeave}
 									onDragStart={(e) => {
 										e.dataTransfer.effectAllowed = 'move';
 										e.dataTransfer.setData('text/plain', item.id);
@@ -340,13 +438,40 @@ export function Board({ workspaceId, list, column, items, members, onPatch, onAd
 										drop(key, item);
 									}}
 									onClick={() => onOpen(item.id)}
-									onKeyDown={(e) => e.key === 'Enter' && onOpen(item.id)}
 								>
-									<Card workspaceId={workspaceId} list={list} item={item} members={members} />
+									<Card workspaceId={workspaceId} list={list} item={item} members={members} face={face} />
 								</article>
 							))}
 						</div>
-						{editable && <QuickAdd label='Ajouter une carte' onAdd={(title) => void onAdd(key ? { [column.id]: key } : {}, title)} />}
+						{editable && (
+							<div className='k1-lane-foot'>
+								<QuickAdd label='Ajouter une carte' onAdd={(title) => void onAdd(key ? { [column.id]: key } : {}, title)} />
+								{templates.length > 0 && (
+									<MenuButton label={<Icon name='copy' size={14} />} className='icon-btn icon-btn-sm k1-from-template'>
+										{(close) => (
+											<>
+												<p className='lst-menu-title'>Créer depuis un modèle</p>
+												{templates.map((t) => (
+													<button
+														key={t.id}
+														type='button'
+														role='menuitem'
+														className='menu-item'
+														onClick={() => {
+															close();
+															onFromTemplate(t, key ? { [column.id]: key } : {});
+														}}
+													>
+														{t.icon && <span>{t.icon}</span>}
+														<span className='ellipsis'>{t.title || 'Sans titre'}</span>
+													</button>
+												))}
+											</>
+										)}
+									</MenuButton>
+								)}
+							</div>
+						)}
 					</section>
 				);
 			})}
@@ -455,12 +580,21 @@ export function CalendarView({ list, items, field, onPatch, onAdd, onOpen }: Vie
 	);
 }
 
-export function GalleryView({ workspaceId, list, items, members, onAdd, onOpen }: ViewProps) {
+export function GalleryView({ workspaceId, list, items, members, myId, face, onPatch, onAdd, onOpen }: ViewProps) {
+	const keys = useCardKeys(list, myId, onPatch, onOpen);
 	return (
 		<div className='bs-gallery'>
 			{items.map((item) => (
-				<button key={item.id} type='button' className='bs-card bs-gallery-card' onClick={() => onOpen(item.id)}>
-					<Card workspaceId={workspaceId} list={list} item={item} members={members} tall />
+				<button
+					key={item.id}
+					type='button'
+					className={`bs-card bs-gallery-card${face.cover && item.cover && item.coverMode === 'full' ? ' is-full' : ''}`}
+					data-card={item.id}
+					onMouseEnter={() => keys.onMouseEnter(item.id)}
+					onMouseLeave={keys.onMouseLeave}
+					onClick={() => onOpen(item.id)}
+				>
+					<Card workspaceId={workspaceId} list={list} item={item} members={members} face={face} tall />
 				</button>
 			))}
 			{list.canEdit && (
