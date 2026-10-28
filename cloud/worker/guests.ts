@@ -39,6 +39,7 @@ const GUEST_ROUTES: Array<[string, RegExp]> = [
 	['POST', /^\/voice\/(join|leave|session|tracks|diag)$/],
 	['PUT', /^\/voice\/(renegotiate|tracks\/close)$/],
 	['GET', /^\/ws$/],
+	['GET', /^\/emojis$/],
 	['POST', new RegExp(`^/channels/${ID}/ai/catchup$`)],
 	['POST', /^\/messages\/\d+\/ai\/(translate|summary|reply|thread-summary)$/],
 	['POST', /^\/ai\/ask$/],
@@ -59,7 +60,7 @@ export function guestAllowed(method: string, rest: string, guestId: string): boo
 }
 
 // Compte invité : son profil et les routes d'espace, filtrées ensuite par `guestAllowed`.
-const GUEST_ACCOUNT_RE = /^\/api\/(me|me\/profile|me\/avatar|ai\/rewrite|avatars\/[^/]+\/[^/]+|workspace-logos\/[^/]+\/[^/]+|w\/.+)$/;
+const GUEST_ACCOUNT_RE = /^\/api\/(me|me\/profile|me\/avatar|ai\/rewrite|avatars\/[^/]+\/[^/]+|workspace-logos\/[^/]+\/[^/]+|emojis\/[^/]+\/[^/]+|w\/.+)$/;
 
 export const guestAccountAllowed = (path: string) => GUEST_ACCOUNT_RE.test(path);
 

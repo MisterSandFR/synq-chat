@@ -9,6 +9,7 @@ import { AI_REPLY_EVENT, type AiReplyDetail } from '../ai/parse';
 import { errorText } from '../api';
 import { Avatar, Icon } from '../ui';
 import { EmojiPicker, rememberEmoji } from './chat/EmojiPicker';
+import { searchCustom } from './emojis/customEmojis';
 import { FormatBar } from './chat/FormatBar';
 import { applyFormat, type FormatKind } from './chat/format';
 import { EphemeralNotes, SlashHint, SlashMenu } from './commands/SlashMenu';
@@ -33,7 +34,7 @@ type Props = {
 	onTyping: () => void;
 };
 
-type Suggestion = { key: string; label: string; insert: string; avatar?: { name: string; url: string | null }; glyph?: string };
+type Suggestion = { key: string; label: string; insert: string; avatar?: { name: string; url: string | null }; glyph?: string; image?: string };
 
 const TYPING_EVERY = 3000;
 const TRIGGER_RE = /(^|\s)([@#])([\p{L}\p{N}_ -]{0,32})$/u;
@@ -118,7 +119,8 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 			return [];
 		}
 		if (trigger.sigil === ':') {
-			return searchEmojis(trigger.query, 8).map((e) => ({ key: e.name, label: `:${e.name}:`, insert: `${e.char} `, glyph: e.char }));
+			const custom = searchCustom(lookup.emojis, trigger.query, 8).map((e) => ({ key: `c:${e.name}`, label: `:${e.name}:`, insert: `:${e.name}: `, image: e.url }));
+			return [...custom, ...searchEmojis(trigger.query, 8).map((e) => ({ key: e.name, label: `:${e.name}:`, insert: `${e.char} `, glyph: e.char }))].slice(0, 8);
 		}
 		if (trigger.sigil === '@') {
 			return [...lookup.members.values()]
@@ -144,8 +146,8 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 		if (!trigger) {
 			return;
 		}
-		if (suggestion.glyph) {
-			rememberEmoji(suggestion.glyph);
+		if (suggestion.glyph || suggestion.image) {
+			rememberEmoji(suggestion.glyph ?? suggestion.label);
 		}
 		const next = text.slice(0, trigger.start) + suggestion.insert + text.slice(caret);
 		const position = trigger.start + suggestion.insert.length;
@@ -304,6 +306,8 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 							>
 								{s.avatar ? (
 									<Avatar name={s.avatar.name} url={s.avatar.url} size={24} />
+								) : s.image ? (
+									<img className='emoji-custom' src={s.image} alt='' />
 								) : s.glyph ? (
 									<span className='emoji-glyph'>{s.glyph}</span>
 								) : (
@@ -422,6 +426,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 						{picker && (
 							<EmojiPicker
 								anchor={picker}
+								custom={lookup.emojis}
 								onClose={() => setPicker(null)}
 								onPick={(char) => {
 									insertEmoji(char);

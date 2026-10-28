@@ -1,4 +1,5 @@
 import { emojiByName } from '../../../shared/emoji';
+import { CUSTOM_SHORTCODE_RE } from '../../../shared/emojis';
 
 export type Block =
 	| { kind: 'p'; text: string }
@@ -118,7 +119,11 @@ export const stripMarkdown = (text: string) => withEmoji(text).replace(/```|\*\*
 const PICTO_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|[\u{1F3FB}-\u{1F3FF}️‍⃣])+$/u;
 
 // Message fait seulement d'emojis : affiché en grand.
-export function emojiOnly(body: string): boolean {
-	const flat = withEmoji(body).replace(/\s+/g, '');
+export function emojiOnly(body: string, custom?: ReadonlyMap<string, unknown>): boolean {
+	const rest = custom ? body.replace(CUSTOM_SHORTCODE_RE, (raw, name: string) => (custom.has(name) ? '' : raw)) : body;
+	const flat = withEmoji(rest).replace(/\s+/g, '');
+	if (rest !== body && !flat) {
+		return true;
+	}
 	return flat.length > 0 && flat.length <= 40 && PICTO_RE.test(flat);
 }

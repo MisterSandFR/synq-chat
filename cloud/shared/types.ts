@@ -231,7 +231,8 @@ export type ServerEvent =
 	| { t: 'call_ring'; channelId: string; by: string }
 	| { t: 'calendar_reminder'; reminder: CalendarReminder }
 	| { t: 'mail_assigned'; mailboxId: string; threadId: string; subject: string; by: string }
-	| { t: 'event_card'; eventId: string };
+	| { t: 'event_card'; eventId: string }
+	| { t: 'emojis_changed' };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

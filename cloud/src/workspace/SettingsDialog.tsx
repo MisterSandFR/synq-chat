@@ -8,6 +8,7 @@ import { api, errorText, upload } from '../api';
 import { navigate } from '../router';
 import { Avatar, Dialog, Icon, SpaceLogo, useDismiss, type IconName } from '../ui';
 import { ChannelPermissions } from './categories/OverridesEditor';
+import { EmojisTab } from './emojis/EmojisTab';
 import { CommandsTab } from './commands/CommandsSettings';
 import { memberColor, memberGrades, topOf } from './grades';
 import { AuditTab } from './settings/AuditTab';
@@ -17,7 +18,7 @@ import { Swatches } from './settings/Swatches';
 import { WebhooksTab } from './rc/WebhooksTab';
 import './settings/settings.css';
 
-type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'mail' | 'audit';
+type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'mail' | 'audit' | 'emojis';
 
 type Props = {
 	open: boolean;
@@ -74,6 +75,7 @@ function SettingsShell({ info, channels, myId, onChanged, onClose }: Omit<Props,
 			[
 				{ key: 'space', label: 'Vue d’ensemble', icon: 'settings', allowed: true },
 				{ key: 'channels', label: 'Salons', icon: 'hash', allowed: has(info.perms, P.MANAGE_CHANNELS) },
+				{ key: 'emojis', label: 'Emojis', icon: 'smile', allowed: has(info.perms, P.MANAGE_EMOJIS) },
 			],
 		],
 		[
@@ -151,6 +153,7 @@ function SettingsShell({ info, channels, myId, onChanged, onClose }: Omit<Props,
 					{current.key === 'grades' && <GradesTab info={info} myId={myId} onChanged={onChanged} />}
 					{current.key === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
 					{current.key === 'invites' && <InvitesTab workspaceId={info.id} />}
+					{current.key === 'emojis' && <EmojisTab info={info} />}
 					{current.key === 'commands' && <CommandsTab workspaceId={info.id} />}
 					{current.key === 'webhooks' && <WebhooksTab workspaceId={info.id} />}
 					{current.key === 'mail' && <MailTab info={info} />}

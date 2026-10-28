@@ -29,11 +29,12 @@ export const P = {
 	MAIL_VIEW: 1 << 26,
 	MAIL_REPLY: 1 << 27,
 	MANAGE_MAIL: 1 << 28,
+	MANAGE_EMOJIS: 1 << 29,
 } as const;
 
 export type PermKey = keyof typeof P;
 
-export const ALL_PERMS = (1 << 29) - 1;
+export const ALL_PERMS = (1 << 30) - 1;
 
 export const DEFAULT_GRADE = 'default';
 export const ADMIN_GRADE = 'admin';
@@ -73,6 +74,7 @@ export const PERMISSIONS: Array<{ key: PermKey; label: string; hint: string; gro
 	{ key: 'VIEW_EVENTS', label: 'Voir le calendrier', hint: 'Voir les événements de l’espace.', group: 'Espace', channel: false },
 	{ key: 'CREATE_EVENTS', label: 'Créer des événements', hint: 'Créer des événements et modifier les siens.', group: 'Espace', channel: false },
 	{ key: 'MANAGE_EVENTS', label: 'Gérer les événements', hint: 'Modifier et supprimer les événements des autres.', group: 'Espace', channel: false },
+	{ key: 'MANAGE_EMOJIS', label: 'Gérer les emojis', hint: 'Ajouter, renommer et supprimer les emojis de l’espace.', group: 'Espace', channel: false },
 ];
 
 export type Override = { allow: number; deny: number };

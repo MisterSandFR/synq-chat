@@ -2382,7 +2382,7 @@ export class Workspace extends DurableObject<Env> {
 
 	// Évènements d'espace transmis à un invité : liste blanche.
 	private guestHears(userId: string, event: ServerEvent): boolean {
-		if (event.t === 'members_changed' || event.t === 'workspace_deleted') {
+		if (event.t === 'members_changed' || event.t === 'workspace_deleted' || event.t === 'emojis_changed') {
 			return true;
 		}
 		return event.t === 'presence' && this.guestContacts(userId).includes(event.userId);
@@ -2465,5 +2465,10 @@ export class Workspace extends DurableObject<Env> {
 			)
 			.toArray()
 			.map(toMessage);
+	}
+
+	// Emojis d'espace : la liste vit dans D1, le client la relit.
+	emojisChanged(): void {
+		this.broadcast({ t: 'emojis_changed' });
 	}
 }

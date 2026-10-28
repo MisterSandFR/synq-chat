@@ -42,6 +42,9 @@ const RULES: Rule[] = [
 	rule('DELETE', /^\/dms\/[^/]+\/guests\/([^/]+)$/, 'guest.revoke', 'guest'),
 	rule('PUT', /^\/mail-sharers$/, 'mail.sharers', 'mail'),
 	rule('DELETE', /^\/mail-boxes\/([^/]+)$/, 'mail.unshare', 'mail'),
+	rule('POST', /^\/emojis$/, 'emoji.create', 'emoji'),
+	rule('PATCH', /^\/emojis\/([^/]+)$/, 'emoji.rename', 'emoji'),
+	rule('DELETE', /^\/emojis\/([^/]+)$/, 'emoji.delete', 'emoji'),
 ];
 
 export type AuditInput = Omit<AuditEntry, 'id' | 'at'>;

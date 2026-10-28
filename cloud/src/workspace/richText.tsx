@@ -4,12 +4,14 @@ import { emojiByName } from '../../shared/emoji';
 import type { Channel, Member } from '../../shared/types';
 import { INLINE_RE, parseBlocks, stripMarkdown } from './chat/markdown';
 import './chat/chat.css';
+import { CustomEmojiImg, type EmojiMap } from './emojis/customEmojis';
 
 export type Lookup = {
 	members: Map<string, Member>;
 	channels: Channel[];
 	myId: string;
 	openChannel: (id: string) => void;
+	emojis?: EmojiMap;
 };
 
 // Uniquement des éléments React : jamais de HTML brut.
@@ -24,7 +26,8 @@ function inline(text: string, lookup: Lookup, key: string): ReactNode[] {
 		const k = `${key}.${index}`;
 		const [raw, userId, channelId, code, label, href, url, bold, strike, star, under, shortcode] = match;
 		const emphasis = star ?? under;
-		const emoji = shortcode ? emojiByName.get(shortcode) : undefined;
+		const custom = shortcode ? lookup.emojis?.get(shortcode) : undefined;
+		const emoji = shortcode && !custom ? emojiByName.get(shortcode) : undefined;
 		if (userId) {
 			const member = lookup.members.get(userId);
 			out.push(
@@ -65,6 +68,8 @@ function inline(text: string, lookup: Lookup, key: string): ReactNode[] {
 			out.push(<del key={k}>{inline(strike, lookup, k)}</del>);
 		} else if (emphasis) {
 			out.push(<em key={k}>{inline(emphasis, lookup, k)}</em>);
+		} else if (custom) {
+			out.push(<CustomEmojiImg key={k} emoji={custom} />);
 		} else if (emoji) {
 			out.push(
 				<span key={k} className='emoji' title={`:${emoji.name}:`}>

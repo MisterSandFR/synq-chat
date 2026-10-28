@@ -1,4 +1,4 @@
-export type AuditKind = 'workspace' | 'invite' | 'member' | 'grade' | 'channel' | 'category' | 'command' | 'webhook' | 'voice' | 'guest' | 'mail';
+export type AuditKind = 'workspace' | 'invite' | 'member' | 'grade' | 'channel' | 'category' | 'command' | 'webhook' | 'voice' | 'guest' | 'mail' | 'emoji';
 
 export interface AuditEntry {
 	id: number;
@@ -50,6 +50,9 @@ export const AUDIT_LABELS: Record<string, string> = {
 	'guest.revoke': 'a révoqué l’invitation externe',
 	'mail.sharers': 'a changé qui peut partager une boîte mail',
 	'mail.unshare': 'a retiré de l’espace la boîte mail',
+	'emoji.create': 'a ajouté l’emoji',
+	'emoji.rename': 'a renommé l’emoji',
+	'emoji.delete': 'a supprimé l’emoji',
 };
 
 export const AUDIT_KINDS: Array<{ id: AuditKind; label: string }> = [
@@ -64,4 +67,5 @@ export const AUDIT_KINDS: Array<{ id: AuditKind; label: string }> = [
 	{ id: 'webhook', label: 'Webhooks' },
 	{ id: 'voice', label: 'Vocal' },
 	{ id: 'mail', label: 'Mail' },
+	{ id: 'emoji', label: 'Emojis' },
 ];

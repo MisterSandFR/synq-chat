@@ -1,18 +1,26 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { EMOJIS, EMOJI_CATEGORIES, emojiByChar, searchEmojis, type Emoji } from '../../../shared/emoji';
+import { CUSTOM_REACTION_RE, type CustomEmoji } from '../../../shared/emojis';
 import { Icon, useDismiss } from '../../ui';
+import { CustomEmojiImg, customOf, searchCustom, type EmojiMap } from '../emojis/customEmojis';
 import './chat.css';
 
 const RECENT_KEY = 'synq_emoji_recent';
 const RECENT_MAX = 24;
 const MARGIN = 8;
 const RECENT = 'Récents';
+const SPACE = 'Cet espace';
+
+type Item = Emoji | CustomEmoji;
+
+const isCustom = (item: Item): item is CustomEmoji => !('char' in item);
+const valueOf = (item: Item) => (isCustom(item) ? `:${item.name}:` : item.char);
 
 export function recentEmojis(): string[] {
 	try {
 		const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as unknown;
-		return Array.isArray(list) ? list.filter((c): c is string => typeof c === 'string' && emojiByChar.has(c)).slice(0, RECENT_MAX) : [];
+		return Array.isArray(list) ? list.filter((c): c is string => typeof c === 'string' && (emojiByChar.has(c) || CUSTOM_REACTION_RE.test(c))).slice(0, RECENT_MAX) : [];
 	} catch {
 		return [];
 	}
@@ -28,17 +36,26 @@ export function rememberEmoji(char: string): void {
 
 const SECTIONS = EMOJI_CATEGORIES.map((category) => ({ category, emojis: EMOJIS.filter((e) => e.category === category) }));
 
-type Props = { anchor: DOMRect; onPick: (char: string) => void; onClose: () => void };
+// `custom` : emojis de l'espace, choisis sous la forme `:nom:`.
+type Props = { anchor: DOMRect; onPick: (char: string) => void; onClose: () => void; custom?: EmojiMap };
 
-export function EmojiPicker({ anchor, onPick, onClose }: Props) {
+export function EmojiPicker({ anchor, onPick, onClose, custom }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	const body = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState('');
-	const [hover, setHover] = useState<Emoji | null>(null);
+	const [hover, setHover] = useState<Item | null>(null);
 	const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-	const recents = useMemo(() => recentEmojis().flatMap((c) => emojiByChar.get(c) ?? []), []);
-	const results = useMemo(() => searchEmojis(query, 80), [query]);
-	const sections = recents.length ? [{ category: RECENT, emojis: recents }, ...SECTIONS] : SECTIONS;
+	const recents = useMemo(() => recentEmojis().flatMap((c): Item[] => {
+			const item = emojiByChar.get(c) ?? customOf(c, custom);
+			return item ? [item] : [];
+		}), [custom]);
+	const results = useMemo((): Item[] => [...searchCustom(custom, query, 40), ...searchEmojis(query, 80)], [query, custom]);
+	const space: Item[] = useMemo(() => [...(custom?.values() ?? [])], [custom]);
+	const sections: Array<{ category: string; emojis: Item[] }> = [
+		...(space.length ? [{ category: SPACE, emojis: space }] : []),
+		...(recents.length ? [{ category: RECENT, emojis: recents }] : []),
+		...SECTIONS,
+	];
 	useDismiss(ref, true, onClose);
 
 	// Sous l'ancre si la place le permet, sinon au-dessus.
@@ -54,16 +71,16 @@ export function EmojiPicker({ anchor, onPick, onClose }: Props) {
 		setPos({ left, top });
 	}, [anchor]);
 
-	const pick = (emoji: Emoji) => {
-		rememberEmoji(emoji.char);
-		onPick(emoji.char);
+	const pick = (emoji: Item) => {
+		rememberEmoji(valueOf(emoji));
+		onPick(valueOf(emoji));
 	};
 
-	const grid = (list: Emoji[]) => (
+	const grid = (list: Item[]) => (
 		<div className='emoji-grid'>
 			{list.map((emoji) => (
 				<button
-					key={emoji.char}
+					key={valueOf(emoji)}
 					type='button'
 					className='emoji-cell'
 					title={`:${emoji.name}:`}
@@ -72,7 +89,7 @@ export function EmojiPicker({ anchor, onPick, onClose }: Props) {
 					onFocus={() => setHover(emoji)}
 					onClick={() => pick(emoji)}
 				>
-					{emoji.char}
+					{isCustom(emoji) ? <CustomEmojiImg emoji={emoji} /> : emoji.char}
 				</button>
 			))}
 		</div>
@@ -108,7 +125,7 @@ export function EmojiPicker({ anchor, onPick, onClose }: Props) {
 							aria-label={category}
 							onClick={() => body.current?.querySelector(`[data-category="${category}"]`)?.scrollIntoView({ block: 'start' })}
 						>
-							{category === RECENT ? <Icon name='clock' size={16} /> : emojis[0]?.char}
+							{category === RECENT ? <Icon name='clock' size={16} /> : emojis[0] && isCustom(emojis[0]) ? <CustomEmojiImg emoji={emojis[0]} /> : emojis[0]?.char}
 						</button>
 					))}
 				</nav>
@@ -132,7 +149,7 @@ export function EmojiPicker({ anchor, onPick, onClose }: Props) {
 			<footer className='emoji-foot'>
 				{hover ? (
 					<>
-						<span className='emoji-foot-glyph'>{hover.char}</span>
+						<span className='emoji-foot-glyph'>{isCustom(hover) ? <CustomEmojiImg emoji={hover} /> : hover.char}</span>
 						<span className='ellipsis'>:{hover.name}:</span>
 					</>
 				) : (

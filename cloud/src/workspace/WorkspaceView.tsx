@@ -31,6 +31,7 @@ import { openNotification, useBrowserNotifications } from './notifications/brows
 import { DropZone } from './media/DropZone';
 import { PinsPanel } from './chat/PinsPanel';
 import { ResizeHandle, useResizable } from './resizable';
+import { useCustomEmojis } from './emojis/customEmojis';
 import type { Lookup } from './richText';
 import { SearchPalette } from './SearchPalette';
 import { CreateChannelDialog, SettingsDialog } from './SettingsDialog';
@@ -154,7 +155,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 		[workspaceId],
 	);
 
-	const lookup: Lookup = useMemo(() => ({ members, channels: rooms, myId, openChannel }), [members, rooms, myId, openChannel]);
+	const emojis = useCustomEmojis(workspaceId);
+	const lookup: Lookup = useMemo(() => ({ members, channels: rooms, myId, openChannel, emojis }), [members, rooms, myId, openChannel, emojis]);
 
 	const openMessage = useCallback(
 		(cid: string, id: number) => {

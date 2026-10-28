@@ -1,6 +1,7 @@
 import type { Reaction } from '../../../shared/chat';
 import { emojiByChar } from '../../../shared/emoji';
 import { Icon } from '../../ui';
+import { CustomEmojiImg, customOf } from '../emojis/customEmojis';
 import type { Lookup } from '../richText';
 import './chat.css';
 
@@ -36,6 +37,7 @@ export function Reactions({ reactions, lookup, canReact, pickerOpen, onToggle, o
 			{reactions.map((reaction) => {
 				const mine = reaction.users.includes(lookup.myId);
 				const label = reactionLabel(reaction, lookup);
+				const custom = customOf(reaction.emoji, lookup.emojis);
 				return (
 					<button
 						key={reaction.emoji}
@@ -47,7 +49,7 @@ export function Reactions({ reactions, lookup, canReact, pickerOpen, onToggle, o
 						disabled={!mine && !canReact}
 						onClick={() => onToggle(reaction.emoji)}
 					>
-						<span className='reaction-emoji'>{reaction.emoji}</span>
+						<span className='reaction-emoji'>{custom ? <CustomEmojiImg emoji={custom} /> : reaction.emoji}</span>
 						<span>{reaction.users.length}</span>
 					</button>
 				);
