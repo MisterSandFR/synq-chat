@@ -65,8 +65,8 @@ export function Attachments({ messageId, attachments }: { messageId: string; att
 			{pdf && (
 				<Dialog open onClose={() => setPdf(null)} title={pdf.name} wide>
 					<div className='mail-pdf'>
-						{/* Type forcé application/pdf et nosniff côté serveur : le lecteur du navigateur a besoin de scripts. */}
-						<iframe title={pdf.name} src={`${href(pdf)}?inline=1`} sandbox='allow-scripts allow-same-origin' referrerPolicy='no-referrer' />
+						{/* Sans sandbox : Chrome bloque sa visionneuse PDF dans une iframe sandboxée. Type forcé et nosniff côté serveur. */}
+						<iframe title={pdf.name} src={`${href(pdf)}?inline=1`} referrerPolicy='no-referrer' />
 						<div className='mail-form-actions'>
 							<a className='btn' href={href(pdf)} download={pdf.name}>
 								<Icon name='download' size={16} />
