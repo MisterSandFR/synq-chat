@@ -593,3 +593,16 @@ export async function sendReminders(env: Env, now: number): Promise<number> {
 	}
 	return sent;
 }
+
+// Qui voit l'événement : créateur, invités et membres de son espace, hors invités externes.
+export async function eventAudience(db: D1Database, id: string): Promise<string[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT created_by AS id FROM events WHERE id = ?1
+			UNION SELECT user_id FROM event_attendees WHERE event_id = ?1
+			UNION SELECT m.user_id FROM members m JOIN events e ON e.workspace_id = m.workspace_id WHERE e.id = ?1 AND m.role != 'guest'`,
+		)
+		.bind(id)
+		.all<{ id: string }>();
+	return results.map((row) => row.id);
+}

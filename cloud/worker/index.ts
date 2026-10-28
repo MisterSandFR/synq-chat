@@ -5,6 +5,7 @@ import { sendScheduled } from './routes/mail';
 
 export { Workspace } from './workspace';
 export { Mailbox } from './mail/mailbox';
+export { UserHub } from './user-hub';
 
 const HASHED = /^\/assets\//;
 

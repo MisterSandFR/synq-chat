@@ -887,6 +887,13 @@ app.get('/w/:wid/ws', async (c) => {
 	return stub(c).fetch(new Request(c.req.raw, { headers }));
 });
 
+app.get('/me/ws', async (c) => {
+	if (c.req.header('Upgrade') !== 'websocket') {
+		return c.text('WebSocket attendu', 426);
+	}
+	return c.env.USER_HUB.getByName(c.get('user').id).fetch(c.req.raw);
+});
+
 app.all('*', (c) => fail(c, 404, 'Route inconnue'));
 
 export default app;

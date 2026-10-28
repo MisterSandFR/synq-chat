@@ -5,6 +5,7 @@ import type { Me, WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
 import { readPref, writePref } from '../router';
 import { Icon } from '../ui';
+import { useUserEvents } from '../userEvents';
 import { ResizeHandle, useResizable } from '../workspace/resizable';
 import { addDays, dayKey, fmtDay, fmtMonth, fmtShort, fmtTime, groupByDay, HOUR, sameDay, startOfDay, startOfWeek, WEEKDAYS, type Placed } from './dates';
 import { EventDialog } from './EventDialog';
@@ -77,6 +78,14 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 	useEffect(() => {
 		void load();
 	}, [load]);
+
+	// Changement fait ailleurs (autre personne, autre onglet) : relecture groupée.
+	const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
+	useEffect(() => () => clearTimeout(pending.current), []);
+	useUserEvents(() => {
+		clearTimeout(pending.current);
+		pending.current = setTimeout(() => void load(), 250);
+	});
 
 	const accents = useMemo(() => new Map(workspaces.map((w) => [w.id, w])), [workspaces]);
 

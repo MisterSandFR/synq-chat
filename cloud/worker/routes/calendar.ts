@@ -1,9 +1,13 @@
 import { Hono } from 'hono';
 
 import { CALENDAR_LIMITS, DAY, type EventInput } from '../../shared/calendar';
-import { createEvent, deleteEvent, feedIcs, feedStatus, getEvent, importIcs, listEvents, listPeople, respond, revokeFeed, rotateFeed, updateEvent } from '../calendar';
+import { createEvent, deleteEvent, eventAudience, feedIcs, feedStatus, getEvent, importIcs, listEvents, listPeople, respond, revokeFeed, rotateFeed, updateEvent } from '../calendar';
 import { eventWorkspace, touchCards } from '../event-cards';
-import { fail, readJson, unwrap, type AppEnv } from '../http';
+import { fail, readJson, unwrap, type AppEnv, type Ctx } from '../http';
+import { notifyUsers } from '../user-hub';
+
+// Calendriers ouverts rafraîchis après la réponse ; audience lue avant une suppression.
+export const calendarChanged = (c: Ctx, users: string[]) => c.executionCtx.waitUntil(notifyUsers(c.env, users, { t: 'calendar' }));
 
 // Monté avant le middleware de session : un agenda externe s'abonne sans cookie.
 export const icsRoutes = new Hono<AppEnv>();
@@ -42,15 +46,22 @@ calendarRoutes.get('/calendar/events', async (c) => {
 
 calendarRoutes.post('/calendar/events', async (c) => {
 	const created = await createEvent(c.env, c.get('user').id, await readJson<EventInput>(c));
-	return created.ok ? c.json(created.value, 201) : fail(c, created.status, created.error);
+	if (!created.ok) {
+		return fail(c, created.status, created.error);
+	}
+	calendarChanged(c, await eventAudience(c.env.DB, created.value.id));
+	return c.json(created.value, 201);
 });
 
 calendarRoutes.get('/calendar/events/:id', async (c) => unwrap(c, await getEvent(c.env.DB, c.get('user').id, c.req.param('id'))));
 
 calendarRoutes.patch('/calendar/events/:id', async (c) => {
+	const before = await eventAudience(c.env.DB, c.req.param('id'));
 	const updated = await updateEvent(c.env, c.get('user').id, c.req.param('id'), await readJson<EventInput>(c));
 	if (updated.ok) {
 		await touchCards(c.env, updated.value.id, updated.value.workspaceId);
+		// Invités retirés ou espace changé : l'ancienne audience doit aussi relire.
+		calendarChanged(c, [...before, ...(await eventAudience(c.env.DB, updated.value.id))]);
 	}
 	return unwrap(c, updated);
 });
@@ -63,9 +74,11 @@ calendarRoutes.delete('/calendar/events/:id', async (c) => {
 		return fail(c, 400, 'Occurrence invalide');
 	}
 	const workspaceId = await eventWorkspace(c.env.DB, c.req.param('id'));
+	const audience = await eventAudience(c.env.DB, c.req.param('id'));
 	const deleted = await deleteEvent(c.env.DB, c.get('user').id, c.req.param('id'), occurrence);
 	if (deleted.ok) {
 		await touchCards(c.env, c.req.param('id'), workspaceId);
+		calendarChanged(c, audience);
 	}
 	return unwrap(c, deleted);
 });
@@ -75,6 +88,7 @@ calendarRoutes.put('/calendar/events/:id/response', async (c) => {
 	const answered = await respond(c.env.DB, c.get('user').id, c.req.param('id'), response);
 	if (answered.ok) {
 		await touchCards(c.env, c.req.param('id'), await eventWorkspace(c.env.DB, c.req.param('id')));
+		calendarChanged(c, await eventAudience(c.env.DB, c.req.param('id')));
 	}
 	return unwrap(c, answered);
 });
@@ -105,5 +119,13 @@ calendarRoutes.post('/calendar/import', async (c) => {
 	if (!/BEGIN:VCALENDAR/i.test(source)) {
 		return fail(c, 400, 'Fichier ICS invalide');
 	}
-	return unwrap(c, await importIcs(c.env, c.get('user').id, source, c.req.query('workspace') || null, c.req.query('tz') ?? 'UTC'));
+	const workspaceId = c.req.query('workspace') || null;
+	const imported = await importIcs(c.env, c.get('user').id, source, workspaceId, c.req.query('tz') ?? 'UTC');
+	if (imported.ok) {
+		const { results } = workspaceId
+			? await c.env.DB.prepare("SELECT user_id FROM members WHERE workspace_id = ? AND role != 'guest'").bind(workspaceId).all<{ user_id: string }>()
+			: { results: [] };
+		calendarChanged(c, [c.get('user').id, ...results.map((row) => row.user_id)]);
+	}
+	return unwrap(c, imported);
 });

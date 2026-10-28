@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 
-import { deleteEvent } from '../calendar';
+import { deleteEvent, eventAudience } from '../calendar';
 import { cardEvent, cardIcs, readCard } from '../event-cards';
 import { fail, readJson, stub, unwrap, type AppEnv } from '../http';
+import { calendarChanged } from './calendar';
 
 export const eventCardRoutes = new Hono<AppEnv>();
 
@@ -21,6 +22,9 @@ eventCardRoutes.post('/w/:wid/channels/:cid/event-cards', async (c) => {
 			await deleteEvent(c.env.DB, userId, event.id, null);
 		}
 		return fail(c, posted.status, posted.error);
+	}
+	if (created) {
+		calendarChanged(c, await eventAudience(c.env.DB, event.id));
 	}
 	return c.json(posted.value, 201);
 });
