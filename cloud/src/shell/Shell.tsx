@@ -64,7 +64,7 @@ export function Shell({ me, workspaceId, items, children }: Props) {
 	);
 }
 
-// Menu « Créer » : entrées d'espace (liste, canevas) puis espaces.
+// Menu « Créer » : entrées d'espace (page, liste) puis espaces.
 function SpaceMenu({ me, workspaceId }: { me: Me; workspaceId: string | null }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -197,8 +197,17 @@ function CreateMenu({ workspaceId, guest }: { workspaceId: string | null; guest:
 									<Icon name='file' size={18} />
 								</span>
 								<span className='create-text'>
-									<strong>Canevas</strong>
-									<span>Créer et partager du contenu</span>
+									<strong>Page</strong>
+									<span>Écrire et organiser à plusieurs</span>
+								</span>
+							</button>
+							<button type='button' role='menuitem' className='menu-item create-item' onClick={pick(() => navigate(`/w/${workspaceId}/canevas?modeles=1`))}>
+								<span className='create-tile create-tile-canvas'>
+									<Icon name='copy' size={18} />
+								</span>
+								<span className='create-text'>
+									<strong>Page depuis un modèle</strong>
+									<span>Compte-rendu, fiche projet, wiki</span>
 								</span>
 							</button>
 							<button type='button' role='menuitem' className='menu-item create-item' onClick={pick(() => navigate(`/w/${workspaceId}/listes/nouvelle`))}>
@@ -212,7 +221,7 @@ function CreateMenu({ workspaceId, guest }: { workspaceId: string | null; guest:
 							</button>
 							<div className='menu-sep' />
 							<button type='button' role='menuitem' className='menu-item' onClick={pick(() => navigate(`/w/${workspaceId}/canevas`))}>
-								<Icon name='file' size={16} /> Tous les canevas
+								<Icon name='file' size={16} /> Toutes les pages
 							</button>
 							<button type='button' role='menuitem' className='menu-item' onClick={pick(() => navigate(`/w/${workspaceId}/listes`))}>
 								<Icon name='list' size={16} /> Toutes les listes

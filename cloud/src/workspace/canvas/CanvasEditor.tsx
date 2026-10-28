@@ -18,7 +18,9 @@ import { errorText, upload } from '../../api';
 import { Floating } from '../../floating';
 import { Icon } from '../../ui';
 import { EmojiPicker } from '../chat/EmojiPicker';
-import { memberItems, slashExtension, suggestionRender, SuggestionMenu, type Block, type MenuItem, type MenuState } from './suggest';
+import { columnsContent, pageExtensions } from './blocks';
+import { createPage, usePages } from './pages';
+import { linkExtension, memberItems, pageItems, slashExtension, suggestionRender, SuggestionMenu, type Block, type MenuItem, type MenuState } from './suggest';
 import type { CanvasSync } from './sync';
 
 type Props = {
@@ -31,12 +33,14 @@ type Props = {
 	title: string;
 	onEditor: (editor: Editor | null) => void;
 	onError: (text: string) => void;
+	onComment?: (pending: { from: number; to: number; quote: string }) => void;
+	onOpenThread?: (thread: string) => void;
 };
 
 const plainNodes = (text: string): JSONContent[] =>
 	text.includes('\n') ? text.split('\n').map((line) => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] })) : [{ type: 'text', text }];
 
-export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title, onEditor, onError }: Props) {
+export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title, onEditor, onError, onComment, onOpenThread }: Props) {
 	const editable = meta.access === 'write';
 	const wrap = useRef<HTMLDivElement>(null);
 	const fileInput = useRef<HTMLInputElement>(null);
@@ -45,7 +49,20 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 	const membersRef = useRef(members);
 	membersRef.current = members;
 	const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
-	const actions = useRef({ image: () => fileInput.current?.click(), emoji: (rect: DOMRect) => setEmojiAt(rect) });
+	const [calloutAt, setCalloutAt] = useState<{ pos: number; rect: DOMRect } | null>(null);
+	const attachInput = useRef<HTMLInputElement>(null);
+	const pages = usePages(workspaceId);
+	const pagesRef = useRef(pages);
+	pagesRef.current = pages;
+	const threadRef = useRef(onOpenThread);
+	threadRef.current = onOpenThread;
+	const actions = useRef({ image: () => fileInput.current?.click(), emoji: (rect: DOMRect) => setEmojiAt(rect), attach: () => attachInput.current?.click() });
+	const linkable = (query: string) => pageItems((pagesRef.current ?? []).filter((p) => p.id !== meta.id), query);
+	const insertLink = (editor: Editor, range: Range, item: MenuItem) => {
+		if (item.kind === 'page') {
+			editor.chain().focus().insertContentAt(range, [{ type: 'pageLink', attrs: { id: item.page.id, label: item.page.title } }, { type: 'text', text: ' ' }]).run();
+		}
+	};
 
 	const setMenu = (next: MenuState | ((prev: MenuState) => MenuState)) =>
 		setMenuState((prev) => {
@@ -67,6 +84,24 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 		}
 	};
 
+	const uploadFile = async (editor: Editor, file: File) => {
+		try {
+			const res = await upload<{ url: string; name: string; size: number; type: string }>(`/w/${workspaceId}/canvases/${meta.id}/files?kind=file&name=${encodeURIComponent(file.name)}`, file);
+			editor.chain().focus().insertContent({ type: 'fileAttachment', attrs: { url: res.url, name: res.name, size: res.size, type: res.type } }).run();
+		} catch (error) {
+			onError(errorText(error));
+		}
+	};
+
+	const addSubpage = async (editor: Editor) => {
+		try {
+			const page = await createPage(workspaceId, { parentId: meta.id }, false);
+			editor.chain().focus().insertContent({ type: 'subpage', attrs: { id: page.id } }).run();
+		} catch (error) {
+			onError(errorText(error));
+		}
+	};
+
 	const blocks = (): Block[] => {
 		const chain = (editor: Editor, range: Range) => editor.chain().focus().deleteRange(range);
 		return [
@@ -82,6 +117,16 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 			{ id: 'hr', label: 'Séparateur', hint: 'Ligne horizontale', icon: 'minus', keywords: 'separateur divider', run: (e, r) => chain(e, r).setHorizontalRule().run() },
 			{ id: 'table', label: 'Tableau', hint: '3 × 3 avec en-tête', icon: null, mark: '⊞', keywords: 'table grille', run: (e, r) => chain(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
 			{ id: 'image', label: 'Image', hint: 'Depuis ton appareil', icon: 'image', keywords: 'photo image', run: (e, r) => (chain(e, r).run(), actions.current.image()) },
+			{ id: 'toggle', label: 'Bascule', hint: 'Contenu repliable', icon: 'chevron', keywords: 'toggle deplier replier', run: (e, r) => chain(e, r).insertContent({ type: 'toggle', attrs: { open: true }, content: [{ type: 'toggleSummary' }, { type: 'toggleBody', content: [{ type: 'paragraph' }] }] }).run() },
+			{ id: 'callout', label: 'Encadré', hint: 'Note mise en avant', icon: 'sparkle', keywords: 'callout note encadre', run: (e, r) => chain(e, r).insertContent({ type: 'callout', attrs: { emoji: '💡' }, content: [{ type: 'paragraph' }] }).run() },
+			{ id: 'cols2', label: '2 colonnes', hint: 'Blocs côte à côte', icon: null, mark: '▥', keywords: 'colonnes columns', run: (e, r) => chain(e, r).insertContent(columnsContent(2)).run() },
+			{ id: 'cols3', label: '3 colonnes', hint: 'Blocs côte à côte', icon: null, mark: '▥', keywords: 'colonnes columns', run: (e, r) => chain(e, r).insertContent(columnsContent(3)).run() },
+			{ id: 'toc', label: 'Table des matières', hint: 'Titres de la page', icon: 'list', keywords: 'sommaire toc matieres', run: (e, r) => chain(e, r).insertContent({ type: 'toc' }).run() },
+			{ id: 'bookmark', label: 'Signet', hint: 'Aperçu d’un lien web', icon: 'bookmark', keywords: 'signet lien bookmark web', run: (e, r) => chain(e, r).insertContent({ type: 'bookmark' }).run() },
+			{ id: 'file', label: 'Fichier', hint: 'Pièce jointe à télécharger', icon: 'paperclip', keywords: 'fichier piece jointe pdf', run: (e, r) => (chain(e, r).run(), actions.current.attach()) },
+			{ id: 'pagelink', label: 'Lien vers une page', hint: 'Ou tape [[', icon: 'link', keywords: 'page lien mention', run: (e, r) => chain(e, r).insertContent('[[').run() },
+			{ id: 'subpage', label: 'Sous-page', hint: 'Nouvelle page rangée ici', icon: 'file', keywords: 'sous page enfant', run: (e, r) => (chain(e, r).run(), void addSubpage(e)) },
+			{ id: 'database', label: 'Base intégrée', hint: 'Afficher une base dans la page', icon: 'list', keywords: 'base liste database tableau', run: (e, r) => chain(e, r).insertContent({ type: 'database' }).run() },
 			{ id: 'mention', label: 'Mention', hint: 'Citer un membre', icon: 'at', keywords: 'mention personne', run: (e, r) => chain(e, r).insertContent('@').run() },
 			{
 				id: 'emoji',
@@ -111,10 +156,12 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 				Mention.configure({
 					HTMLAttributes: { class: 'canvas-mention' },
 					suggestion: {
-						items: ({ query }) => memberItems(membersRef.current.values(), query),
+						items: ({ query }) => [...memberItems(membersRef.current.values(), query), ...(query ? linkable(query).slice(0, 4) : [])],
 						command: ({ editor: e, range, props }) => {
 							const item = props as unknown as MenuItem;
-							if (item.kind === 'member') {
+							if (item.kind === 'page') {
+								insertLink(e, range, item);
+							} else if (item.kind === 'member') {
 								e.chain().focus().insertContentAt(range, [{ type: 'mention', attrs: { id: item.member.id, label: item.member.name } }, { type: 'text', text: ' ' }]).run();
 							}
 						},
@@ -122,11 +169,20 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 					},
 				}),
 				slashExtension(blocks, suggestionRender('slash', setMenu, menuRef)),
+				linkExtension(linkable, suggestionRender('link', setMenu, menuRef), insertLink),
+				...pageExtensions(workspaceId, (pos, rect) => setCalloutAt({ pos, rect })),
 				Collaboration.configure({ document: doc }),
 				CollaborationCaret.configure({ provider: sync, user: me }),
 			],
 			editorProps: {
-				attributes: { class: 'canvas-prose', 'aria-label': 'Contenu du canevas' },
+				attributes: { class: 'canvas-prose', 'aria-label': 'Contenu de la page' },
+				handleClick: (_view, _pos, event) => {
+					const thread = (event.target as HTMLElement).closest?.('[data-thread]')?.getAttribute('data-thread');
+					if (thread) {
+						threadRef.current?.(thread);
+					}
+					return false;
+				},
 				handlePaste: (_view, event) => {
 					const file = [...(event.clipboardData?.files ?? [])].find((f) => f.type.startsWith('image/'));
 					if (!file || !editable || !editorRef.current) {
@@ -150,7 +206,29 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 	return (
 		<div className='canvas-doc' ref={wrap}>
 			<EditorContent editor={editor} />
-			{editor && editable && <SelectionBar editor={editor} wrap={wrap} title={title} />}
+			{editor && editable && <SelectionBar editor={editor} wrap={wrap} title={title} onComment={onComment} />}
+			{calloutAt && editor && (
+				<EmojiPicker
+					anchor={calloutAt.rect}
+					onPick={(char) => {
+						editor.view.dispatch(editor.state.tr.setNodeAttribute(calloutAt.pos, 'emoji', char));
+						setCalloutAt(null);
+					}}
+					onClose={() => setCalloutAt(null)}
+				/>
+			)}
+			<input
+				ref={attachInput}
+				type='file'
+				hidden
+				onChange={(e) => {
+					const file = e.target.files?.[0];
+					e.target.value = '';
+					if (file && editor) {
+						void uploadFile(editor, file);
+					}
+				}}
+			/>
 			{menu && <SuggestionMenu menu={menu} onHover={(index) => setMenu({ ...menu, index })} />}
 			{emojiAt && editor && (
 				<EmojiPicker
@@ -182,7 +260,7 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 type Box = { top: number; left: number; width: number; height: number };
 
 // Barre de mise en forme au-dessus de la sélection ; reste ouverte tant que la sélection existe (assistant IA compris).
-function SelectionBar({ editor, wrap, title }: { editor: Editor; wrap: RefObject<HTMLDivElement | null>; title: string }) {
+function SelectionBar({ editor, wrap, title, onComment }: { editor: Editor; wrap: RefObject<HTMLDivElement | null>; title: string; onComment?: Props['onComment'] }) {
 	const anchor = useRef<HTMLSpanElement>(null);
 	const aiSource = useRef<HTMLTextAreaElement>(null);
 	const range = useRef({ from: 0, to: 0 });
@@ -264,6 +342,7 @@ function SelectionBar({ editor, wrap, title }: { editor: Editor; wrap: RefObject
 						{tool('Citation', state.quote, () => editor.chain().focus().toggleBlockquote().run(), <Icon name='quote' size={16} />)}
 						{tool('Liste à puces', state.bullet, () => editor.chain().focus().toggleBulletList().run(), <Icon name='list' size={16} />)}
 						{tool('Cases à cocher', state.task, () => editor.chain().focus().toggleTaskList().run(), <Icon name='check' size={16} />)}
+						{onComment && tool('Commenter', false, () => onComment({ ...range.current, quote: state.text.slice(0, 300) }), <Icon name='chat' size={16} />)}
 						<span className='canvas-bar-sep' />
 						<textarea ref={aiSource} className='canvas-ai-source' value={state.text} readOnly hidden tabIndex={-1} aria-hidden />
 						<AiAssist
