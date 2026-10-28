@@ -5,6 +5,7 @@ import type { Channel, ChannelKind, WorkspaceDetail } from '../../../shared/type
 import { api, errorText } from '../../api';
 import { Dialog, Icon } from '../../ui';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
+import { AccessDialog } from '../grade-access/AccessDialog';
 import { ChannelPermissions, OverridesEditor } from './OverridesEditor';
 import { useCategories } from './useCategories';
 import './categories.css';
@@ -187,6 +188,9 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 		return items;
 	};
 
+	const [accessId, setAccessId] = useState<string | null>(null);
+	const accessChannel = accessId ? channels.find((c) => c.id === accessId) : undefined;
+
 	const channelItems = (channel: Channel): ContextMenuItem[] => {
 		const items: ContextMenuItem[] = [
 			{ label: 'Ouvrir', icon: channel.kind === 'voice' ? 'speaker' : 'hash', onSelect: () => onOpenChannel(channel.id) },
@@ -201,6 +205,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					icon: 'pencil',
 					onSelect: () => setPrompt({ title: 'Renommer le salon', label: 'Nom du salon', initial: channel.name, submit: (name) => api('PATCH', `/w/${workspaceId}/channels/${channel.id}`, { name }) }),
 				},
+				{ label: 'Gérer l’accès', icon: 'shield', onSelect: () => setAccessId(channel.id) },
 				{ label: 'Permissions du salon', icon: 'settings', onSelect: () => setPerms({ channel }) },
 				{
 					label: 'Dupliquer',
@@ -309,6 +314,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					)}
 				</Dialog>
 			)}
+			{accessChannel && info && <AccessDialog info={info} channel={accessChannel} onClose={() => setAccessId(null)} />}
 			{footer}
 		</nav>
 	);

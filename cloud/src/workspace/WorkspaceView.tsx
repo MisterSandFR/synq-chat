@@ -21,6 +21,7 @@ import {
 	useDirectsLoader,
 	type ContentView,
 } from './dm-threads';
+import { AccessDialog } from './grade-access/AccessDialog';
 import { DrivePanel } from './DrivePanel';
 import { MembersPanel } from './MembersPanel';
 import { useMemberMenu } from './members/useMemberMenu';
@@ -120,6 +121,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const openView = (next: Exclude<ContentView, null>) => navigate(`/w/${workspaceId}/${next === 'dms' ? 'messages' : 'fils'}`);
 	const members = useMemo(() => new Map<string, Member>((state.info?.members ?? []).map((m) => [m.id, m])), [state.info]);
 	const grades = state.info?.grades ?? [];
+	const [accessOpen, setAccessOpen] = useState(false);
 	const dms = state.dmThreads.dms;
 	const rooms = useMemo(() => (channels ?? []).filter((c) => c.kind !== 'dm'), [channels]);
 	const labelOf = (id: string) => channelLabel(channels?.find((c) => c.id === id), dms, members, myId);
@@ -301,8 +303,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 		dispatch({ type: 'message', message });
 	};
 
-	const startDirect = async (userIds: string[], name = '') => {
-		const { conversation, channel, perms } = await openDirect(workspaceId, userIds, name);
+	const startDirect = async (userIds: string[], name = '', gradeIds: string[] = []) => {
+		const { conversation, channel, perms } = await openDirect(workspaceId, userIds, name, gradeIds);
 		dispatch({ type: 'dm_threads', update: upsertDirect(conversation) });
 		if (!channels?.some((c) => c.id === channel.id)) {
 			dispatch({ type: 'event', event: { t: 'channel_upsert', channel, perms }, activeChannelId: channelId, myId, focused });
@@ -536,6 +538,11 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							<Icon name='pin' />
 						</button>
 					)}
+					{active && active.kind !== 'dm' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) && (
+						<button type='button' className='icon-btn' aria-label='Gérer l’accès' title='Gérer l’accès' onClick={() => setAccessOpen(true)}>
+							<Icon name='shield' />
+						</button>
+					)}
 					{active?.kind === 'text' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) && (
 						<button type='button' className='icon-btn hide-mobile' aria-pressed={announcing} aria-label='Annonce du salon' title='Annonce du salon' onClick={() => setAnnouncing(!announcing)}>
 							<Icon name='megaphone' />
@@ -726,13 +733,15 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						}}
 					/>
 					<CreateChannelDialog workspaceId={workspaceId} kind={createKind} onClose={() => setCreateKind(null)} />
-					<NewDirectDialog open={newDirect} members={members} myId={myId} online={state.online} onClose={() => setNewDirect(false)} onSubmit={startDirect} />
+					<NewDirectDialog open={newDirect} members={members} grades={grades} myId={myId} online={state.online} onClose={() => setNewDirect(false)} onSubmit={startDirect} />
+					{accessOpen && active && active.kind !== 'dm' && state.info && <AccessDialog info={state.info} channel={active} onClose={() => setAccessOpen(false)} />}
 					{activeDm?.group && (
 						<GroupDialog
 							open={groupOpen}
 							workspaceId={workspaceId}
 							conversation={activeDm}
 							members={members}
+							grades={grades}
 							myId={myId}
 							online={state.online}
 							onClose={() => setGroupOpen(false)}
