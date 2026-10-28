@@ -2,12 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { MailMessage } from '../../shared/mail';
 import { api, errorText } from '../api';
-import { Icon } from '../ui';
 
 type Rendered = { html: string; blockedImages: number };
 
 export function MailBody({ message, plain }: { message: MailMessage; plain?: boolean }) {
-	const [images, setImages] = useState(false);
 	const [doc, setDoc] = useState<Rendered | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [height, setHeight] = useState(60);
@@ -19,13 +17,14 @@ export function MailBody({ message, plain }: { message: MailMessage; plain?: boo
 			return;
 		}
 		let cancelled = false;
-		api<Rendered>('GET', `/mail/messages/${message.id}/html?images=${images ? 1 : 0}`)
+		// Images distantes servies par le proxy du serveur.
+		api<Rendered>('GET', `/mail/messages/${message.id}/html`)
 			.then((result) => !cancelled && setDoc(result))
 			.catch((e) => !cancelled && setError(errorText(e)));
 		return () => {
 			cancelled = true;
 		};
-	}, [message.id, html, images]);
+	}, [message.id, html]);
 
 	const measure = useCallback(() => {
 		const inner = frame.current?.contentDocument;
@@ -62,26 +61,15 @@ export function MailBody({ message, plain }: { message: MailMessage; plain?: boo
 		return <div className='spinner' aria-busy />;
 	}
 	return (
-		<>
-			{doc.blockedImages > 0 && !images && (
-				<div className='mail-images'>
-					<Icon name='eye-off' size={15} />
-					<span>Images masquées</span>
-					<button className='link' onClick={() => setImages(true)}>
-						Afficher
-					</button>
-				</div>
-			)}
-			<iframe
-				ref={frame}
-				className='mail-frame'
-				title={message.subject || 'Message'}
-				srcDoc={doc.html}
-				sandbox='allow-popups allow-popups-to-escape-sandbox allow-same-origin'
-				referrerPolicy='no-referrer'
-				style={{ height }}
-				onLoad={onLoad}
-			/>
-		</>
+		<iframe
+			ref={frame}
+			className='mail-frame'
+			title={message.subject || 'Message'}
+			srcDoc={doc.html}
+			sandbox='allow-popups allow-popups-to-escape-sandbox allow-same-origin'
+			referrerPolicy='no-referrer'
+			style={{ height }}
+			onLoad={onLoad}
+		/>
 	);
 }

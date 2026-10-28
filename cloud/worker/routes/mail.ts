@@ -31,9 +31,11 @@ import type { AiTextResult } from '../../shared/ai';
 import { P, has } from '../../shared/permissions';
 import { loadActor } from '../grades';
 import { cleanName, fail, readJson, unwrap, workspaceStub, type AppEnv, type Ctx } from '../http';
+import { safeUrl } from '../media';
 import { aiText } from '../ai';
 import { AI_ACTIONS, AI_TONES, mailPrompt, parseSuggestions, type AiTone } from '../mail/ai';
 import { sanitizeMail, textDocument } from '../mail/html';
+import { fetchImage, proxiedImage, validImageSignature } from '../mail/images';
 import { ImapClient } from '../mail/imap';
 import { binary, parseAddresses } from '../mail/mime';
 import { excerpt, searchTerms } from '../mail/search';
@@ -807,8 +809,12 @@ mailRoutes.get('/mail/messages/:mid/html', async (c) => {
 	}
 	const attachments = JSON.parse(row.attachments) as MailAttachment[];
 	let budget = INLINE_TOTAL;
+	const origin = new URL(c.req.url).origin;
+	const secret = c.env.MAIL_KEY;
 	const result = await sanitizeMail(html, {
-		images: c.req.query('images') === '1',
+		// Images distantes affichées par défaut : le proxy masque l'IP et le navigateur du lecteur.
+		images: c.req.query('images') !== '0',
+		proxy: secret ? { origin, url: (remote) => proxiedImage(secret, origin, remote) } : undefined,
 		inline: async (cid) => {
 			const a = attachments.find((item) => item.cid === cid);
 			if (!a || !IMAGE_TYPES.has(a.type) || a.size > INLINE_MAX || a.size > budget) {
@@ -823,6 +829,35 @@ mailRoutes.get('/mail/messages/:mid/html', async (c) => {
 		},
 	});
 	return c.json(result satisfies MailHtml);
+});
+
+// Signature exigée : seules les URL écrites par le serveur dans un mail passent, pas un proxy ouvert.
+mailRoutes.get('/mail/img', async (c) => {
+	const raw = c.req.query('u') ?? '';
+	const signature = c.req.query('s') ?? '';
+	const url = safeUrl(raw);
+	if (!c.env.MAIL_KEY || !url || !(await validImageSignature(c.env.MAIL_KEY, raw, signature))) {
+		return fail(c, 404, 'Image introuvable');
+	}
+	let image: Awaited<ReturnType<typeof fetchImage>> = null;
+	try {
+		image = await fetchImage(url, new URL(c.req.url).hostname.toLowerCase());
+	} catch {
+		// Délai dépassé ou site injoignable.
+	}
+	if (!image) {
+		return fail(c, 404, 'Image indisponible');
+	}
+	return new Response(image.body, {
+		headers: {
+			'Content-Type': image.type,
+			...(image.size !== null ? { 'Content-Length': String(image.size) } : {}),
+			'Content-Disposition': 'inline',
+			'Content-Security-Policy': "default-src 'none'; sandbox",
+			'X-Content-Type-Options': 'nosniff',
+			'Cache-Control': 'private, max-age=86400',
+		},
+	});
 });
 
 mailRoutes.get('/mail/messages/:mid/attachments.zip', async (c) => {

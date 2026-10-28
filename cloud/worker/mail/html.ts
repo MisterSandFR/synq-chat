@@ -23,6 +23,7 @@ const REMOTE_RE = /^https?:\/\//i;
 const DATA_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i;
 const UNSAFE_CSS_RE = /expression\s*\(|javascript:|vbscript:|behavior\s*:|-moz-binding|@import/i;
 const REMOTE_CSS_RE = /url\(\s*['"]?\s*https?:/i;
+const CSS_URL_RE = /url\(\s*(['"]?)\s*(https?:\/\/[^'")\s]+)\s*\1\s*\)/gi;
 const UNSAFE_CSS_GLOBAL_RE = /@import[^;]*;?|expression\s*\(|javascript:|vbscript:|behavior\s*:|-moz-binding/gi;
 
 const NAMED: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -51,12 +52,13 @@ function validLink(value: string): boolean {
 
 const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export const mailCsp = (images: boolean) => `default-src 'none'; style-src 'unsafe-inline'; img-src data:${images ? ' https:' : ''}; font-src data:`;
+// Images passées par le proxy : seule notre origine est autorisée en plus des data URI.
+export const mailCsp = (images: boolean, origin?: string) => `default-src 'none'; style-src 'unsafe-inline'; img-src data:${images ? ` ${origin ?? 'https:'}` : ''}; font-src data:`;
 
-function wrap(body: string, images: boolean): string {
+function wrap(body: string, images: boolean, origin?: string): string {
 	return [
 		'<!doctype html><html><head><meta charset="utf-8">',
-		`<meta http-equiv="Content-Security-Policy" content="${mailCsp(images)}">`,
+		`<meta http-equiv="Content-Security-Policy" content="${mailCsp(images, origin)}">`,
 		'<meta name="referrer" content="no-referrer"><base target="_blank">',
 		'<style>body{margin:0;overflow-wrap:anywhere}img{max-width:100%}</style>',
 		`</head><body>${body}</body></html>`,
@@ -72,10 +74,25 @@ export interface SanitizeOptions {
 	images: boolean;
 	// Data URI d'une image intégrée, null si absente ou trop lourde.
 	inline: (cid: string) => Promise<string | null>;
+	// URL du proxy pour une image distante, servie depuis `origin`.
+	proxy?: { origin: string; url: (remote: string) => Promise<string> };
+}
+
+async function replaceAsync(text: string, re: RegExp, replace: (match: RegExpExecArray) => Promise<string>): Promise<string> {
+	const parts: Array<string | Promise<string>> = [];
+	let last = 0;
+	for (const match of text.matchAll(re)) {
+		parts.push(text.slice(last, match.index), replace(match as RegExpExecArray));
+		last = match.index + match[0].length;
+	}
+	parts.push(text.slice(last));
+	return (await Promise.all(parts)).join('');
 }
 
 export async function sanitizeMail(html: string, options: SanitizeOptions): Promise<MailHtml> {
 	let blockedImages = 0;
+	const proxy = options.images ? options.proxy : undefined;
+	const proxyCss = (css: string) => (proxy ? replaceAsync(css, CSS_URL_RE, async (m) => (validLink(m[2]!) ? `url(${await proxy.url(m[2]!)})` : 'none')) : Promise.resolve(css));
 	const image = async (element: Element, name: string, value: string, allowCid: boolean) => {
 		if (allowCid && /^cid:/i.test(value)) {
 			let cid = value.slice(4);
@@ -99,6 +116,8 @@ export async function sanitizeMail(html: string, options: SanitizeOptions): Prom
 			if (!options.images) {
 				blockedImages++;
 				element.removeAttribute(name);
+			} else if (proxy) {
+				element.setAttribute(name, await proxy.url(value));
 			}
 			return;
 		}
@@ -108,14 +127,14 @@ export async function sanitizeMail(html: string, options: SanitizeOptions): Prom
 	const rewriter = new HTMLRewriter()
 		// Feuille de style relue en entier : un motif peut chevaucher deux morceaux.
 		.on('style', {
-			text: (chunk) => {
+			text: async (chunk) => {
 				css += chunk.text;
 				chunk.remove();
 				if (chunk.lastInTextNode) {
 					if (!options.images) {
 						blockedImages += css.match(new RegExp(REMOTE_CSS_RE.source, 'gi'))?.length ?? 0;
 					}
-					chunk.replace(css.replace(/\\/g, '').replace(UNSAFE_CSS_GLOBAL_RE, '/* */'), { html: true });
+					chunk.replace(await proxyCss(css.replace(/\\/g, '').replace(UNSAFE_CSS_GLOBAL_RE, '/* */')), { html: true });
 					css = '';
 				}
 			},
@@ -150,6 +169,9 @@ export async function sanitizeMail(html: string, options: SanitizeOptions): Prom
 							element.removeAttribute(name);
 						} else if (!options.images && REMOTE_CSS_RE.test(value)) {
 							blockedImages++;
+						} else if (proxy && REMOTE_CSS_RE.test(value)) {
+							// Guillemets doubles changés en simples : la valeur réécrite ne peut pas fermer l'attribut.
+							element.setAttribute(name, (await proxyCss(value)).replace(/"/g, "'"));
 						}
 					} else if (key === 'href') {
 						if (tag !== 'a' || !validLink(value)) {
@@ -184,5 +206,5 @@ export async function sanitizeMail(html: string, options: SanitizeOptions): Prom
 			},
 		});
 	const body = await rewriter.transform(new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })).text();
-	return { html: wrap(body, options.images), blockedImages };
+	return { html: wrap(body, options.images, proxy?.origin), blockedImages };
 }

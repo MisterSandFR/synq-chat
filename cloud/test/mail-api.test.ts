@@ -1,10 +1,11 @@
 import { env } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { MailAiResult, MailboxInfo, MailDraft, MailHtml, MailThread, MailThreadDetail, MailUpload } from '../shared/mail';
 import type { MessagePage } from '../shared/types';
 import { aiRunner } from '../worker/ai';
 import { sanitizeMail } from '../worker/mail/html';
+import { proxiedImage } from '../worker/mail/images';
 import { parseMail } from '../worker/mail/mime';
 import { loadBox, storeIncoming, wakeSnoozed } from '../worker/mail/store';
 import { transport, type Duplex, type Opener } from '../worker/mail/wire';
@@ -164,6 +165,20 @@ describe('mail : assainissement HTML', () => {
 		expect(shown.html).toContain('src="https://img.test/a.png"');
 	});
 
+	it('images distantes réécrites vers le proxy', async () => {
+		const proxy = { origin: 'https://synq.test', url: async (u: string) => `https://synq.test/api/mail/img?u=${encodeURIComponent(u)}` };
+		const source =
+			'<style>.h{background:url("https://img.test/bg.png")}</style><img src="https://img.test/a.png"><td background="http://img.test/b.png">t</td><div style="font-family:&quot;Arial&quot;;background:url(https://img.test/c.png)">x</div>';
+		const { html, blockedImages } = await sanitizeMail(source, { images: true, inline: noInline, proxy });
+		expect(blockedImages).toBe(0);
+		expect(html).toContain("img-src data: https://synq.test; font-src");
+		expect(html).not.toMatch(/(src|background)="https?:\/\/img\.test|url\(["']?https?:\/\/img\.test/);
+		expect(html).toContain('src="https://synq.test/api/mail/img?u=https%3A%2F%2Fimg.test%2Fa.png"');
+		expect(html).toContain('background="https://synq.test/api/mail/img?u=http%3A%2F%2Fimg.test%2Fb.png"');
+		expect(html).toContain('.h{background:url(https://synq.test/api/mail/img?u=https%3A%2F%2Fimg.test%2Fbg.png)}');
+		expect(html).toContain("font-family:'Arial';background:url(https://synq.test/api/mail/img?u=https%3A%2F%2Fimg.test%2Fc.png)");
+	});
+
 	it('crc32 de référence', () => {
 		expect(crc32(encoder.encode('123456789'))).toBe(0xcbf43926);
 	});
@@ -213,7 +228,33 @@ describe('mail : API v2', () => {
 		expect(html.data.html).toContain(`src="data:image/png;base64,${PNG}"`);
 		expect(html.data.html).not.toMatch(/<script|onclick|tracker\.test/);
 		expect(html.data.html).toContain('<div bgcolor="#fff">');
-		expect((await alice.req<MailHtml>('GET', `/api/mail/messages/${incoming.id}/html?images=1`)).data.html).toContain('tracker.test');
+		const shown = (await alice.req<MailHtml>('GET', `/api/mail/messages/${incoming.id}/html`)).data;
+		expect(shown.blockedImages).toBe(0);
+		const proxied = new URL(shown.html.match(/src="([^"]*\/api\/mail\/img\?[^"]*)"/)![1]!.replace(/&amp;/g, '&'));
+		expect(proxied.searchParams.get('u')).toBe('https://tracker.test/p.gif');
+		expect(shown.html).toContain(`img-src data: ${proxied.origin};`);
+		const real = globalThis.fetch;
+		const upstream = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+			const url = input instanceof Request ? input.url : String(input);
+			if (url === 'https://tracker.test/p.gif') {
+				return new Response(Uint8Array.from(atob(PNG), (c) => c.charCodeAt(0)), { headers: { 'Content-Type': 'image/gif' } });
+			}
+			if (url === 'https://tracker.test/loop.gif') {
+				return new Response(null, { status: 302, headers: { Location: 'http://127.0.0.1/admin' } });
+			}
+			return real(input, init);
+		});
+		const image = await alice.raw('GET', proxied.pathname + proxied.search);
+		expect(image.status).toBe(200);
+		expect(image.headers.get('content-type')).toBe('image/gif');
+		expect(image.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
+		expect((await image.arrayBuffer()).byteLength).toBeGreaterThan(0);
+		const forged = new URL(proxied);
+		forged.searchParams.set('u', 'https://tracker.test/loop.gif');
+		expect((await alice.raw('GET', forged.pathname + forged.search)).status).toBe(404);
+		const redirected = new URL(await proxiedImage(workerEnv.MAIL_KEY, proxied.origin, 'https://tracker.test/loop.gif'));
+		expect((await alice.raw('GET', redirected.pathname + redirected.search)).status).toBe(404);
+		upstream.mockRestore();
 		expect((await bob.req('GET', `/api/mail/messages/${incoming.id}/html`)).status).toBe(404);
 
 		const zip = await alice.raw('GET', `/api/mail/messages/${incoming.id}/attachments.zip`);
