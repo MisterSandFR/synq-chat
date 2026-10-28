@@ -291,6 +291,7 @@
 
 .pld-option input {
 	flex: 1;
+	width: 0;
 	min-width: 0;
 	height: 36px;
 	padding: 0 10px;
@@ -419,7 +420,7 @@
 	}
 
 	.pld-tools .icon-btn {
-		width: 32px;
+		width: 28px;
 		height: 32px;
 	}
 }
