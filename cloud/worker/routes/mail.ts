@@ -33,7 +33,7 @@ import {
 	type MailUpload,
 } from '../../shared/mail';
 import type { AiTextResult } from '../../shared/ai';
-import { DEFAULT_GRADE } from '../../shared/permissions';
+import { DEFAULT_GRADE, P } from '../../shared/permissions';
 import { listGrades, loadActor } from '../grades';
 import { cleanName, fail, readJson, unwrap, workspaceStub, type AppEnv, type Ctx } from '../http';
 import { safeUrl } from '../media';
@@ -142,7 +142,9 @@ const RANK: Record<MailLevel, number> = { view: 1, reply: 2, manage: 3 };
 
 // Niveau d'un membre sur un partage : meilleur de ses grades, défaut compris ; propriétaire de l'espace = gestion. Invités jamais joints.
 const SHARE_MEMBERS = "mailbox_shares s JOIN members m ON m.workspace_id = s.workspace_id AND m.role != 'guest'";
-const SHARE_RANK = `CASE WHEN m.role = 'owner' THEN 3 ELSE (SELECT MAX(CASE sg.level WHEN 'manage' THEN 3 WHEN 'reply' THEN 2 ELSE 1 END) FROM mailbox_share_grades sg
+// Propriétaire et administrateurs de l'espace gèrent, comme pour les salons.
+const SHARE_RANK = `CASE WHEN m.role = 'owner' OR EXISTS (SELECT 1 FROM member_grades ag JOIN grades g ON g.workspace_id = ag.workspace_id AND g.id = ag.grade_id
+		WHERE ag.workspace_id = s.workspace_id AND ag.user_id = m.user_id AND (g.permissions & ${P.ADMINISTRATOR}) != 0) THEN 3 ELSE (SELECT MAX(CASE sg.level WHEN 'manage' THEN 3 WHEN 'reply' THEN 2 ELSE 1 END) FROM mailbox_share_grades sg
 	WHERE sg.mailbox_id = s.mailbox_id AND sg.workspace_id = s.workspace_id
 		AND (sg.grade_id = '${DEFAULT_GRADE}' OR sg.grade_id IN (SELECT mg.grade_id FROM member_grades mg WHERE mg.workspace_id = s.workspace_id AND mg.user_id = m.user_id))) END`;
 

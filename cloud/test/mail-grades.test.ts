@@ -87,6 +87,13 @@ describe('droits des boîtes mail par grade', () => {
 		expect(await accessOf(bob, box)).toEqual({ owner: false, view: true, reply: true, manage: true });
 		expect((await bob.req('PUT', `/api/mail/boxes/${box}/shares/${wid}/grades`, { grades: [{ gradeId: compta.id, level: 'manage' }] })).status).toBe(200);
 		expect(await accessOf(carol, box)).toBeNull();
+
+		// Grade administrateur attribué après coup : gestion sans règle sur le partage.
+		const admins = (await alice.req<Grade>('POST', `/api/w/${wid}/grades`, { name: 'Admins', permissions: P.ADMINISTRATOR })).data;
+		await give(carol, [admins.id]);
+		expect(await accessOf(carol, box)).toEqual({ owner: false, view: true, reply: true, manage: true });
+		await give(carol, []);
+		expect(await accessOf(carol, box)).toBeNull();
 	});
 
 	it('retrait du grade ou du grade lui-même : accès perdu', async () => {

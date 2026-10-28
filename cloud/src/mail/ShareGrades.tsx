@@ -82,7 +82,7 @@ function GradePicker({ grades, counts, onPick }: { grades: Grade[]; counts: Map<
 							}}
 						>
 							<span className='grade-dot' style={{ background: grade.color || 'var(--line-strong)' }} aria-hidden />
-							<span>{grade.name}</span>
+							<span>{grade.id === DEFAULT_GRADE ? 'Tout le monde' : grade.name}</span>
 							<small>{grade.id === DEFAULT_GRADE ? 'Tous les membres' : `${counts.get(grade.id) ?? 0}`}</small>
 						</button>
 					))}
@@ -105,16 +105,16 @@ export function ShareGrades({ grades, members, rules, disabled, onChange }: { gr
 	}
 	return (
 		<div className='mail-grades'>
-			{shown.length === 0 && <p className='field-hint'>Aucun grade : seuls le propriétaire de la boîte et celui de l’espace l’ouvrent.</p>}
+			{shown.length === 0 && <p className='field-hint'>Aucun grade : seuls le propriétaire de la boîte et les administrateurs de l’espace l’ouvrent.</p>}
 			{shown.map((rule) => {
 				const grade = byId.get(rule.gradeId);
-				const name = grade?.name ?? 'Grade';
+				// Même libellé que pour les salons et les groupes.
+				const name = rule.gradeId === DEFAULT_GRADE ? 'Tout le monde' : (grade?.name ?? 'Grade');
 				return (
 					<div key={rule.gradeId} className='mail-grade-row'>
 						<span className='grade-dot' style={{ background: grade?.color || 'var(--line-strong)' }} aria-hidden />
 						<span className='mail-grade-name'>
 							{name}
-							{rule.gradeId === DEFAULT_GRADE && <small>Tous les membres</small>}
 						</span>
 						<LevelMenu value={rule.level} disabled={disabled} onChange={(level) => onChange(rules.map((item) => (item.gradeId === rule.gradeId ? { ...item, level } : item)))} />
 						{!disabled && (

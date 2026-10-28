@@ -242,7 +242,7 @@ function ShareEditor({ box, workspaces, onChanged }: { box: MailboxInfo; workspa
 	return (
 		<section className='mail-share'>
 			<h3>Partage</h3>
-			<p className='field-hint'>Sans partage, la boîte reste personnelle. Dans un espace, chaque grade reçoit un niveau : lecture, réponse ou gestion. Le propriétaire de l’espace a toujours la gestion.</p>
+			<p className='field-hint'>Sans partage, la boîte reste personnelle. Dans un espace, chaque grade reçoit un niveau : lecture, réponse ou gestion. Le propriétaire et les administrateurs de l’espace ont toujours la gestion.</p>
 			{shares.map((item) => {
 				const info = infos[item.workspaceId];
 				return (
