@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { absenceStatus, dayFromDate, type AbsenceNow } from '../../shared/absences';
 import { emojiByName } from '../../shared/emoji';
 import type { Channel, Member } from '../../shared/types';
 import { INLINE_RE, parseBlocks, stripMarkdown } from './chat/markdown';
@@ -10,6 +11,7 @@ export type Lookup = {
 	channels: Channel[];
 	myId: string;
 	openChannel: (id: string) => void;
+	absences?: Map<string, AbsenceNow>;
 };
 
 // Uniquement des éléments React : jamais de HTML brut.
@@ -27,8 +29,9 @@ function inline(text: string, lookup: Lookup, key: string): ReactNode[] {
 		const emoji = shortcode ? emojiByName.get(shortcode) : undefined;
 		if (userId) {
 			const member = lookup.members.get(userId);
+			const away = lookup.absences?.get(userId);
 			out.push(
-				<span key={k} className={`chip${userId === lookup.myId ? ' chip-me' : ''}`}>
+				<span key={k} className={`chip${userId === lookup.myId ? ' chip-me' : ''}${away ? ' chip-away' : ''}`} title={away ? absenceStatus(away, dayFromDate(new Date())) : undefined}>
 					@{member?.name ?? 'inconnu'}
 				</span>,
 			);

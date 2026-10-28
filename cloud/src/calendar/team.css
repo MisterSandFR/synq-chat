@@ -1,0 +1,426 @@
+:root {
+	--ab-leave: #2f9e6e;
+	--ab-sick: #d1495b;
+	--ab-remote: #3b82c4;
+	--ab-travel: #c98a1b;
+	--ab-training: #8a5cd6;
+	--ab-other: #6f7380;
+	--ab-private: #8b8d96;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--ab-leave: #3fbf86;
+		--ab-sick: #ec6a7a;
+		--ab-remote: #5aa2e0;
+		--ab-travel: #e0a43a;
+		--ab-training: #a27cf0;
+		--ab-other: #8e919c;
+		--ab-private: #9c9da7;
+	}
+}
+
+:root[data-theme='dark'] {
+	--ab-leave: #3fbf86;
+	--ab-sick: #ec6a7a;
+	--ab-remote: #5aa2e0;
+	--ab-travel: #e0a43a;
+	--ab-training: #a27cf0;
+	--ab-other: #8e919c;
+	--ab-private: #9c9da7;
+}
+
+.team {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+
+.team-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--line);
+}
+
+.team-select {
+	height: 32px;
+	max-width: 200px;
+	padding: 0 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--r-sm);
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+}
+
+.team-summary {
+	margin: 0;
+	font-size: 13px;
+	color: var(--muted);
+}
+
+.team-pose {
+	margin-left: auto;
+}
+
+.team-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
+.team-grid {
+	--team-name: 200px;
+	--team-col: 30px;
+	--team-row: 40px;
+	display: grid;
+	grid-template-columns: var(--team-name) repeat(var(--team-days), minmax(var(--team-col), 1fr));
+}
+
+.team-grid[data-span='week'] {
+	--team-col: 88px;
+}
+
+.team-row {
+	display: contents;
+}
+
+.team-corner,
+.team-day {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	border-bottom: 1px solid var(--line);
+	background: var(--bg);
+}
+
+.team-corner {
+	left: 0;
+	z-index: 4;
+	display: flex;
+	align-items: flex-end;
+	padding: 8px 12px;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.team-day {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1px;
+	min-width: 0;
+	padding: 6px 0;
+	border-left: 1px solid var(--line);
+	font-size: 11px;
+	color: var(--muted);
+}
+
+.team-day strong {
+	display: grid;
+	place-items: center;
+	min-width: 22px;
+	height: 22px;
+	border-radius: 999px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+}
+
+.team-day[data-off] {
+	background: var(--surface);
+}
+
+.team-day[data-today] strong {
+	background: var(--accent);
+	color: #fff;
+}
+
+.team-holiday {
+	max-width: 100%;
+	padding: 0 4px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.team-grid[data-span='month'] .team-holiday {
+	width: 4px;
+	height: 4px;
+	padding: 0;
+	border-radius: 50%;
+	background: var(--muted);
+}
+
+.team-person {
+	position: sticky;
+	left: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: var(--team-row);
+	padding: 0 12px;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.team-person:disabled {
+	cursor: default;
+}
+
+.team-person:not(:disabled):hover {
+	background: var(--hover);
+}
+
+.team-cell {
+	position: relative;
+	height: var(--team-row);
+	border-left: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+}
+
+.team-cell[data-off] {
+	background: var(--surface);
+}
+
+.team-cell[data-today] {
+	background: var(--accent-soft);
+}
+
+.team-cell[data-pose] {
+	cursor: pointer;
+}
+
+.team-cell[data-pose]:hover {
+	background: var(--hover);
+}
+
+.team-block {
+	position: absolute;
+	top: 7px;
+	bottom: 7px;
+	left: 3px;
+	right: 3px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	padding: 0 6px 0 8px;
+	border: 0;
+	border-radius: var(--r-sm);
+	background: color-mix(in srgb, var(--ab) 24%, var(--bg));
+	box-shadow: inset 3px 0 0 var(--ab);
+	color: var(--text);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	overflow: hidden;
+}
+
+/* Télétravail : présent mais pas sur place, hachuré pour le distinguer d'une absence. */
+.team-block[data-kind='remote'] {
+	background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ab) 30%, var(--bg)) 0 5px, color-mix(in srgb, var(--ab) 12%, var(--bg)) 5px 10px);
+}
+
+.team-block[data-part='am'] {
+	right: calc(50% + 1px);
+}
+
+.team-block[data-part='pm'] {
+	left: calc(50% + 1px);
+}
+
+.team-block[data-join-start] {
+	left: -1px;
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+	box-shadow: none;
+}
+
+.team-block[data-join-end] {
+	right: -1px;
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+}
+
+.team-block:focus-visible {
+	outline: 2px solid var(--ab);
+	outline-offset: 1px;
+}
+
+.team-block-label {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.team-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 16px;
+	margin: 0;
+	padding: 10px 16px;
+	border-top: 1px solid var(--line);
+	list-style: none;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.team-legend li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.team-swatch {
+	flex: none;
+	width: 10px;
+	height: 10px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--ab) 40%, var(--bg));
+	box-shadow: inset 0 0 0 1px var(--ab);
+}
+
+[data-kind='remote'] > .team-swatch {
+	background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ab) 45%, var(--bg)) 0 2px, var(--bg) 2px 4px);
+}
+
+.team-swatch-off {
+	background: var(--surface);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.team-kinds {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.team-kinds legend {
+	margin-bottom: 6px;
+	padding: 0;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.team-kind {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: 999px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.team-kind input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.team-kind:has(input:checked) {
+	border-color: var(--ab);
+	background: color-mix(in srgb, var(--ab) 16%, var(--bg));
+}
+
+.team-kind:has(input:focus-visible) {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.team-weekdays {
+	display: flex;
+	gap: 6px;
+}
+
+.team-weekdays button {
+	width: 32px;
+	height: 32px;
+	border: 1px solid var(--line-strong);
+	border-radius: 999px;
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.team-weekdays button[aria-pressed='true'] {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: #fff;
+}
+
+.cal-absent {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	padding: 1px 4px;
+	border: 0;
+	border-radius: 4px;
+	background: var(--surface);
+	color: var(--muted);
+	font: inherit;
+	font-size: 11px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.cal-absent:hover {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.cal-absent > svg {
+	flex: none;
+}
+
+.cal-holiday {
+	padding: 0 4px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 11px;
+	color: var(--muted);
+}
+
+@media (max-width: 860px) {
+	.team-grid {
+		--team-name: 128px;
+	}
+
+	.team-grid[data-span='week'] {
+		--team-col: 44px;
+	}
+
+	.team-pose {
+		margin-left: 0;
+	}
+
+	.team-summary {
+		flex-basis: 100%;
+	}
+}

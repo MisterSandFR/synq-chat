@@ -1,5 +1,7 @@
+import type { AbsenceNow } from '../../shared/absences';
 import type { Grade, Member, VoiceParticipant } from '../../shared/types';
 import { Avatar, Icon } from '../ui';
+import { AbsenceLine } from './absences/AbsenceStatus';
 import { useContextMenu, type ContextMenuItem } from './ContextMenu';
 import { memberColor, memberGrades } from './grades';
 
@@ -9,13 +11,14 @@ type Props = {
 	online: Set<string>;
 	voice: Record<string, VoiceParticipant[]>;
 	myId: string;
+	absences?: Map<string, AbsenceNow>;
 	onMessage?: (userId: string) => void;
 	menu?: (userId: string) => ContextMenuItem[];
 	onClose: () => void;
 };
 
 // Membres en ligne rangés sous leur plus haut grade, comme une liste TeamSpeak ; hors ligne à part.
-export function MembersPanel({ members, grades, online, voice, myId, onMessage, menu, onClose }: Props) {
+export function MembersPanel({ members, grades, online, voice, myId, absences, onMessage, menu, onClose }: Props) {
 	const ctx = useContextMenu();
 	const inVoice = new Set(Object.values(voice).flatMap((list) => list.map((p) => p.userId)));
 	const sorted = [...members].sort((a, b) => a.name.localeCompare(b.name));
@@ -58,6 +61,7 @@ export function MembersPanel({ members, grades, online, voice, myId, onMessage, 
 									<span className='grow ellipsis' style={{ color: memberColor(member, grades) }}>
 										{member.name}
 										{member.id === myId && <span className='muted'> (toi)</span>}
+										{absences?.get(member.id) && <AbsenceLine now={absences.get(member.id)!} className='absence-line-block' />}
 									</span>
 									{inVoice.has(member.id) && (
 										<span className='muted' title='En vocal'>

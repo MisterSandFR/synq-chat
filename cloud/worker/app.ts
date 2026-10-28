@@ -30,6 +30,7 @@ import { commandRoutes } from './routes/commands';
 import { rcPublicRoutes, rcRoutes } from './routes/rc';
 import { chatRoutes } from './routes/chat';
 import { dmThreadsRoutes } from './routes/dm-threads';
+import { absenceRoutes } from './routes/absences';
 import { calendarRoutes, icsRoutes } from './routes/calendar';
 import { mailRoutes } from './routes/mail';
 import { mailSharerRoutes } from './routes/mail-sharers';
@@ -878,6 +879,7 @@ app.route('/', aiRoutes);
 app.route('/', aiChatRoutes);
 app.route('/', workspaceLogoRoutes);
 app.route('/', mailSharerRoutes);
+app.route('/', absenceRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

@@ -18,6 +18,7 @@ import { useOfferedFiles } from './media/bus';
 import { PendingFiles } from './media/PendingFiles';
 import { RecordButtons } from './media/Recorder';
 import { useUploads } from './media/useUploads';
+import { AbsenceNote } from './absences/AbsenceStatus';
 import { MENTION_EVENT, type MentionDetail } from './members/useMemberMenu';
 import { excerpt, toTokens, type Lookup } from './richText';
 
@@ -328,6 +329,7 @@ export function Composer({ workspaceId, channel, canPost, canAttach, lookup, rep
 							</button>
 						</div>
 					)}
+					<AbsenceNote text={text} lookup={lookup} />
 					{uploads.items.length > 0 && <PendingFiles items={uploads.items} onRemove={uploads.remove} />}
 					{formatOpen && <FormatBar onFormat={format} />}
 					<label className='sr-only' htmlFor='composer'>

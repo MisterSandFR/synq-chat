@@ -1,8 +1,10 @@
 import { useRef } from 'react';
 
+import type { AbsenceNow } from '../../../shared/absences';
 import { PRESENCE_LABEL, type Profile } from '../../../shared/rc';
 import type { Grade, Member } from '../../../shared/types';
 import { Avatar, Icon, useDismiss } from '../../ui';
+import { AbsenceLine } from '../absences/AbsenceStatus';
 import { memberColor, memberLabel } from '../grades';
 import { StatusDot } from './status';
 import { presenceOf } from './useRc';
@@ -11,6 +13,7 @@ import './rc.css';
 type Props = {
 	member: Member | undefined;
 	profile: Profile | undefined;
+	absence?: AbsenceNow;
 	online: boolean;
 	grades: Grade[];
 	myId: string;
@@ -27,7 +30,7 @@ const localTime = (zone: string) => {
 	}
 };
 
-export function ProfileCard({ member, profile, online, grades, myId, rect, onClose, onEdit }: Props) {
+export function ProfileCard({ member, profile, absence, online, grades, myId, rect, onClose, onEdit }: Props) {
 	const ref = useRef<HTMLDivElement>(null);
 	useDismiss(ref, true, onClose);
 	const presence = presenceOf(profile, online);
@@ -54,6 +57,11 @@ export function ProfileCard({ member, profile, online, grades, myId, rect, onClo
 				<span>{PRESENCE_LABEL[presence]}</span>
 				{profile?.statusText && <span className='muted ellipsis'>· {profile.statusText}</span>}
 			</p>
+			{absence && (
+				<p className='profile-card-line'>
+					<AbsenceLine now={absence} />
+				</p>
+			)}
 			{profile?.bio && <p className='profile-card-bio'>{profile.bio}</p>}
 			{time && (
 				<p className='profile-card-line muted'>
