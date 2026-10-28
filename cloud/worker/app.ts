@@ -43,6 +43,7 @@ import { dropEmojis, emojiRoutes } from './routes/emojis';
 import { canvasRoutes } from './routes/canvases';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
+import { aiHubRoutes } from './routes/ai-hub';
 import { guestRoutes } from './routes/guests';
 import { inviteRoutes } from './routes/invites';
 import { listRoutes } from './routes/lists';
@@ -851,6 +852,7 @@ app.route('/', listRoutes);
 app.route('/', absenceRoutes);
 app.route('/', canvasRoutes);
 app.route('/', favoriteRoutes);
+app.route('/', aiHubRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
