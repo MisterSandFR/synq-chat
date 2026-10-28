@@ -43,7 +43,7 @@ function Picker({ value, options, label, disabled, onPick, onRemove }: { value: 
 				{!disabled && <Icon name='chevron' size={12} />}
 			</button>
 			{open && (
-				<Floating anchor={ref} placement='bottom-end' className='popover' role='menu' style={{ width: 250 }}>
+				<Floating anchor={ref} placement='bottom-end' className='popover' role='menu' style={{ width: 300 }}>
 					{options.map((o) => (
 						<button
 							key={o.key}
