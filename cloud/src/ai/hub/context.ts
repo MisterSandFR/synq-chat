@@ -79,4 +79,5 @@ export const PLACEHOLDER: Partial<Record<AiIntent, string>> = {
 	cards: 'Consigne facultative, puis Entrée',
 	page: 'Consigne facultative, puis Entrée',
 	mail_reply: 'Consigne facultative : ton, points à couvrir',
+	layout: 'Consigne facultative : public, ton, structure',
 };
