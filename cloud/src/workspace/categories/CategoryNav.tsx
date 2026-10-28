@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react';
 
-import type { Category, Layout } from '../../../shared/categories';
+import { BANNER_TYPES, bannerUrl, type Category, type Layout } from '../../../shared/categories';
 import type { Channel, ChannelKind, WorkspaceDetail } from '../../../shared/types';
-import { api, errorText } from '../../api';
+import { api, errorText, upload } from '../../api';
 import { Dialog, Icon } from '../../ui';
+import { EmojiPicker } from '../chat/EmojiPicker';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { AccessDialog } from '../grade-access/AccessDialog';
 import { ChannelPermissions, OverridesEditor } from './OverridesEditor';
@@ -39,8 +40,66 @@ function readCollapsed(workspaceId: string): Set<string> {
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || a.name.localeCompare(b.name);
 
+const BANNER_W = 800;
+const BANNER_H = 200;
+
+function accentHue(hex: string | undefined): number {
+	const match = /^#?([0-9a-f]{6})$/i.exec(hex?.trim() ?? '');
+	if (!match) {
+		return 255;
+	}
+	const n = parseInt(match[1]!, 16);
+	const [r, g, b] = [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+	const max = Math.max(r, g, b);
+	const d = max - Math.min(r, g, b);
+	if (d === 0) {
+		return 255;
+	}
+	const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+	return (h * 60 + 360) % 360;
+}
+
+// Teinte de l'accent décalée par le nom : stable d'un poste à l'autre, saturation bridée.
+export function bannerBackground(accent: string | undefined, name: string): string {
+	let hash = 0;
+	for (const char of name) {
+		hash = (hash * 31 + char.codePointAt(0)!) | 0;
+	}
+	const hue = Math.round(accentHue(accent) + (Math.abs(hash) % 100) - 50);
+	return `linear-gradient(118deg, hsl(${hue} 42% 44%), hsl(${hue + 24} 38% 30%))`;
+}
+
+// Recadrage 4:1 centré : poids et proportions constants quelle que soit l'image.
+async function bannerFile(file: File): Promise<File> {
+	if (!BANNER_TYPES.includes(file.type)) {
+		throw new Error('Image PNG, JPEG ou WebP attendue');
+	}
+	const bitmap = await createImageBitmap(file).catch(() => {
+		throw new Error('Image illisible');
+	});
+	const scale = Math.max(BANNER_W / bitmap.width, BANNER_H / bitmap.height);
+	const [w, h] = [BANNER_W / scale, BANNER_H / scale];
+	const canvas = document.createElement('canvas');
+	canvas.width = BANNER_W;
+	canvas.height = BANNER_H;
+	const context = canvas.getContext('2d')!;
+	context.imageSmoothingQuality = 'high';
+	context.drawImage(bitmap, (bitmap.width - w) / 2, (bitmap.height - h) / 2, w, h, 0, 0, BANNER_W, BANNER_H);
+	bitmap.close();
+	const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.88));
+	if (!blob) {
+		throw new Error('Image illisible');
+	}
+	// Safari n'encode pas le WebP : blob.type retombe sur PNG.
+	return new File([blob], 'banniere', { type: blob.type });
+}
+
 export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel, footer }: Props) {
-	const categories = useCategories(workspaceId, channels);
+	const [tick, setTick] = useState(0);
+	const categories = useCategories(workspaceId, channels, tick);
+	const [iconFor, setIconFor] = useState<{ channel: Channel; anchor: DOMRect } | null>(null);
+	const bannerInput = useRef<HTMLInputElement>(null);
+	const bannerTarget = useRef<string | null>(null);
 	const [collapsed, setCollapsed] = useState(() => readCollapsed(workspaceId));
 	const [prompt, setPrompt] = useState<Prompt | null>(null);
 	const [perms, setPerms] = useState<{ category?: Category; channel?: Channel } | null>(null);
@@ -60,6 +119,24 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 	}, [channels, categories]);
 
 	const report = (e: unknown) => setError(errorText(e));
+
+	const refresh = () => setTick((n) => n + 1);
+
+	const sendBanner = async (file: File) => {
+		const id = bannerTarget.current;
+		if (!id) {
+			return;
+		}
+		try {
+			await upload(`/w/${workspaceId}/categories/${id}/banner`, await bannerFile(file));
+			setError(null);
+			refresh();
+		} catch (failure) {
+			report(failure);
+		}
+	};
+
+	const setIcon = (channel: Channel, icon: string) => void api('PATCH', `/w/${workspaceId}/channels/${channel.id}`, { icon }).then(() => setError(null), report);
 
 	const toggle = (id: string) => {
 		const next = new Set(collapsed);
@@ -176,6 +253,17 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 						setPrompt({ title: 'Renommer la catégorie', label: 'Nom de la catégorie', initial: category.name, submit: (name) => api('PATCH', `/w/${workspaceId}/categories/${category.id}`, { name }) }),
 				},
 				{ label: 'Permissions de la catégorie', icon: 'settings', onSelect: () => setPerms({ category }) },
+				{
+					label: 'Changer la bannière',
+					icon: 'image',
+					onSelect: () => {
+						bannerTarget.current = category.id;
+						bannerInput.current?.click();
+					},
+				},
+				...(category.bannerKey
+					? [{ label: 'Retirer la bannière', icon: 'close' as const, onSelect: () => void api('DELETE', `/w/${workspaceId}/categories/${category.id}/banner`).then(refresh, report) }]
+					: []),
 				'sep',
 				{
 					label: 'Supprimer la catégorie',
@@ -205,6 +293,15 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					icon: 'pencil',
 					onSelect: () => setPrompt({ title: 'Renommer le salon', label: 'Nom du salon', initial: channel.name, submit: (name) => api('PATCH', `/w/${workspaceId}/channels/${channel.id}`, { name }) }),
 				},
+				{
+					label: 'Changer l’icône',
+					icon: 'smile',
+					onSelect: () => {
+						const row = document.querySelector(`[data-channel='${channel.id}']`);
+						setIconFor({ channel, anchor: (row ?? document.body).getBoundingClientRect() });
+					},
+				},
+				...(channel.icon ? [{ label: 'Retirer l’icône', icon: 'close' as const, onSelect: () => setIcon(channel, '') }] : []),
 				{ label: 'Gérer l’accès', icon: 'shield', onSelect: () => setAccessId(channel.id) },
 				{ label: 'Permissions du salon', icon: 'settings', onSelect: () => setPerms({ channel }) },
 				{
@@ -246,9 +343,16 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 
 	const permChannel = perms?.channel ? (channels.find((c) => c.id === perms.channel!.id) ?? perms.channel) : null;
 
+	// Voile sombre sur l'image : nom blanc lisible quelle que soit la photo.
+	const bannerStyle = (category: Category) => {
+		const url = bannerUrl(workspaceId, category);
+		const banner = url ? `linear-gradient(90deg, rgb(12 12 16 / 0.62), rgb(12 12 16 / 0.2)), url("${url}")` : bannerBackground(info?.accent, category.name);
+		return { '--banner': banner } as CSSProperties;
+	};
+
 	return (
 		<nav className='nav' aria-label='Salons' {...context.bind(navItems)}>
-			{groups.map((group, index) => {
+			{groups.map((group) => {
 				const category = group.category;
 				if (!category && group.items.length === 0) {
 					return null;
@@ -256,18 +360,25 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 				const shut = category ? collapsed.has(category.id) : false;
 				const items = shut ? group.items.filter((c) => c.id === channelId) : group.items;
 				return (
-					<div key={category?.id ?? 'loose'} className={`nav-section${index > 0 ? ' cat-group' : ''}`}>
+					<div key={category?.id ?? 'loose'} className='nav-section'>
 						{category && (
 							<div
-								className={`nav-section-head cat-head${over === `k:${category.id}` ? ' dnd-over' : ''}`}
+								className={`cat-banner${over === `k:${category.id}` ? ' dnd-over' : ''}`}
+								data-image={category.bannerKey ? '' : undefined}
+								style={bannerStyle(category)}
 								{...dragProps(`k:${category.id}`, 'category', category.id, () => dropOnCategory(category))}
 								{...context.bind(() => categoryItems(category))}
 							>
-								<button type='button' className='cat-toggle' aria-expanded={!shut} onClick={() => toggle(category.id)}>
-									<span className={`cat-chevron${shut ? ' cat-chevron-shut' : ''}`}>
-										<Icon name='chevron' size={12} strokeWidth={2.2} />
+								{!category.bannerKey && (
+									<span className='cat-banner-mark' aria-hidden>
+										{category.name.charAt(0).toUpperCase()}
 									</span>
+								)}
+								<button type='button' className='cat-toggle' aria-expanded={!shut} onClick={() => toggle(category.id)}>
 									<span className='ellipsis'>{category.name}</span>
+									<span className={`cat-chevron${shut ? ' cat-chevron-shut' : ''}`}>
+										<Icon name='chevron' size={12} strokeWidth={2.4} />
+									</span>
 								</button>
 								{staff && (
 									<button
@@ -286,6 +397,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 							<div
 								key={channel.id}
 								className={`cat-item${over === `c:${channel.id}` ? ' dnd-over' : ''}`}
+								data-channel={channel.id}
 								{...dragProps(`c:${channel.id}`, 'channel', channel.id, () => dropOnChannel(channel))}
 								{...context.bind(() => channelItems(channel))}
 							>
@@ -315,6 +427,29 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 				</Dialog>
 			)}
 			{accessChannel && info && <AccessDialog info={info} channel={accessChannel} onClose={() => setAccessId(null)} />}
+			{iconFor && (
+				<EmojiPicker
+					anchor={iconFor.anchor}
+					onPick={(char) => {
+						setIcon(iconFor.channel, char);
+						setIconFor(null);
+					}}
+					onClose={() => setIconFor(null)}
+				/>
+			)}
+			<input
+				ref={bannerInput}
+				type='file'
+				accept={BANNER_TYPES.join(',')}
+				hidden
+				onChange={(e) => {
+					const file = e.currentTarget.files?.[0];
+					e.currentTarget.value = '';
+					if (file) {
+						void sendBanner(file);
+					}
+				}}
+			/>
 			{footer}
 		</nav>
 	);

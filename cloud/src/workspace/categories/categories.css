@@ -1,7 +1,83 @@
-.cat-group {
-	border-top: 1px solid var(--line);
-	margin-top: 6px;
-	padding-top: 6px;
+.cat-banner {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 44px;
+	margin-bottom: 3px;
+	padding: 0 6px 0 12px;
+	overflow: hidden;
+	border-radius: var(--r);
+	background: var(--banner);
+	background-position: center;
+	background-size: cover;
+	color: #fff;
+	isolation: isolate;
+}
+
+/* Reflet commun aux bannières dessinées : relief sans image. */
+.cat-banner:not([data-image])::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	background: radial-gradient(120% 160% at 100% 0%, rgb(255 255 255 / 0.2), transparent 55%);
+}
+
+.cat-banner-mark {
+	position: absolute;
+	right: 34px;
+	bottom: -16px;
+	z-index: -1;
+	font-size: 64px;
+	font-weight: 800;
+	line-height: 1;
+	letter-spacing: -0.04em;
+	color: rgb(255 255 255 / 0.1);
+	pointer-events: none;
+	user-select: none;
+}
+
+.cat-banner .cat-toggle {
+	height: 100%;
+	gap: 8px;
+	font-size: 14px;
+	font-weight: 700;
+	letter-spacing: 0.005em;
+	text-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+}
+
+.cat-banner .cat-toggle:hover {
+	color: #fff;
+}
+
+.cat-banner .cat-toggle:focus-visible,
+.cat-banner .icon-btn:focus-visible {
+	outline: 2px solid #fff;
+	outline-offset: -2px;
+	border-radius: var(--r-sm);
+}
+
+.cat-banner .cat-chevron {
+	display: inline-grid;
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	background: rgb(255 255 255 / 0.18);
+}
+
+.cat-banner .icon-btn {
+	color: rgb(255 255 255 / 0.85);
+}
+
+.cat-banner .icon-btn:hover {
+	background: rgb(255 255 255 / 0.16);
+	color: #fff;
+}
+
+.cat-banner.dnd-over {
+	box-shadow: inset 0 0 0 2px #fff;
 }
 
 .cat-toggle {
@@ -220,6 +296,11 @@
 }
 
 @media (max-width: 860px) {
+	.cat-banner .icon-btn {
+		width: 40px;
+		height: 40px;
+	}
+
 	.ow {
 		grid-template-columns: 1fr;
 	}

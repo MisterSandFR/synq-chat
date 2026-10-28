@@ -5,7 +5,7 @@ import type { Channel } from '../../../shared/types';
 import { api } from '../../api';
 
 // Toute modification de catégorie resynchronise les salons : relecture à chaque nouvelle liste.
-export function useCategories(workspaceId: string, channels: Channel[] | null): Category[] {
+export function useCategories(workspaceId: string, channels: Channel[] | null, tick = 0): Category[] {
 	const [categories, setCategories] = useState<Category[]>([]);
 	useEffect(() => {
 		let live = true;
@@ -20,6 +20,6 @@ export function useCategories(workspaceId: string, channels: Channel[] | null): 
 		return () => {
 			live = false;
 		};
-	}, [workspaceId, channels]);
+	}, [workspaceId, channels, tick]);
 	return categories;
 }
