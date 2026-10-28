@@ -133,8 +133,12 @@ export async function storeIncoming(env: Env, box: BoxRow, uid: number | null, r
 }
 
 // Cron : fils en rappel échus de nouveau ouverts.
-export async function wakeSnoozed(env: Env, now: number): Promise<void> {
-	await env.DB.prepare("UPDATE mail_threads SET snoozed_until = NULL, status = 'open' WHERE snoozed_until IS NOT NULL AND snoozed_until <= ?").bind(now).run();
+// Boîtes touchées renvoyées : leurs lecteurs relisent.
+export async function wakeSnoozed(env: Env, now: number): Promise<string[]> {
+	const { results } = await env.DB.prepare("UPDATE mail_threads SET snoozed_until = NULL, status = 'open' WHERE snoozed_until IS NOT NULL AND snoozed_until <= ? RETURNING mailbox_id")
+		.bind(now)
+		.all<{ mailbox_id: string }>();
+	return results.map((row) => row.mailbox_id);
 }
 
 export interface Outgoing {

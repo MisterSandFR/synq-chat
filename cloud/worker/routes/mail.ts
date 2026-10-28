@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Next } from 'hono';
 
 import {
 	MAIL_LIMITS,
@@ -51,8 +51,26 @@ import { smtpSend, type OutgoingAttachment } from '../mail/smtp';
 import { MailError, attachmentKey, bodyKey, htmlKey, loadBox, markRead, sendMail, sendReply, type BoxRow } from '../mail/store';
 import { transport } from '../mail/wire';
 import { uniqueNames, zipStore } from '../mail/zip';
+import { notifyUsers } from '../user-hub';
 
 export const mailRoutes = new Hono<AppEnv>();
+
+const THREAD_PATH = /\/mail\/threads\/([^/]+)/;
+// Lecture, IA et partage vers le chat ne changent pas la boîte.
+const QUIET_PATH = /\/mail\/threads\/[^/]+\/(read|ai|share)$/;
+
+// Action sur un fil : ses autres lecteurs relisent ; boîte lue avant, le fil peut disparaître.
+mailRoutes.use('/mail/threads/*', async (c, next: Next) => {
+	const tid = THREAD_PATH.exec(c.req.path)?.[1];
+	if (c.req.method === 'GET' || !tid || QUIET_PATH.test(c.req.path)) {
+		return next();
+	}
+	const row = await c.env.DB.prepare('SELECT mailbox_id FROM mail_threads WHERE id = ?').bind(tid).first<{ mailbox_id: string }>();
+	await next();
+	if (row && c.res.ok) {
+		c.executionCtx.waitUntil(mailChanged(c.env, [row.mailbox_id]));
+	}
+});
 
 const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
 const HOST_RE = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -149,6 +167,20 @@ export const SHARE_RANK = `CASE WHEN m.role = 'owner' OR EXISTS (SELECT 1 FROM m
 		WHERE ag.workspace_id = s.workspace_id AND ag.user_id = m.user_id AND (g.permissions & ${P.ADMINISTRATOR}) != 0) THEN 3 ELSE (SELECT MAX(CASE sg.level WHEN 'manage' THEN 3 WHEN 'reply' THEN 2 ELSE 1 END) FROM mailbox_share_grades sg
 	WHERE sg.mailbox_id = s.mailbox_id AND sg.workspace_id = s.workspace_id
 		AND (sg.grade_id = '${DEFAULT_GRADE}' OR sg.grade_id IN (SELECT mg.grade_id FROM member_grades mg WHERE mg.workspace_id = s.workspace_id AND mg.user_id = m.user_id))) END`;
+
+// Lecteurs d'une boîte : propriétaire et membres au moins en lecture sur un partage.
+export async function mailChanged(env: Env, boxIds: Iterable<string>): Promise<void> {
+	const users = new Set<string>();
+	for (const id of new Set(boxIds)) {
+		const { results } = await env.DB.prepare(
+			`SELECT owner_id AS id FROM mailboxes WHERE id = ?1 UNION SELECT m.user_id FROM ${SHARE_MEMBERS} WHERE s.mailbox_id = ?1 AND (${SHARE_RANK}) >= ${RANK.view}`,
+		)
+			.bind(id)
+			.all<{ id: string }>();
+		results.forEach((row) => users.add(row.id));
+	}
+	await notifyUsers(env, users, { t: 'mail' });
+}
 
 const accessOf = (rank: number | null | undefined): MailAccess => {
 	const n = rank ?? 0;
@@ -1157,10 +1189,12 @@ async function deliver(c: Ctx | Scope, body: Partial<MailSendInput>): Promise<{ 
 }
 
 mailRoutes.post('/mail/send', async (c) => {
-	const result = await deliver(c, await readJson<MailSendInput>(c));
+	const input = await readJson<MailSendInput>(c);
+	const result = await deliver(c, input);
 	if (!result.ok) {
 		return c.json({ error: result.error }, result.status);
 	}
+	c.executionCtx.waitUntil(mailChanged(c.env, typeof input.mailboxId === 'string' ? [input.mailboxId] : []));
 	const sent = await c.env.DB.prepare(`${THREAD_SELECT} WHERE t.id = ?`).bind(result.threadId).first<ThreadRow>();
 	return c.json(await detailJson(c, sent!, result.access), 201);
 });
@@ -1415,6 +1449,7 @@ mailRoutes.post('/mail/drafts/:id/schedule', async (c) => {
 // Cron : brouillons programmés échus, réservés un par un avant l'envoi.
 export async function sendScheduled(env: Env, now: number): Promise<void> {
 	const { results } = await env.DB.prepare('SELECT * FROM mail_drafts WHERE send_at IS NOT NULL AND send_at <= ? ORDER BY send_at LIMIT 10').bind(now).all<DraftRow>();
+	const sent = new Set<string>();
 	for (const row of results) {
 		const claim = await env.DB.prepare('UPDATE mail_drafts SET send_at = NULL WHERE id = ? AND send_at = ?').bind(row.id, row.send_at).run();
 		if (!claim.meta.changes) {
@@ -1439,8 +1474,11 @@ export async function sendScheduled(env: Env, now: number): Promise<void> {
 		).catch((error: unknown) => refuse(502, `Envoi impossible : ${errorMessage(error)}`));
 		if (!result.ok) {
 			await env.DB.prepare('UPDATE mail_drafts SET send_error = ? WHERE id = ?').bind(result.error, row.id).run();
+		} else {
+			sent.add(draft.mailboxId);
 		}
 	}
+	await mailChanged(env, sent);
 }
 
 type TemplateRow = { id: string; name: string; body: string; updated_at: number };

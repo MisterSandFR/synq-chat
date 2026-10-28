@@ -5,6 +5,7 @@ import type { Me, WorkspaceSummary } from '../../shared/types';
 import { AiAssist } from '../ai/AiAssist';
 import { api, errorText } from '../api';
 import { Icon } from '../ui';
+import { useUserEvents } from '../userEvents';
 import { ResizeHandle, useResizable } from '../workspace/resizable';
 import { BoxDialog } from './BoxDialog';
 import { Composer, newSeed, seedFromDraft, type ComposeSeed } from './Composer';
@@ -79,7 +80,7 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 		void loadBoxes();
 	}, [loadBoxes]);
 
-	// Relève serveur toutes les 60 s : la liste et les compteurs suivent le même rythme.
+	// Filet de sécurité si le canal personnel est coupé.
 	useEffect(() => {
 		setThreads(null);
 		void loadThreads();
@@ -93,6 +94,24 @@ export function MailView({ me, workspaces }: { me: Me; workspaces: WorkspaceSumm
 			void loadDrafts();
 		}
 	}, [filter.tab, loadDrafts]);
+
+	// Nouveau mail ou action d'un collègue : liste, compteurs et fil ouvert relus d'un coup.
+	const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
+	useEffect(() => () => clearTimeout(pending.current), []);
+	useUserEvents((event) => {
+		if (event.t !== 'mail' && event.t !== 'resync') {
+			return;
+		}
+		clearTimeout(pending.current);
+		pending.current = setTimeout(() => {
+			void loadThreads();
+			void loadBoxes();
+			if (filter.tab === 'drafts') {
+				void loadDrafts();
+			}
+			setVersion((v) => v + 1);
+		}, 300);
+	});
 
 	const terms = useMemo(() => searchTerms(query), [query]);
 	const searching = query.trim().length >= 2;

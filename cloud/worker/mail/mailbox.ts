@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import { mailChanged } from '../routes/mail';
 import { syncMailbox } from './store';
 import { transport } from './wire';
 
@@ -37,9 +38,17 @@ export class Mailbox extends DurableObject<Env> {
 		if (!id) {
 			return null;
 		}
-		this.running ??= syncMailbox(this.env, id, transport.open).finally(() => {
-			this.running = null;
-		});
+		this.running ??= syncMailbox(this.env, id, transport.open)
+			.then(async (result) => {
+				// Nouveaux mails : les lecteurs de la boîte relisent sans recharger.
+				if (result?.fetched) {
+					await mailChanged(this.env, [id]).catch(() => undefined);
+				}
+				return result;
+			})
+			.finally(() => {
+				this.running = null;
+			});
 		return this.running;
 	}
 }
