@@ -251,3 +251,46 @@ export async function reviseSockets(env: Env, workspaceId: string, pageIds: stri
 		}),
 	);
 }
+
+// Documents de cartes : mêmes droits que leur base, écriture dès « modifier ».
+export async function reviseCardDocs(env: Env, workspaceId: string, baseId?: string): Promise<void> {
+	const { results } = await env.DB.prepare(
+		`SELECT p.canvas_id, l.id, l.channel_id, l.created_by, l.restricted FROM list_item_pages p
+		JOIN list_items i ON i.id = p.item_id JOIN lists l ON l.id = i.list_id
+		WHERE l.workspace_id = ?1 AND (?2 IS NULL OR l.id = ?2)`,
+	)
+		.bind(workspaceId, baseId ?? null)
+		.all<Guarded & { canvas_id: string }>();
+	if (!results.length) {
+		return;
+	}
+	const peers = await Promise.all(results.map((row) => env.CANVAS_DOC.getByName(row.canvas_id).peerIds()));
+	const wanted = new Set(peers.flat());
+	if (!wanted.size) {
+		return;
+	}
+	const actors = new Map((await loadActors(env.DB, workspaceId)).filter((actor) => wanted.has(actor.id)).map((actor) => [actor.id, actor]));
+	const data = await loadAccess(env, workspaceId, [...actors.values()], results.map((row) => row.channel_id));
+	await Promise.all(
+		results.map(async (row, i) => {
+			const users = peers[i]!;
+			if (!users.length) {
+				return;
+			}
+			const rights: Record<string, 'none' | 'read' | 'write'> = {};
+			for (const userId of users) {
+				const actor = actors.get(userId);
+				const level = actor ? baseLevel(actor, row, data) : null;
+				rights[userId] = !level ? 'none' : atLeast(level, 'edit') ? 'write' : 'read';
+			}
+			await env.CANVAS_DOC.getByName(row.canvas_id).revise(rights);
+		}),
+	);
+}
+
+// Grades, membres ou droits de salon changés : tout document ouvert de l'espace relit les droits de ses connectés.
+export async function reviseWorkspace(env: Env, workspaceId: string): Promise<void> {
+	const rows = await listCanvasRows(env.DB, workspaceId);
+	await reviseSockets(env, workspaceId, rows.map((row) => row.id));
+	await reviseCardDocs(env, workspaceId);
+}

@@ -4,9 +4,19 @@ import { BANNER_SIZE, BANNER_TYPES, isMemberKey, type Layout } from '../../share
 import { P } from '../../shared/permissions';
 import type { ChannelOverrides } from '../../shared/types';
 import { listGrades } from '../grades';
+import { reviseWorkspace } from '../access';
 import { denyUnless, fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
+import type { Result } from '../result';
 
 export const categoryRoutes = new Hono<AppEnv>();
+
+// Droits de salon changés via sa catégorie : les pages et cartes ouvertes relisent les accès.
+function revised<T>(c: Ctx, result: Result<T>) {
+	if (result.ok) {
+		c.executionCtx.waitUntil(reviseWorkspace(c.env, c.get('workspaceId')).catch(() => undefined));
+	}
+	return unwrap(c, result);
+}
 
 // Clés admises : grades de l'espace ou membres préfixés par @ ; null au moindre inconnu.
 export async function cleanOverrides(c: Ctx, overrides: unknown): Promise<ChannelOverrides | null> {
@@ -127,9 +137,9 @@ categoryRoutes.put('/w/:wid/categories/:id/overrides', async (c) => {
 	if (!clean) {
 		return fail(c, 400, 'Surcharges invalides');
 	}
-	return unwrap(c, await stub(c).setCategoryOverrides(c.get('actor'), c.req.param('id'), clean));
+	return revised(c, await stub(c).setCategoryOverrides(c.get('actor'), c.req.param('id'), clean));
 });
 
-categoryRoutes.post('/w/:wid/channels/:cid/sync', async (c) => unwrap(c, await stub(c).syncChannel(c.get('actor'), c.req.param('cid'))));
+categoryRoutes.post('/w/:wid/channels/:cid/sync', async (c) => revised(c, await stub(c).syncChannel(c.get('actor'), c.req.param('cid'))));
 
-categoryRoutes.put('/w/:wid/layout', async (c) => unwrap(c, await stub(c).setLayout(c.get('actor'), await readJson<Layout>(c))));
+categoryRoutes.put('/w/:wid/layout', async (c) => revised(c, await stub(c).setLayout(c.get('actor'), await readJson<Layout>(c))));

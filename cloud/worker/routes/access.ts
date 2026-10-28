@@ -11,6 +11,7 @@ import {
 	inheritedFrom,
 	loadAccess,
 	pageLevel,
+	reviseCardDocs,
 	reviseSockets,
 	rulesOf,
 	spaceLevel,
@@ -129,6 +130,7 @@ accessRoutes.put('/w/:wid/access/:kind/:id', async (c) => {
 		await stub(c)
 			.listChanged(t.node.id, t.node.channel_id)
 			.catch(() => undefined);
+		await reviseCardDocs(c.env, wid, t.node.id);
 	} else {
 		const pages = t.kind === 'page' ? fresh.byId : new Map<string, PageNode>((await listCanvasRows(c.env.DB, wid)).map((row) => [row.id, row]));
 		const roots = t.kind === 'page' ? new Set([t.node.id]) : new Set([...pages.values()].filter((row) => row.category_id === t.node.id).map((row) => row.id));

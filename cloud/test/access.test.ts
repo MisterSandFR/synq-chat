@@ -157,6 +157,39 @@ describe('partage des pages', () => {
 		expect((await meta(carol, child.id)).status).toBe(404);
 	});
 
+	it('révocation par changement de grade, de membre ou de grade supprimé', async () => {
+		const { owner, member, wid, team, page, share } = await setup();
+		const p = await page(owner);
+		await share(owner, 'page', p.id, { restricted: true, rules: [{ subjectId: team.id, level: 'edit' }] });
+		// Grade retiré : plus aucun accès.
+		expect(await closeCode(member, wid, p.id, () => owner.req('PUT', `/api/w/${wid}/members/${member.user.id}/grades`, { gradeIds: [] }))).toBe(4403);
+		// Grade rendu puis supprimé.
+		await owner.req('PUT', `/api/w/${wid}/members/${member.user.id}/grades`, { gradeIds: [team.id] });
+		expect(await closeCode(member, wid, p.id, () => owner.req('DELETE', `/api/w/${wid}/grades/${team.id}`))).toBe(4403);
+	});
+
+	it('révocation par grade : passage en lecture', async () => {
+		const { owner, member, wid, team, page, share } = await setup();
+		const p = await page(owner);
+		const readers = (await owner.req<Grade>('POST', `/api/w/${wid}/grades`, { name: 'Lecteurs', color: '#16a34a', permissions: 0 })).data;
+		await share(owner, 'page', p.id, { restricted: true, rules: [{ subjectId: team.id, level: 'edit' }, { subjectId: readers.id, level: 'view' }] });
+		expect(await closeCode(member, wid, p.id, () => owner.req('PUT', `/api/w/${wid}/members/${member.user.id}/grades`, { gradeIds: [readers.id] }))).toBe(4409);
+	});
+
+	it('révocation par grade : document d’une carte', async () => {
+		const { owner, member, wid, team, share } = await setup();
+		const base = (await owner.req<ListDetail>('POST', `/api/w/${wid}/lists`, { title: 'Projet' })).data;
+		const item = (await owner.req<{ id: string }>('POST', `/api/w/${wid}/lists/${base.id}/items`, { title: 'Carte' })).data;
+		expect((await owner.req('POST', `/api/w/${wid}/lists/${base.id}/items/${item.id}/page`)).status).toBe(200);
+		await share(owner, 'base', base.id, { restricted: true, rules: [{ subjectId: team.id, level: 'edit' }] });
+		const res = await exports.default.fetch(new Request(`${BASE}/api/w/${wid}/lists/${base.id}/items/${item.id}/page/ws`, { headers: { Upgrade: 'websocket', cookie: member.cookie } }));
+		const ws = res.webSocket!;
+		ws.accept();
+		const closed = new Promise<number>((resolve) => ws.addEventListener('close', (event) => resolve(event.code)));
+		await owner.req('PUT', `/api/w/${wid}/members/${member.user.id}/grades`, { gradeIds: [] });
+		expect(await Promise.race([closed, new Promise<number>((resolve) => setTimeout(() => resolve(0), 2000))])).toBe(4403);
+	});
+
 	it('révocation : socket fermé, ou relu en lecture', async () => {
 		const { owner, member, carol, wid, page, share } = await setup();
 		const p = await page(owner);

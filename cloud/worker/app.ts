@@ -22,6 +22,7 @@ import { resolveAttachments } from './media';
 import { AUDIT_KINDS, type AuditKind } from '../shared/audit';
 import { auditTrail } from './audit';
 import { authorizeUrl, completeLogin } from './recube';
+import { reviseWorkspace } from './access';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
 import { notificationRoutes } from './routes/notifications';
 import { mediaRoutes } from './routes/media';
@@ -414,7 +415,11 @@ app.get('/w/:wid/audit', async (c) => {
 	return unwrap(c, await stub(c).auditLog(c.get('actor'), known ? (kind as AuditKind) : null, Number.isInteger(before) && before > 0 ? before : null));
 });
 
-const refreshActors = async (c: Ctx) => stub(c).refreshActors(await loadActors(c.env.DB, c.get('workspaceId')));
+// Après tout changement de grade : les pages et cartes ouvertes déconnectent qui perd l'accès.
+const refreshActors = async (c: Ctx) => {
+	await stub(c).refreshActors(await loadActors(c.env.DB, c.get('workspaceId')));
+	c.executionCtx.waitUntil(reviseWorkspace(c.env, c.get('workspaceId')).catch(() => undefined));
+};
 
 app.get('/w/:wid/info', async (c) => {
 	const workspaceId = c.get('workspaceId');
@@ -503,6 +508,7 @@ app.delete('/w/:wid/members/:uid', async (c) => {
 	}
 	await c.env.DB.prepare('DELETE FROM members WHERE workspace_id = ? AND user_id = ?').bind(c.get('workspaceId'), targetId).run();
 	await stub(c).memberRemoved(targetId);
+	c.executionCtx.waitUntil(reviseWorkspace(c.env, c.get('workspaceId')).catch(() => undefined));
 	return c.json({ ok: true });
 });
 
@@ -686,7 +692,11 @@ app.put('/w/:wid/channels/:cid/overrides', async (c) => {
 	if (!clean) {
 		return fail(c, 400, 'Surcharges invalides');
 	}
-	return unwrap(c, await stub(c).setOverrides(c.get('actor'), c.req.param('cid'), clean));
+	const saved = await stub(c).setOverrides(c.get('actor'), c.req.param('cid'), clean);
+	if (saved.ok) {
+		c.executionCtx.waitUntil(reviseWorkspace(c.env, c.get('workspaceId')).catch(() => undefined));
+	}
+	return unwrap(c, saved);
 });
 
 const cursor = (value: string | undefined) => {
