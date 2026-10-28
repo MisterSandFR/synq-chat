@@ -971,3 +971,17 @@
 		max-width: none;
 	}
 }
+
+.bs-tab-wrap {
+	display: inline-flex;
+	align-items: center;
+}
+
+.bs-tab-more {
+	margin-left: -4px;
+	opacity: 0.7;
+}
+
+.bs-tab-more:hover {
+	opacity: 1;
+}

@@ -5,6 +5,7 @@ import type { Channel, Member } from '../../../shared/types';
 import { api, ApiError } from '../../api';
 import { navigate } from '../../router';
 import { Dialog, Icon, type IconName } from '../../ui';
+import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { FavoriteStar } from '../favorites/FavoritesSection';
 import { Automations } from './Automations';
 import { optionsOf } from './cells';
@@ -129,6 +130,9 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 		await api('DELETE', `${base}/items/${item.id}`).catch((e) => setError(message(e)));
 	};
 
+	const tabMenu = useContextMenu();
+	const [renaming, setRenaming] = useState<ListSavedView | null>(null);
+
 	if (missing) {
 		return (
 			<div className='lst-blank'>
@@ -176,6 +180,11 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 			setError(message(e));
 		}
 	};
+	// Renommer et supprimer au clic droit ou au « ⋯ » de l'onglet : le menu de réglages les cachait.
+	const viewItems = (v: ListSavedView): ContextMenuItem[] => [
+		{ label: 'Renommer la vue', icon: 'pencil', onSelect: () => setRenaming(v) },
+		...(list && list.views.length > 1 ? (['sep', { label: 'Supprimer la vue', icon: 'trash', danger: true, onSelect: () => void removeView(v) }] as ContextMenuItem[]) : []),
+	];
 	const removeView = async (target: ListSavedView) => {
 		try {
 			await api('DELETE', `${base}/views/${target.id}`);
@@ -240,10 +249,26 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 				<nav className='bs-tabs' aria-label='Vues'>
 					<div role='tablist' className='bs-tablist'>
 						{list.views.map((v) => (
-							<button key={v.id} type='button' role='tab' aria-selected={v.id === view?.id} className='bs-tab' onClick={() => go({ vue: v.id })}>
-								<Icon name={VIEW_ICON[v.kind]} size={15} />
-								<span className='ellipsis'>{v.name}</span>
-							</button>
+							<span key={v.id} className='bs-tab-wrap'>
+								<button type='button' role='tab' aria-selected={v.id === view?.id} className='bs-tab' onClick={() => go({ vue: v.id })} {...(list.canEdit ? tabMenu.bind(() => viewItems(v)) : {})}>
+									<Icon name={VIEW_ICON[v.kind]} size={15} />
+									<span className='ellipsis'>{v.name}</span>
+								</button>
+								{list.canEdit && v.id === view?.id && (
+									<button
+										type='button'
+										className='icon-btn icon-btn-sm bs-tab-more'
+										aria-label={`Options de la vue ${v.name}`}
+										title='Options de la vue'
+										onClick={(e) => {
+											const r = e.currentTarget.getBoundingClientRect();
+											tabMenu.open(r.left, r.bottom + 4, viewItems(v));
+										}}
+									>
+										<Icon name='more' size={14} />
+									</button>
+								)}
+							</span>
 						))}
 					</div>
 					{list.canEdit && (
@@ -503,6 +528,32 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 					</button>
 				</div>
 			</Dialog>
+			{tabMenu.menu}
+			{renaming && (
+				<Dialog open onClose={() => setRenaming(null)} title='Renommer la vue'>
+					<form
+						className='stack'
+						onSubmit={(e) => {
+							e.preventDefault();
+							const name = String(new FormData(e.currentTarget).get('name') ?? '').trim();
+							if (name && name !== renaming.name) {
+								void renameView(renaming, name);
+							}
+							setRenaming(null);
+						}}
+					>
+						<input name='name' defaultValue={renaming.name} maxLength={40} aria-label='Nom de la vue' autoFocus />
+						<div className='row' style={{ justifyContent: 'flex-end', gap: 8 }}>
+							<button type='button' className='btn' onClick={() => setRenaming(null)}>
+								Annuler
+							</button>
+							<button type='submit' className='btn btn-primary'>
+								Renommer
+							</button>
+						</div>
+					</form>
+				</Dialog>
+			)}
 		</div>
 	);
 }
