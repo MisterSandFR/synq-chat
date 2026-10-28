@@ -125,6 +125,18 @@ async function mailSources(env: Env, userId: string, query: string): Promise<AiS
 		.map(({ row }) => ({ kind: 'mail', id: row.id, title: row.subject || '(sans objet)', snippet: clip(oneLine(row.text), SNIPPET), href: `/mail?thread=${encodeURIComponent(row.id)}`, at: row.date }));
 }
 
+const dayFormat = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeZone: 'Europe/Paris' });
+
+// Heure locale de l'événement : en UTC, le modèle annonce une heure fausse.
+function eventWhen(startsAt: number, timezone: string, allDay: boolean): string {
+	const options: Intl.DateTimeFormatOptions = allDay ? { dateStyle: 'full' } : { dateStyle: 'full', timeStyle: 'short' };
+	try {
+		return new Intl.DateTimeFormat('fr-FR', { ...options, timeZone: timezone || 'Europe/Paris' }).format(startsAt);
+	} catch {
+		return new Intl.DateTimeFormat('fr-FR', { ...options, timeZone: 'Europe/Paris' }).format(startsAt);
+	}
+}
+
 async function eventSources(env: Env, userId: string, words: string[], now: number): Promise<AiSource[]> {
 	const { events } = await listEvents(env.DB, userId, now - 90 * DAY, now + 180 * DAY);
 	const match = (text: string) => words.filter((w) => fold(text).includes(fold(w))).length;
@@ -137,7 +149,7 @@ async function eventSources(env: Env, userId: string, words: string[], now: numb
 			kind: 'event',
 			id: event.id,
 			title: event.title,
-			snippet: clip(oneLine([new Date(event.startsAt).toISOString().slice(0, 16).replace('T', ' '), event.location, event.description].filter(Boolean).join(' · ')), SNIPPET),
+			snippet: clip(oneLine([eventWhen(event.startsAt, event.timezone, event.allDay), event.location, event.description].filter(Boolean).join(' · ')), SNIPPET),
 			href: '/calendrier',
 			at: event.startsAt,
 		}));
@@ -157,7 +169,7 @@ export async function federatedSearch(env: Env, userId: string, query: string, w
 }
 
 export const sourceLog = (sources: AiSource[]) =>
-	sources.map((s, i) => `[${i + 1}] (${KIND_LABEL[s.kind]}) ${s.title}${s.at ? `, ${new Date(s.at).toISOString().slice(0, 10)}` : ''} : ${s.snippet}`).join('\n');
+	sources.map((s, i) => `[${i + 1}] (${KIND_LABEL[s.kind]}) ${s.title}${s.at ? `, ${dayFormat.format(s.at)}` : ''} : ${s.snippet}`).join('\n');
 
 const KIND_LABEL: Record<AiSource['kind'], string> = { message: 'message', mail: 'mail', event: 'événement', page: 'page', item: 'élément de base' };
 

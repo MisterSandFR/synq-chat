@@ -1786,8 +1786,12 @@ kbd {
 }
 
 .composer-hint {
+	min-width: 0;
+	overflow: hidden;
 	padding-right: 8px;
 	font-size: 12px;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 	color: var(--muted);
 }
 
