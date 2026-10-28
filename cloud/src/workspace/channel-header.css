@@ -1,0 +1,86 @@
+.channel-tabs {
+	flex: none;
+	display: flex;
+	gap: 2px;
+	padding: 0 16px;
+	overflow-x: auto;
+	scrollbar-width: none;
+	border-bottom: 1px solid var(--line);
+}
+
+.channel-tabs::-webkit-scrollbar {
+	display: none;
+}
+
+.channel-tab {
+	position: relative;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 6px;
+	height: 38px;
+	padding: 0 10px;
+	border: 0;
+	background: none;
+	color: var(--muted);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.channel-tab:hover {
+	color: var(--text);
+}
+
+.channel-tab[aria-pressed='true'] {
+	color: var(--text);
+}
+
+.channel-tab[aria-pressed='true']::after {
+	content: '';
+	position: absolute;
+	right: 8px;
+	bottom: -1px;
+	left: 8px;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--accent);
+}
+
+.channel-tab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -4px;
+	border-radius: 6px;
+}
+
+.channel-tab-badge {
+	min-width: 18px;
+	padding: 0 5px;
+	border-radius: 9px;
+	background: var(--accent);
+	color: #fff;
+	font-size: 11px;
+	line-height: 18px;
+	text-align: center;
+}
+
+.header-menu {
+	display: flex;
+}
+
+@media (max-width: 720px) {
+	.channel-tabs {
+		padding: 0 8px;
+	}
+
+	.channel-tab {
+		height: 40px;
+	}
+}
+
+/* Une seule ligne sous l'ensemble nom + onglets. */
+.topbar:has(+ .channel-tabs) {
+	height: 50px;
+	border-bottom: 0;
+}

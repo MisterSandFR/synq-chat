@@ -5,6 +5,7 @@ import type { ChannelKind, Me, Member, Message } from '../../shared/types';
 import { api } from '../api';
 import { navigate, readPref, rememberWorkspace, writePref } from '../router';
 import { Avatar, Icon, Logo } from '../ui';
+import { ChannelTabs, HeaderMenu } from './ChannelHeader';
 import { Composer } from './Composer';
 import {
 	CallRing,
@@ -537,62 +538,36 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					<button type='button' className='icon-btn only-mobile' aria-pressed={panel === 'members'} aria-label='Membres' onClick={() => setPanel(panel === 'members' ? null : 'members')}>
 						<Icon name='users' />
 					</button>
-					{active?.kind === 'voice' && (
-						<button type='button' className='icon-btn' aria-pressed={voiceChat} aria-label='Chat du salon vocal' title='Chat du salon vocal' onClick={() => setVoiceChat(!voiceChat)}>
-							<Icon name='chat' />
-							{!voiceChat && (state.unread[active.id] ?? 0) > 0 && <span className='dot' style={{ marginLeft: -6, marginTop: -14 }} />}
-						</button>
-					)}
 					{!view && active?.kind === 'dm' && voice.snapshot?.channelId !== active.id && (
 						<button type='button' className='btn dm-call-btn' onClick={() => void voice.join(active.id)}>
 							<Icon name='headphones' size={16} /> Appeler
 						</button>
 					)}
-					{!view && activeDm?.group && (
-						<button type='button' className='icon-btn' aria-label='Participants du groupe' title='Participants du groupe' onClick={() => setGroupOpen(true)}>
-							<Icon name='users' />
-						</button>
-					)}
-					{active && active.kind !== 'voice' && (
-						<button type='button' className='icon-btn' aria-label='Canevas du salon' title='Canevas du salon' onClick={() => void openChannelCanvas(workspaceId, active.id)}>
-							<Icon name='file' />
-						</button>
-					)}
-					{active && (
-						<button type='button' className='icon-btn' aria-pressed={panel === 'pins'} aria-label='Messages épinglés' title='Messages épinglés' onClick={() => setPanel(panel === 'pins' ? null : 'pins')}>
-							<Icon name='pin' />
-						</button>
-					)}
-					{active && active.kind !== 'dm' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) && (
-						<button type='button' className='icon-btn' aria-label='Gérer l’accès' title='Gérer l’accès' onClick={() => setAccessOpen(true)}>
-							<Icon name='shield' />
-						</button>
-					)}
-					{active?.kind === 'text' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) && (
-						<button type='button' className='icon-btn hide-mobile' aria-pressed={announcing} aria-label='Annonce du salon' title='Annonce du salon' onClick={() => setAnnouncing(!announcing)}>
-							<Icon name='megaphone' />
-						</button>
-					)}
-					{active?.kind === 'text' && (
-						<button type='button' className='icon-btn' aria-label='Listes du salon' title='Listes du salon' onClick={() => navigate(`/w/${workspaceId}/listes?salon=${active.id}`)}>
-							<Icon name='list' />
-						</button>
-					)}
-					<button type='button' className='icon-btn hide-mobile' aria-label='Annuaire' title='Annuaire' onClick={() => setDirectory(true)}>
-						<Icon name='list' />
-					</button>
-					<button type='button' className='icon-btn' aria-pressed={panel === 'saved'} aria-label='Messages enregistrés' title='Messages enregistrés' onClick={() => setPanel(panel === 'saved' ? null : 'saved')}>
-						<Icon name='bookmark' />
-					</button>
-					{active && (
-						<button type='button' className='icon-btn' aria-pressed={panel === 'drive'} aria-label='Fichiers du salon' title='Fichiers du salon' onClick={() => setPanel(panel === 'drive' ? null : 'drive')}>
-							<Icon name='drive' />
-						</button>
-					)}
 					<button type='button' className='icon-btn' aria-label='Rechercher' title='Rechercher (Ctrl K)' onClick={() => setSearchOpen(true)}>
 						<Icon name='search' />
 					</button>
+					<HeaderMenu
+						actions={[
+							...(!view && activeDm?.group ? [{ key: 'group', label: 'Participants du groupe', icon: 'users' as const, onSelect: () => setGroupOpen(true) }] : []),
+							...(active && active.kind !== 'dm' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) ? [{ key: 'access', label: 'Gérer l’accès', icon: 'shield' as const, onSelect: () => setAccessOpen(true) }] : []),
+							...(active?.kind === 'text' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) ? [{ key: 'announce', label: announcing ? 'Masquer l’annonce' : 'Annonce du salon', icon: 'megaphone' as const, onSelect: () => setAnnouncing(!announcing) }] : []),
+							'separator' as const,
+							{ key: 'saved', label: 'Messages enregistrés', icon: 'bookmark' as const, onSelect: () => setPanel(panel === 'saved' ? null : 'saved') },
+							{ key: 'directory', label: 'Annuaire de l’espace', icon: 'users' as const, onSelect: () => setDirectory(true) },
+						]}
+					/>
 				</header>
+				{active && !view && (
+					<ChannelTabs
+						tabs={[
+							{ key: 'messages', label: active.kind === 'voice' ? 'Chat' : 'Messages', icon: 'chat', active: active.kind === 'voice' ? voiceChat : panel !== 'pins' && panel !== 'drive', badge: active.kind === 'voice' && !voiceChat ? (state.unread[active.id] ?? 0) : 0, onSelect: () => (active.kind === 'voice' ? setVoiceChat(!voiceChat) : setPanel(null)) },
+							{ key: 'pins', label: 'Épinglés', icon: 'pin', active: panel === 'pins', onSelect: () => setPanel(panel === 'pins' ? null : 'pins') },
+							{ key: 'files', label: 'Fichiers', icon: 'drive', active: panel === 'drive', onSelect: () => setPanel(panel === 'drive' ? null : 'drive') },
+							...(active.kind !== 'voice' ? [{ key: 'canvas', label: 'Canevas', icon: 'file' as const, onSelect: () => void openChannelCanvas(workspaceId, active.id) }] : []),
+							...(active.kind === 'text' ? [{ key: 'lists', label: 'Listes', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
+						]}
+					/>
+				)}
 
 				{state.status === 'offline' && <p className='banner'>Connexion perdue. Reconnexion en cours…</p>}
 				<CallRing
