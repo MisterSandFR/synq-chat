@@ -24,6 +24,7 @@ import {
 import { AccessDialog } from './grade-access/AccessDialog';
 import { DrivePanel } from './DrivePanel';
 import { DraftsView, ScheduledBanner, useDraftsLoader } from './drafts';
+import { useAbsenceStatus } from './absences/AbsenceStatus';
 import { MembersPanel } from './MembersPanel';
 import { useMemberMenu } from './members/useMemberMenu';
 import { MessageList } from './MessageList';
@@ -159,7 +160,8 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	);
 
 	const emojis = useCustomEmojis(workspaceId);
-	const lookup: Lookup = useMemo(() => ({ members, channels: rooms, myId, openChannel, emojis }), [members, rooms, myId, openChannel, emojis]);
+	const absences = useAbsenceStatus(workspaceId);
+	const lookup: Lookup = useMemo(() => ({ members, channels: rooms, myId, openChannel, emojis, absences }), [members, rooms, myId, openChannel, emojis, absences]);
 
 	const openMessage = useCallback(
 		(cid: string, id: number) => {
@@ -660,7 +662,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							messagePane
 						)}
 					</div>
-					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} onMessage={(id) => void startDirect([id]).catch(() => undefined)} menu={memberMenu.items} onClose={() => setPanel(null)} />}
+					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} absences={absences} onMessage={(id) => void startDirect([id]).catch(() => undefined)} menu={memberMenu.items} onClose={() => setPanel(null)} />}
 					{panel === 'drive' && active && (
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}
@@ -715,6 +717,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					key={card.userId}
 					member={members.get(card.userId)}
 					profile={rc.profiles.get(card.userId)}
+					absence={absences.get(card.userId)}
 					online={state.online.has(card.userId)}
 					grades={grades}
 					myId={myId}

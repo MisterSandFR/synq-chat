@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
+import { dayFromDate, daysBetween, holidaysBetween, kindInfo, partOn, shiftDay, type AbsenceKind, type AbsenceListing } from '../../shared/absences';
 import type { CalendarListing } from '../../shared/calendar';
 import type { Me, WorkspaceSummary } from '../../shared/types';
 import { api, errorText } from '../api';
@@ -10,16 +11,19 @@ import { ResizeHandle, useResizable } from '../workspace/resizable';
 import { addDays, dayKey, fmtDay, fmtMonth, fmtShort, fmtTime, groupByDay, HOUR, sameDay, startOfDay, startOfWeek, WEEKDAYS, type Placed } from './dates';
 import { EventDialog } from './EventDialog';
 import { SyncDialog } from './SyncDialog';
+import { TeamView, type TeamSpan } from './TeamView';
 import './calendar.css';
 
-type View = 'month' | 'week' | 'agenda';
+type View = 'month' | 'week' | 'agenda' | 'team';
 
 const VIEWS: Array<{ id: View; label: string }> = [
 	{ id: 'month', label: 'Mois' },
 	{ id: 'week', label: 'Semaine' },
 	{ id: 'agenda', label: 'Agenda' },
+	{ id: 'team', label: 'Équipe' },
 ];
 const AGENDA_DAYS = 60;
+const DAY_MS = 86_400_000;
 const PERSONAL = 'personnel';
 // Hauteur d'une heure dans la vue semaine, en pixels.
 const SLOT = 48;
@@ -32,7 +36,13 @@ function readHidden(): Set<string> {
 	}
 }
 
-function rangeOf(view: View, cursor: Date): [Date, Date] {
+// Absents et férié d'un jour, pour les vues Mois et Semaine.
+type DayAbsence = { people: Array<{ name: string; kind: AbsenceKind | null }>; holiday?: string };
+
+function rangeOf(view: View, cursor: Date, span: TeamSpan): [Date, Date] {
+	if (view === 'team') {
+		return span === 'week' ? [startOfWeek(cursor), addDays(startOfWeek(cursor), 7)] : [new Date(cursor.getFullYear(), cursor.getMonth(), 1), new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)];
+	}
 	if (view === 'month') {
 		const first = startOfWeek(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
 		return [first, addDays(first, 42)];
@@ -56,7 +66,11 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 	const [error, setError] = useState('');
 	const [opened, setOpened] = useState<Opened | null>(null);
 	const [sync, setSync] = useState(false);
-	const [from, to] = useMemo(() => rangeOf(view, cursor), [view, cursor]);
+	const [teamSpan, setTeamSpan] = useState<TeamSpan>(() => (readPref('calendar_team_span') === 'month' ? 'month' : 'week'));
+	const [showAbsences, setShowAbsences] = useState(() => readPref('calendar_absences') === '1');
+	const [absences, setAbsences] = useState<AbsenceListing | null>(null);
+	const [tick, setTick] = useState(0);
+	const [from, to] = useMemo(() => rangeOf(view, cursor, teamSpan), [view, cursor, teamSpan]);
 	const request = useRef(0);
 
 	const load = useCallback(async () => {
@@ -84,8 +98,42 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 	useEffect(() => () => clearTimeout(pending.current), []);
 	useUserEvents(() => {
 		clearTimeout(pending.current);
-		pending.current = setTimeout(() => void load(), 250);
+		pending.current = setTimeout(() => (void load(), setTick((t) => t + 1)), 250);
 	});
+
+	const banner = showAbsences && (view === 'month' || view === 'week');
+	useEffect(() => {
+		if (!banner) {
+			return;
+		}
+		let live = true;
+		api<AbsenceListing>('GET', `/absences?from=${dayFromDate(from)}&to=${dayFromDate(addDays(to, -1))}`)
+			.then((next) => live && setAbsences(next))
+			.catch(() => live && setAbsences(null));
+		return () => {
+			live = false;
+		};
+	}, [banner, from, to, tick]);
+
+	const absentByDay = useMemo(() => {
+		if (!banner) {
+			return undefined;
+		}
+		const first = dayFromDate(from);
+		const last = dayFromDate(addDays(to, -1));
+		const holidays = holidaysBetween(first, last);
+		const names = new Map(absences?.people.map((p) => [p.id, p.name]));
+		const out = new Map<string, DayAbsence>();
+		for (let i = 0, n = daysBetween(first, last); i <= n; i++) {
+			const day = shiftDay(first, i);
+			const seen = new Set<string>();
+			const people = (absences?.absences ?? []).filter((a) => partOn(a, day) && !seen.has(a.userId) && seen.add(a.userId)).map((a) => ({ name: names.get(a.userId) ?? '?', kind: a.kind }));
+			if (people.length || holidays.has(day)) {
+				out.set(day, { people, holiday: holidays.get(day) });
+			}
+		}
+		return out;
+	}, [banner, absences, from, to]);
 
 	const accents = useMemo(() => new Map(workspaces.map((w) => [w.id, w])), [workspaces]);
 
@@ -118,13 +166,32 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 	};
 
 	const shift = (dir: number) =>
-		setCursor((c) => (view === 'month' ? new Date(c.getFullYear(), c.getMonth() + dir, 1) : addDays(c, dir * (view === 'week' ? 7 : AGENDA_DAYS))));
+		setCursor((c) =>
+			view === 'month' || (view === 'team' && teamSpan === 'month') ? new Date(c.getFullYear(), c.getMonth() + dir, 1) : addDays(c, dir * (view === 'week' || view === 'team' ? 7 : AGENDA_DAYS)),
+		);
+
+	const pickSpan = (span: TeamSpan) => {
+		setTeamSpan(span);
+		writePref('calendar_team_span', span);
+	};
+
+	const toggleAbsences = (value: boolean) => {
+		setShowAbsences(value);
+		writePref('calendar_absences', value ? '1' : '');
+	};
+
+	const openTeam = (day: Date) => {
+		setCursor(day);
+		pickSpan('week');
+		switchView('team');
+	};
 
 	const create = (day: Date, hour = 9) => setOpened({ draft: new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour).getTime() });
 	const open = (item: Placed) => setOpened({ eventId: item.eventId, startsAt: item.startsAt });
 
 	const current = opened && 'eventId' in opened ? placed.find((p) => p.eventId === opened.eventId && p.startsAt === opened.startsAt) : undefined;
-	const title = view === 'month' ? fmtMonth(cursor) : view === 'week' ? `Semaine du ${fmtShort(from)}` : `À partir du ${fmtShort(from)}`;
+	const title =
+		view === 'month' || (view === 'team' && teamSpan === 'month') ? fmtMonth(cursor) : view === 'week' || view === 'team' ? `Semaine du ${fmtShort(from)}` : `À partir du ${fmtShort(from)}`;
 
 	return (
 		<div className='cal' style={{ '--cal-side-w': `${sideWidth.width}px` } as CSSProperties}>
@@ -146,6 +213,11 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 						</li>
 					))}
 				</ul>
+				<h2 className='cal-label'>Présences</h2>
+				<label className='check cal-filter'>
+					<input type='checkbox' checked={showAbsences} onChange={(e) => toggleAbsences(e.target.checked)} />
+					<span className='cal-filter-name'>Afficher les absences</span>
+				</label>
 				<button type='button' className='btn btn-ghost btn-block cal-sync-btn' onClick={() => setSync(true)}>
 					<Icon name='link' size={16} />
 					Abonnement et import
@@ -175,12 +247,14 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 				</header>
 				{error && <p className='notice notice-error cal-error'>{error}</p>}
 				<div className='cal-body'>
-					{!listing ? (
+					{view === 'team' ? (
+						<TeamView me={me} workspaces={workspaces} from={from} days={Math.round((to.getTime() - from.getTime()) / DAY_MS)} span={teamSpan} onSpan={pickSpan} tick={tick} />
+					) : !listing ? (
 						<div className='spinner' aria-busy />
 					) : view === 'month' ? (
-						<MonthGrid from={from} month={cursor.getMonth()} items={placed} onOpen={open} onCreate={create} onMore={(day) => (setCursor(day), switchView('week'))} />
+						<MonthGrid from={from} month={cursor.getMonth()} items={placed} onOpen={open} onCreate={create} onMore={(day) => (setCursor(day), switchView('week'))} absent={absentByDay} onTeam={openTeam} />
 					) : view === 'week' ? (
-						<WeekGrid from={from} items={placed} onOpen={open} onCreate={create} />
+						<WeekGrid from={from} items={placed} onOpen={open} onCreate={create} absent={absentByDay} onTeam={openTeam} />
 					) : (
 						<Agenda from={from} items={placed} onOpen={open} workspaces={accents} />
 					)}
@@ -191,6 +265,32 @@ export function CalendarView({ me, workspaces }: { me: Me; workspaces: Workspace
 			)}
 			<SyncDialog open={sync} onClose={() => setSync(false)} workspaces={workspaces} onImported={load} />
 		</div>
+	);
+}
+
+function DayAbsences({ info, onOpen }: { info: DayAbsence | undefined; onOpen: () => void }) {
+	if (!info) {
+		return null;
+	}
+	const names = info.people.map((p) => p.name);
+	return (
+		<>
+			{info.holiday && <span className='cal-holiday'>{info.holiday}</span>}
+			{names.length > 0 && (
+				<button
+					type='button'
+					className='cal-absent'
+					title={info.people.map((p) => `${p.name} : ${kindInfo(p.kind).label}`).join('\n')}
+					onClick={(e) => {
+						e.stopPropagation();
+						onOpen();
+					}}
+				>
+					<Icon name='users' size={12} />
+					<span className='ellipsis'>{names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ')}</span>
+				</button>
+			)}
+		</>
 	);
 }
 
@@ -212,9 +312,9 @@ function EventChip({ item, onOpen }: { item: Placed; onOpen: (item: Placed) => v
 	);
 }
 
-type GridProps = { from: Date; items: Placed[]; onOpen: (item: Placed) => void; onCreate: (day: Date, hour?: number) => void };
+type GridProps = { from: Date; items: Placed[]; onOpen: (item: Placed) => void; onCreate: (day: Date, hour?: number) => void; absent?: Map<string, DayAbsence>; onTeam?: (day: Date) => void };
 
-function MonthGrid({ from, month, items, onOpen, onCreate, onMore }: GridProps & { month: number; onMore: (day: Date) => void }) {
+function MonthGrid({ from, month, items, onOpen, onCreate, onMore, absent, onTeam }: GridProps & { month: number; onMore: (day: Date) => void }) {
 	const byDay = useMemo(() => groupByDay(items, from, 42), [items, from]);
 	const today = new Date();
 	return (
@@ -231,6 +331,7 @@ function MonthGrid({ from, month, items, onOpen, onCreate, onMore }: GridProps &
 						<span className='cal-cell-day' data-today={sameDay(day, today) || undefined}>
 							{day.getDate()}
 						</span>
+						{absent && <DayAbsences info={absent.get(dayFromDate(day))} onOpen={() => onTeam?.(day)} />}
 						{list.slice(0, 3).map((item) => (
 							<EventChip key={`${item.eventId}:${item.startsAt}`} item={item} onOpen={onOpen} />
 						))}
@@ -266,7 +367,7 @@ function layoutDay(items: Placed[], day: Date) {
 	return placedPieces.map((p) => ({ ...p, lanes: Math.max(1, lanes.length), top: ((p.from - start) / HOUR) * SLOT, height: Math.max(((p.to - p.from) / HOUR) * SLOT, 20) }));
 }
 
-function WeekGrid({ from, items, onOpen, onCreate }: GridProps) {
+function WeekGrid({ from, items, onOpen, onCreate, absent, onTeam }: GridProps) {
 	const days = Array.from({ length: 7 }, (_, i) => addDays(from, i));
 	const scroller = useRef<HTMLDivElement>(null);
 	const allDay = useMemo(
@@ -298,6 +399,7 @@ function WeekGrid({ from, items, onOpen, onCreate }: GridProps) {
 				<div className='cal-gutter cal-gutter-label'>Journée</div>
 				{days.map((day) => (
 					<div key={dayKey(day)} className='cal-allday-cell'>
+						{absent && <DayAbsences info={absent.get(dayFromDate(day))} onOpen={() => onTeam?.(day)} />}
 						{(allDay.get(dayKey(day)) ?? []).map((item) => (
 							<EventChip key={`${item.eventId}:${item.startsAt}`} item={item} onOpen={onOpen} />
 						))}
