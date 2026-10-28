@@ -53,17 +53,20 @@ import {
 	type Notice,
 } from '../lists-bases';
 import { LIMITS } from '../../shared/types';
+import { atLeast, type AccessLevel } from '../../shared/access';
+import { baseLevel, loadAccess, readableBases } from '../access';
 import type { CanvasPeer } from '../canvas-doc';
 
 export const listRoutes = new Hono<AppEnv>();
 
-type Rights = { view: boolean; edit: boolean; remove: boolean };
+type Rights = { view: boolean; edit: boolean; remove: boolean; level: AccessLevel | null };
 
 async function rightsOf(c: Ctx, row: ListRow): Promise<Rights> {
 	const actor = c.get('actor');
-	const [access] = await stub(c).listRights(actor, [row.channel_id]);
-	const edit = Boolean(access?.view) && !actor.guest;
-	return { view: Boolean(access?.view), edit, remove: edit && (row.created_by === actor.id || Boolean(access?.manage)) };
+	const data = await loadAccess(c.env, c.get('workspaceId'), [actor], [row.channel_id]);
+	const level = baseLevel(actor, row, data);
+	const edit = atLeast(level, 'edit') && !actor.guest;
+	return { view: level !== null, edit, remove: edit && level === 'manage', level };
 }
 
 // Liste invisible = 404 : un salon privé ne trahit pas ses listes.
@@ -86,18 +89,15 @@ const changed = (c: Ctx, row: ListRow) =>
 
 async function detail(c: Ctx, row: ListRow, rights: Rights): Promise<ListDetail> {
 	const [items, views] = await Promise.all([listItems(c.env.DB, row.id), listViews(c.env.DB, row.id)]);
-	return { ...toSummary(row), columns: columnsOf(row), labels: labelsOf(row), views, items, canEdit: rights.edit, canDelete: rights.remove };
+	return { ...toSummary(row), columns: columnsOf(row), labels: labelsOf(row), views, items, canEdit: rights.edit, canDelete: rights.remove, level: rights.level ?? 'view' };
 }
 
 listRoutes.get('/w/:wid/lists', async (c) => {
 	const rows = await workspaceLists(c.env.DB, c.get('workspaceId'));
 	const channel = c.req.query('channel');
 	const scoped = channel ? rows.filter((r) => r.channel_id === channel) : rows;
-	const access = await stub(c).listRights(
-		c.get('actor'),
-		scoped.map((r) => r.channel_id),
-	);
-	return c.json(scoped.filter((_, i) => access[i]?.view).map(toSummary));
+	const readable = await readableBases(c.env, c.get('workspaceId'), c.get('actor'), scoped);
+	return c.json(scoped.filter((r) => readable.has(r.id)).map(toSummary));
 });
 
 listRoutes.post('/w/:wid/lists', async (c) => {
@@ -113,7 +113,7 @@ listRoutes.post('/w/:wid/lists', async (c) => {
 		return fail(c, created.status, created.error);
 	}
 	await changed(c, created.value);
-	return c.json(await detail(c, created.value, { view: true, edit: true, remove: true }), 201);
+	return c.json(await detail(c, created.value, { view: true, edit: true, remove: true, level: 'manage' }), 201);
 });
 
 listRoutes.get('/w/:wid/lists/:lid', async (c) => {
@@ -145,7 +145,10 @@ listRoutes.delete('/w/:wid/lists/:lid', async (c) => {
 		return found;
 	}
 	const keys = await fileKeys(c.env.DB, c.get('workspaceId'), { listId: found.row.id });
-	await c.env.DB.prepare('DELETE FROM lists WHERE id = ?').bind(found.row.id).run();
+	await c.env.DB.batch([
+		c.env.DB.prepare('DELETE FROM lists WHERE id = ?').bind(found.row.id),
+		c.env.DB.prepare("DELETE FROM access_rules WHERE resource_kind = 'base' AND resource_id = ?").bind(found.row.id),
+	]);
 	c.executionCtx.waitUntil(keys.length ? c.env.FILES.delete(keys) : Promise.resolve());
 	await changed(c, found.row);
 	return c.json(null);

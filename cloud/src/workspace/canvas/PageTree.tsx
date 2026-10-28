@@ -1,17 +1,20 @@
 import { useMemo, useState, type DragEvent, type MouseEvent } from 'react';
 
+import { atLeast, type AccessKind, type PageCategory } from '../../../shared/access';
 import { canvasPath, type CanvasMeta } from '../../../shared/canvas';
 import { errorText } from '../../api';
 import { navigate } from '../../router';
 import { Dialog, Icon } from '../../ui';
 import { EmojiPicker } from '../chat/EmojiPicker';
+import { ShareDialog } from '../access/ShareDialog';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { favoriteItem } from '../favorites/FavoritesSection';
 import { endFavoriteDrag, startFavoriteDrag } from '../favorites/store';
-import { childrenOf, createPage, duplicatePage, isInside, pageLabel, patchPage, positionAt, rootsOf, usePages } from './pages';
+import { childrenOf, createCategory, createPage, deleteCategory, duplicatePage, isInside, pageLabel, patchCategory, patchPage, positionAt, refreshCategories, refreshPages, rootsOf, usePageCategories, usePages } from './pages';
 import './pages.css';
 
 const DRAG_TYPE = 'application/x-synq-page';
+const CAT_DRAG = 'application/x-synq-page-category';
 
 type Zone = 'before' | 'inside' | 'after';
 
@@ -67,6 +70,12 @@ export function PageTree({ workspaceId, activeId, compact, onError }: TreeProps 
 	const [drag, setDrag] = useState<{ id: string; over: string | null; zone: Zone } | null>(null);
 	const menu = useContextMenu();
 	const report = (e: unknown) => onError?.(errorText(e));
+	const categories = usePageCategories(workspaceId);
+	const [folded, setFolded] = useState<Set<string>>(() => new Set());
+	const [sharing, setSharing] = useState<{ kind: AccessKind; id: string; title: string } | null>(null);
+	const [renamingCat, setRenamingCat] = useState<string | null>(null);
+	const [addingCat, setAddingCat] = useState(false);
+	const [catOver, setCatOver] = useState<string | null>(null);
 
 	// Ancêtres de la page ouverte dépliés d'office.
 	const openPath = useMemo(() => {
@@ -113,6 +122,7 @@ export function PageTree({ workspaceId, activeId, compact, onError }: TreeProps 
 						...(page.channelId ? [] : [{ label: 'Déplacer vers…', icon: 'forward' as const, onSelect: () => setMoving(page) }]),
 					]
 				: []),
+			{ label: 'Partager…', icon: 'share', onSelect: () => setSharing({ kind: 'page', id: page.id, title: pageLabel(page) }) },
 			{ label: 'Copier le lien', icon: 'link', onSelect: () => void navigator.clipboard.writeText(`${location.origin}${canvasPath(workspaceId, page.id)}`) },
 			favoriteItem({ kind: 'canvas', refId: page.id }, page.title),
 			...(write && !page.channelId ? (['sep', { label: 'Archiver', icon: 'trash', danger: true, onSelect: () => void patchPage(workspaceId, page.id, { archived: true }).catch(report) }] as ContextMenuItem[]) : []),
@@ -131,9 +141,11 @@ export function PageTree({ workspaceId, activeId, compact, onError }: TreeProps 
 			return;
 		}
 		const parentId = target.parentId && items.some((p) => p.id === target.parentId) ? target.parentId : null;
-		const siblings = (parentId ? childrenOf(items, parentId) : rootsOf(items)).filter((p) => p.id !== page.id);
+		const categoryId = parentId ? (page.categoryId ?? null) : (target.categoryId ?? null);
+		const siblings = (parentId ? childrenOf(items, parentId) : rootsOf(items).filter((p) => (p.categoryId ?? null) === categoryId)).filter((p) => p.id !== page.id);
 		const index = siblings.findIndex((p) => p.id === target.id) + (zone === 'after' ? 1 : 0);
-		await patchPage(workspaceId, page.id, { parentId, position: positionAt(siblings, index) }).catch(report);
+		const moved = categoryId !== (page.categoryId ?? null) ? { categoryId } : {};
+		await patchPage(workspaceId, page.id, { parentId, position: positionAt(siblings, index), ...moved }).catch(report);
 	};
 
 	const row = (page: CanvasMeta, depth: number) => {
@@ -253,22 +265,203 @@ export function PageTree({ workspaceId, activeId, compact, onError }: TreeProps 
 		);
 	};
 
+	const known = new Set(categories.map((c) => c.id));
 	const roots = rootsOf(items);
+	const loose = roots.filter((p) => !p.categoryId || !known.has(p.categoryId));
+
+	const catMenu = (cat: PageCategory): ContextMenuItem[] => [
+		...(cat.level === 'manage'
+			? [
+					{ label: 'Renommer', icon: 'pencil' as const, onSelect: () => setRenamingCat(cat.id) },
+					{ label: 'Changer l’icône', icon: 'smile' as const, onSelect: () => setEmojiFor({ id: `cat:${cat.id}`, rect: new DOMRect(0, 0, 0, 0) }) },
+				]
+			: []),
+		...(atLeast(cat.level, 'edit') ? [{ label: 'Nouvelle page ici', icon: 'plus' as const, onSelect: () => void createPage(workspaceId, { categoryId: cat.id }).catch(report) }] : []),
+		{ label: cat.level === 'manage' ? 'Partager…' : 'Voir le partage', icon: 'share', onSelect: () => setSharing({ kind: 'page_category', id: cat.id, title: cat.name }) },
+		...(cat.level === 'manage'
+			? ([
+					'sep',
+					{
+						label: 'Supprimer la catégorie',
+						icon: 'trash',
+						danger: true,
+						onSelect: () => window.confirm(`Supprimer « ${cat.name} » ? Ses pages restent, sans catégorie.`) && void deleteCategory(workspaceId, cat.id).catch(report),
+					},
+				] as ContextMenuItem[])
+			: []),
+	];
+
+	// Une page glissée sur l'en-tête y entre ; une catégorie glissée prend sa place.
+	const dropOnCategory = (cat: PageCategory, e: DragEvent) => {
+		e.preventDefault();
+		setCatOver(null);
+		const draggedCat = e.dataTransfer.getData(CAT_DRAG);
+		if (draggedCat) {
+			const others = categories.filter((c) => c.id !== draggedCat);
+			const index = others.findIndex((c) => c.id === cat.id);
+			const before = others[index - 1]?.position ?? cat.position - 1;
+			void patchCategory(workspaceId, draggedCat, { position: (before + cat.position) / 2 }).catch(report);
+			return;
+		}
+		const id = e.dataTransfer.getData(DRAG_TYPE) || drag?.id;
+		const page = items.find((p) => p.id === id);
+		setDrag(null);
+		if (page && !page.channelId && atLeast(cat.level, 'edit')) {
+			const kids = roots.filter((p) => p.categoryId === cat.id && p.id !== page.id);
+			setFolded((prev) => {
+				const next = new Set(prev);
+				next.delete(cat.id);
+				return next;
+			});
+			void patchPage(workspaceId, page.id, { parentId: null, categoryId: cat.id, position: positionAt(kids, kids.length) }).catch(report);
+		}
+	};
+
+	const categoryRow = (cat: PageCategory) => {
+		const open = !folded.has(cat.id);
+		const pages = roots.filter((p) => p.categoryId === cat.id);
+		return (
+			<li key={cat.id} role='treeitem' aria-expanded={open} className='page-cat'>
+				<div
+					className={`page-cat-head${catOver === cat.id ? ' page-cat-over' : ''}`}
+					draggable={cat.level === 'manage' && renamingCat !== cat.id}
+					onDragStart={(e) => {
+						e.dataTransfer.effectAllowed = 'move';
+						e.dataTransfer.setData(CAT_DRAG, cat.id);
+					}}
+					onDragOver={(e) => {
+						e.preventDefault();
+						catOver !== cat.id && setCatOver(cat.id);
+					}}
+					onDragLeave={() => catOver === cat.id && setCatOver(null)}
+					onDrop={(e) => dropOnCategory(cat, e)}
+					{...menu.bind(() => catMenu(cat))}
+				>
+					<button
+						type='button'
+						className='page-cat-toggle'
+						aria-label={open ? 'Replier la catégorie' : 'Déplier la catégorie'}
+						onClick={() =>
+							setFolded((prev) => {
+								const next = new Set(prev);
+								open ? next.add(cat.id) : next.delete(cat.id);
+								return next;
+							})
+						}
+					>
+						<span className={`page-caret${open ? ' page-caret-open' : ''}`}>
+							<Icon name='chevron' size={12} />
+						</span>
+						{cat.icon && <span className='page-cat-icon'>{cat.icon}</span>}
+						{renamingCat !== cat.id && <span className='page-cat-name ellipsis'>{cat.name}</span>}
+					</button>
+					{renamingCat === cat.id && (
+						<input
+							className='page-rename'
+							autoFocus
+							defaultValue={cat.name}
+							aria-label='Nouveau nom'
+							maxLength={80}
+							onBlur={(e) => {
+								setRenamingCat(null);
+								const name = e.target.value.trim();
+								if (name && name !== cat.name) {
+									void patchCategory(workspaceId, cat.id, { name }).catch(report);
+								}
+							}}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter') {
+									(e.target as HTMLInputElement).blur();
+								} else if (e.key === 'Escape') {
+									setRenamingCat(null);
+								}
+							}}
+						/>
+					)}
+					{cat.restricted && (
+						<span className='page-cat-lock' title='Accès restreint'>
+							<Icon name='shield' size={12} />
+						</span>
+					)}
+					<span className='page-row-actions'>
+						<button
+							type='button'
+							className='page-row-btn'
+							aria-label='Actions de la catégorie'
+							title='Actions de la catégorie'
+							onClick={(e) => {
+								const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+								menu.open(r.left, r.bottom, catMenu(cat));
+							}}
+						>
+							<Icon name='more' size={14} />
+						</button>
+						{atLeast(cat.level, 'edit') && (
+							<button type='button' className='page-row-btn' aria-label='Nouvelle page dans la catégorie' title='Nouvelle page ici' onClick={() => void createPage(workspaceId, { categoryId: cat.id }).catch(report)}>
+								<Icon name='plus' size={14} />
+							</button>
+						)}
+					</span>
+				</div>
+				{open && (pages.length ? <ul role='group' className='page-tree-group'>{pages.map((page) => row(page, 0))}</ul> : <p className='page-cat-empty'>Glisse une page ici</p>)}
+			</li>
+		);
+	};
+
 	return (
 		<>
-			{roots.length === 0 ? (
+			{roots.length === 0 && categories.length === 0 ? (
 				<p className='page-tree-empty'>{compact ? 'Aucune page' : 'Aucune page pour l’instant.'}</p>
 			) : (
 				<ul className={`page-tree${compact ? ' page-tree-compact' : ''}`} role='tree' aria-label='Arbre des pages'>
-					{roots.map((page) => row(page, 0))}
+					{loose.map((page) => row(page, 0))}
+					{categories.map(categoryRow)}
 				</ul>
+			)}
+			{addingCat ? (
+				<input
+					className='page-rename page-cat-input'
+					autoFocus
+					placeholder='Nom de la catégorie'
+					aria-label='Nom de la catégorie'
+					maxLength={80}
+					onBlur={(e) => {
+						setAddingCat(false);
+						const name = e.target.value.trim();
+						if (name) {
+							void createCategory(workspaceId, name).catch(report);
+						}
+					}}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter') {
+							(e.target as HTMLInputElement).blur();
+						} else if (e.key === 'Escape') {
+							setAddingCat(false);
+						}
+					}}
+				/>
+			) : (
+				<button type='button' className='page-cat-new' onClick={() => setAddingCat(true)}>
+					<Icon name='plus' size={12} /> Nouvelle catégorie
+				</button>
+			)}
+			{sharing && (
+				<ShareDialog
+					workspaceId={workspaceId}
+					kind={sharing.kind}
+					id={sharing.id}
+					title={sharing.title}
+					onClose={() => setSharing(null)}
+					onChanged={() => void Promise.all([refreshPages(workspaceId), refreshCategories(workspaceId)]).catch(() => undefined)}
+				/>
 			)}
 			{menu.menu}
 			{emojiFor && (
 				<EmojiPicker
 					anchor={emojiFor.rect.width ? emojiFor.rect : new DOMRect(innerWidth / 2 - 160, innerHeight / 3, 1, 1)}
 					onPick={(icon) => {
-						void patchPage(workspaceId, emojiFor.id, { icon }).catch(report);
+						const cat = emojiFor.id.startsWith('cat:') ? emojiFor.id.slice(4) : null;
+						void (cat ? patchCategory(workspaceId, cat, { icon }) : patchPage(workspaceId, emojiFor.id, { icon })).catch(report);
 						setEmojiFor(null);
 					}}
 					onClose={() => setEmojiFor(null)}

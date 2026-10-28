@@ -29,6 +29,7 @@ export type ListRow = {
 	created_at: number;
 	updated_at: number;
 	item_count?: number;
+	restricted?: number;
 };
 
 type ItemRow = {

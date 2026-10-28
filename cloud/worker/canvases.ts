@@ -1,3 +1,4 @@
+import { atLeast, type AccessLevel } from '../shared/access';
 import { CANVAS_LIMITS, type CanvasAccess, type CanvasMeta, type PageComment, type PageRef } from '../shared/canvas';
 
 export type CanvasRow = {
@@ -15,6 +16,8 @@ export type CanvasRow = {
 	cover_key: string | null;
 	position: number;
 	archived_at: number | null;
+	category_id?: string | null;
+	restricted?: number;
 };
 
 const parseEditors = (raw: string): string[] => {
@@ -29,7 +32,10 @@ const parseEditors = (raw: string): string[] => {
 export const coverOf = (row: CanvasRow) =>
 	!row.cover_key ? null : row.cover_key.startsWith('gradient:') ? row.cover_key : `/api/w/${row.workspace_id}/canvases/${row.id}/files/${row.cover_key}`;
 
-export const toMeta = (row: CanvasRow, access: CanvasAccess): CanvasMeta => ({
+// `write` / `read` : documents d'éléments de base, sans règles propres.
+const levelOf = (given: AccessLevel | CanvasAccess): AccessLevel => (given === 'write' ? 'edit' : given === 'read' ? 'view' : given);
+
+export const toMeta = (row: CanvasRow, given: AccessLevel | CanvasAccess): CanvasMeta => ({
 	id: row.id,
 	workspaceId: row.workspace_id,
 	channelId: row.channel_id,
@@ -39,7 +45,10 @@ export const toMeta = (row: CanvasRow, access: CanvasAccess): CanvasMeta => ({
 	createdBy: row.created_by,
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,
-	access,
+	access: atLeast(levelOf(given), 'edit') ? 'write' : 'read',
+	level: levelOf(given),
+	categoryId: row.category_id ?? null,
+	restricted: Boolean(row.restricted),
 	parentId: row.parent_id,
 	icon: row.icon,
 	cover: coverOf(row),
@@ -139,7 +148,7 @@ export async function insertCanvas(
 	return row;
 }
 
-export async function updatePageRow(db: D1Database, id: string, fields: Partial<Pick<CanvasRow, 'title' | 'icon' | 'cover_key' | 'parent_id' | 'position'>>): Promise<void> {
+export async function updatePageRow(db: D1Database, id: string, fields: Partial<Pick<CanvasRow, 'title' | 'icon' | 'cover_key' | 'parent_id' | 'position' | 'category_id'>>): Promise<void> {
 	const keys = Object.keys(fields) as Array<keyof typeof fields>;
 	if (!keys.length) {
 		return;

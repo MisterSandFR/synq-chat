@@ -5,6 +5,7 @@ import type { Channel, Member } from '../../../shared/types';
 import { api, ApiError } from '../../api';
 import { navigate } from '../../router';
 import { Dialog, Icon, type IconName } from '../../ui';
+import { ShareDialog } from '../access/ShareDialog';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { FavoriteStar } from '../favorites/FavoritesSection';
 import { Automations } from './Automations';
@@ -56,6 +57,7 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 	const [drafts, setDrafts] = useState<Record<string, ViewConfig>>({});
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const [rulesOpen, setRulesOpen] = useState(false);
+	const [sharing, setSharing] = useState(false);
 	const selected = compact ? null : params.get('element');
 	const full = params.get('plein') === '1';
 	const viewId = compact ? localView : (params.get('vue') ?? localView);
@@ -233,6 +235,10 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 						{room && <span className='tag hide-mobile'># {room.name}</span>}
 						<FavoriteStar kind='list' refId={list.id} title={list.title} />
 						<span className='grow' />
+						<button type='button' className='btn btn-ghost' onClick={() => setSharing(true)}>
+							<Icon name='users' size={16} /> <span className='hide-mobile'>Partager</span>
+						</button>
+						{sharing && <ShareDialog workspaceId={workspaceId} kind='base' id={list.id} title={list.title || 'Sans titre'} onClose={() => setSharing(false)} />}
 						<button type='button' className='btn btn-ghost' onClick={() => setRulesOpen(true)}>
 							<Icon name='repeat' size={16} /> <span className='hide-mobile'>Automatisations</span>
 						</button>

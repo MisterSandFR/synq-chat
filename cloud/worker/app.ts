@@ -43,6 +43,7 @@ import { pollRoutes } from './routes/polls';
 import { voiceRoutes } from './routes/voice';
 import { dropEmojis, emojiRoutes } from './routes/emojis';
 import { canvasRoutes } from './routes/canvases';
+import { accessRoutes } from './routes/access';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
 import { aiHubRoutes } from './routes/ai-hub';
@@ -857,6 +858,7 @@ app.route('/', favoriteRoutes);
 app.route('/', aiHubRoutes);
 app.route('/', pollRoutes);
 app.route('/', reminderRoutes);
+app.route('/', accessRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

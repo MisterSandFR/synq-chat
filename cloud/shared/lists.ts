@@ -1,3 +1,5 @@
+import type { AccessLevel } from './access';
+
 export type ListColumnType = 'text' | 'status' | 'person' | 'date' | 'checkbox' | 'number' | 'link' | 'priority';
 
 export const LIST_COLUMN_TYPES: ReadonlyArray<{ id: ListColumnType; label: string }> = [
@@ -69,6 +71,7 @@ export interface ListDetail extends ListSummary {
 	items: ListItem[];
 	canEdit: boolean;
 	canDelete: boolean;
+	level: AccessLevel;
 }
 
 export interface ListComment {

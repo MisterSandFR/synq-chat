@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 
+import type { PageCategory } from '../../../shared/access';
 import { canvasPath, type CanvasMeta, type PagePatch } from '../../../shared/canvas';
 import { api } from '../../api';
 import { navigate } from '../../router';
@@ -86,8 +87,8 @@ export async function patchPage(workspaceId: string, id: string, patch: PagePatc
 	return meta;
 }
 
-export async function createPage(workspaceId: string, input: { parentId?: string | null; template?: string; title?: string } = {}, open = true): Promise<CanvasMeta> {
-	const meta = await api<CanvasMeta>('POST', `/w/${workspaceId}/canvases`, { title: input.title ?? '', parentId: input.parentId ?? null, template: input.template });
+export async function createPage(workspaceId: string, input: { parentId?: string | null; categoryId?: string | null; template?: string; title?: string } = {}, open = true): Promise<CanvasMeta> {
+	const meta = await api<CanvasMeta>('POST', `/w/${workspaceId}/canvases`, { title: input.title ?? '', parentId: input.parentId ?? null, categoryId: input.categoryId ?? null, template: input.template });
 	await refreshPages(workspaceId);
 	if (open) {
 		navigate(canvasPath(workspaceId, meta.id));
@@ -112,3 +113,57 @@ export function positionAt(siblings: CanvasMeta[], index: number): number {
 }
 
 export const pageLabel = (page: { title: string } | null | undefined) => page?.title || 'Sans titre';
+
+// --- Catégories de pages ---
+
+type CategoryStore = { items: PageCategory[] | null; listeners: Set<() => void> };
+const categoryStores = new Map<string, CategoryStore>();
+const NO_CATEGORIES: PageCategory[] = [];
+
+function categoryStore(workspaceId: string): CategoryStore {
+	let store = categoryStores.get(workspaceId);
+	if (!store) {
+		store = { items: null, listeners: new Set() };
+		categoryStores.set(workspaceId, store);
+	}
+	return store;
+}
+
+export async function refreshCategories(workspaceId: string): Promise<void> {
+	const store = categoryStore(workspaceId);
+	store.items = (await api<PageCategory[]>('GET', `/w/${workspaceId}/page-categories`)).sort((a, b) => a.position - b.position);
+	store.listeners.forEach((fn) => fn());
+}
+
+export function usePageCategories(workspaceId: string): PageCategory[] {
+	const store = categoryStore(workspaceId);
+	const items = useSyncExternalStore(
+		(fn) => {
+			store.listeners.add(fn);
+			return () => store.listeners.delete(fn);
+		},
+		() => store.items,
+	);
+	useEffect(() => {
+		if (!store.items) {
+			void refreshCategories(workspaceId).catch(() => undefined);
+		}
+	}, [workspaceId, store]);
+	return items ?? NO_CATEGORIES;
+}
+
+export async function createCategory(workspaceId: string, name: string): Promise<PageCategory> {
+	const created = await api<PageCategory>('POST', `/w/${workspaceId}/page-categories`, { name });
+	await refreshCategories(workspaceId);
+	return created;
+}
+
+export async function patchCategory(workspaceId: string, id: string, patch: { name?: string; icon?: string | null; position?: number }): Promise<void> {
+	await api('PATCH', `/w/${workspaceId}/page-categories/${id}`, patch);
+	await refreshCategories(workspaceId);
+}
+
+export async function deleteCategory(workspaceId: string, id: string): Promise<void> {
+	await api('DELETE', `/w/${workspaceId}/page-categories/${id}`);
+	await Promise.all([refreshCategories(workspaceId), refreshPages(workspaceId)]);
+}

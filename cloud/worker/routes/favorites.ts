@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 
 import { FAVORITE_KINDS, FAVORITES_MAX, type Favorite, type FavoriteRef } from '../../shared/favorites';
-import { canvasRow } from '../canvases';
+import { pageAccess, readableBases } from '../access';
 import type { FavoriteRow } from '../favorites';
 import { fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
 import { listRow } from '../lists';
@@ -27,12 +27,11 @@ async function described(c: Ctx, rows: FavoriteRow[]): Promise<Favorite[]> {
 		if (!ids.length) {
 			continue;
 		}
-		const { results } = await c.env.DB.prepare(`SELECT id, title, channel_id FROM ${table} WHERE workspace_id = ? AND id IN (${ids.map(() => '?').join(', ')})`)
+		const { results } = await c.env.DB.prepare(`SELECT id, title, channel_id, created_by, restricted FROM ${table} WHERE workspace_id = ? AND id IN (${ids.map(() => '?').join(', ')})`)
 			.bind(c.get('workspaceId'), ...ids)
-			.all<{ id: string; title: string; channel_id: string | null }>();
-		const channels = results.map((row) => row.channel_id);
-		const visible = kind === 'canvas' ? (await stub(c).canvasAccess(actor, channels)).map(Boolean) : (await stub(c).listRights(actor, channels)).map((r) => r.view);
-		results.forEach((row, i) => visible[i] && titles.set(`${kind}:${row.id}`, row.title));
+			.all<{ id: string; title: string; channel_id: string | null; created_by: string; restricted: number }>();
+		const readable = kind === 'canvas' ? new Set((await pageAccess(c.env, c.get('workspaceId'), actor)).levels.keys()) : await readableBases(c.env, c.get('workspaceId'), actor, results);
+		results.forEach((row) => readable.has(row.id) && titles.set(`${kind}:${row.id}`, row.title));
 	}
 	return rows.flatMap((row) => {
 		if (row.kind === 'channel') {
@@ -50,11 +49,10 @@ async function visible(c: Ctx, ref: FavoriteRef): Promise<boolean> {
 	}
 	const actor = c.get('actor');
 	if (ref.kind === 'canvas') {
-		const row = await canvasRow(c.env.DB, c.get('workspaceId'), ref.refId);
-		return Boolean(row && (await stub(c).canvasAccess(actor, [row.channel_id]))[0]);
+		return (await pageAccess(c.env, c.get('workspaceId'), actor)).levels.has(ref.refId);
 	}
 	const row = await listRow(c.env.DB, c.get('workspaceId'), ref.refId);
-	return Boolean(row && (await stub(c).listRights(actor, [row.channel_id]))[0]?.view);
+	return Boolean(row && (await readableBases(c.env, c.get('workspaceId'), actor, [row])).has(row.id));
 }
 
 favoriteRoutes.get('/w/:wid/favorites', async (c) => c.json(await described(c, await stub(c).favorites(c.get('actor')))));

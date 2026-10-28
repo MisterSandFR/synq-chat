@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 
 import { CANVAS_IMAGE_TYPES, CANVAS_LIMITS, PAGE_COVER_RE, pageTemplate, type CanvasAccess, type PagePatch, type PageRelated } from '../../shared/canvas';
+import { atLeast } from '../../shared/access';
 import { P, has } from '../../shared/permissions';
 import { LIMITS } from '../../shared/types';
+import { canvasAccessOf, categoryLevel, loadAccess, pageAccess, pageLevel, pageReaders, reviseSockets, subtreeIds } from '../access';
 import type { CanvasPeer } from '../canvas-doc';
 import {
 	ancestorRows,
@@ -21,7 +23,6 @@ import {
 	listComments,
 	resolveThread,
 	restorePage,
-	scopeOf,
 	threadExists,
 	toMeta,
 	toRef,
@@ -43,17 +44,15 @@ async function load(c: Ctx, id: string) {
 	}
 	const ancestors = row.parent_id ? await ancestorRows(c.env.DB, row.workspace_id, row.id) : [];
 	const scope = (ancestors.at(-1) ?? row).channel_id;
-	const [access] = await stub(c).canvasAccess(c.get('actor'), [scope]);
-	return access ? { row, access, ancestors, scope } : null;
+	const byId = new Map([row, ...ancestors].map((r) => [r.id, r]));
+	const data = await loadAccess(c.env, row.workspace_id, [c.get('actor')], [...byId.values()].map((r) => r.channel_id));
+	const level = pageLevel(c.get('actor'), row, byId, data);
+	return level ? { row, access: canvasAccessOf(level), level, ancestors, scope, byId, data } : null;
 }
 
 async function visible(c: Ctx) {
-	const rows = await listCanvasRows(c.env.DB, c.get('workspaceId'));
-	const byId = new Map(rows.map((row) => [row.id, row]));
-	const rights = rows.length ? await stub(c).canvasAccess(c.get('actor'), rows.map((row) => scopeOf(row, byId))) : [];
-	const access = new Map<string, CanvasAccess>();
-	rows.forEach((row, i) => rights[i] && access.set(row.id, rights[i]));
-	return { rows, byId, access };
+	const { rows, byId, levels } = await pageAccess(c.env, c.get('workspaceId'), c.get('actor'));
+	return { rows, byId, access: levels };
 }
 
 const imageKey = (row: CanvasRow, fid: string) => `w/${row.workspace_id}/canvas/${row.id}/${fid}`;
@@ -62,6 +61,7 @@ async function purge(c: Ctx, row: CanvasRow) {
 	const ids = [...(await descendantIds(c.env.DB, row.id)).reverse(), row.id];
 	for (const id of ids) {
 		await deleteCanvasRow(c.env.DB, id);
+		await c.env.DB.prepare("DELETE FROM access_rules WHERE resource_kind = 'page' AND resource_id = ?").bind(id).run();
 		await c.env.CANVAS_DOC.getByName(id).wipe();
 		const listed = await c.env.FILES.list({ prefix: `w/${row.workspace_id}/canvas/${id}/` });
 		if (listed.objects.length) {
@@ -81,7 +81,7 @@ canvasRoutes.post('/w/:wid/canvases', async (c) => {
 	if (actor.guest) {
 		return fail(c, 403, 'Accès invité limité');
 	}
-	const body = await readJson<{ title?: string; parentId?: string | null; template?: string; icon?: string }>(c);
+	const body = await readJson<{ title?: string; parentId?: string | null; categoryId?: string | null; template?: string; icon?: string }>(c);
 	const template = body.template ? pageTemplate(body.template) : null;
 	if (body.template && !template) {
 		return fail(c, 400, 'Modèle inconnu');
@@ -99,11 +99,28 @@ canvasRoutes.post('/w/:wid/canvases', async (c) => {
 	}
 	const title = cleanTitle(body.title) || template?.title || 'Sans titre';
 	const icon = typeof body.icon === 'string' && body.icon.length <= CANVAS_LIMITS.icon ? body.icon : (template?.icon ?? null);
+	let categoryId: string | null = null;
+	if (body.categoryId && !parentId) {
+		const data = await loadAccess(c.env, c.get('workspaceId'), [actor], []);
+		const category = data.categories.get(body.categoryId);
+		const level = category ? categoryLevel(actor, category, data) : null;
+		if (!category || !level) {
+			return fail(c, 404, 'Catégorie introuvable');
+		}
+		if (!atLeast(level, 'edit')) {
+			return fail(c, 403, 'Catégorie en lecture seule');
+		}
+		categoryId = category.id;
+	}
 	const row = await insertCanvas(c.env.DB, { workspaceId: c.get('workspaceId'), channelId: null, title, createdBy: actor.id, parentId, icon });
+	if (categoryId) {
+		await updatePageRow(c.env.DB, row.id, { category_id: categoryId });
+		row.category_id = categoryId;
+	}
 	if (template) {
 		await c.env.CANVAS_DOC.getByName(row.id).seed(row.id, title, template.blocks);
 	}
-	return c.json(toMeta(row, 'write'), 201);
+	return c.json(toMeta(row, 'manage'), 201);
 });
 
 // Canevas de l'onglet du salon : renvoyé s'il existe, créé sinon par qui peut écrire.
@@ -116,7 +133,8 @@ canvasRoutes.post('/w/:wid/channels/:cid/canvas', async (c) => {
 	}
 	const existing = await channelCanvasRow(c.env.DB, c.get('workspaceId'), channelId);
 	if (existing) {
-		return c.json(toMeta(existing, access));
+		const found = await load(c, existing.id);
+		return found ? c.json(toMeta(found.row, found.level)) : fail(c, 404, 'Salon introuvable');
 	}
 	if (access !== 'write') {
 		return fail(c, 403, 'Ce salon n’a pas encore de canevas');
@@ -124,17 +142,17 @@ canvasRoutes.post('/w/:wid/channels/:cid/canvas', async (c) => {
 	const { title } = await readJson<{ title: string }>(c);
 	try {
 		const row = await insertCanvas(c.env.DB, { workspaceId: c.get('workspaceId'), channelId, title: cleanTitle(title) || 'Canevas du salon', createdBy: actor.id });
-		return c.json(toMeta(row, 'write'), 201);
+		return c.json(toMeta(row, 'manage'), 201);
 	} catch {
 		// Création simultanée : l'index unique a gardé l'autre.
 		const raced = await channelCanvasRow(c.env.DB, c.get('workspaceId'), channelId);
-		return raced ? c.json(toMeta(raced, access)) : fail(c, 409, 'Création impossible, réessaie');
+		return raced ? c.json(toMeta(raced, 'edit')) : fail(c, 409, 'Création impossible, réessaie');
 	}
 });
 
 canvasRoutes.get('/w/:wid/canvases/:id', async (c) => {
 	const found = await load(c, c.req.param('id'));
-	return found ? c.json(toMeta(found.row, found.access)) : fail(c, 404, 'Canevas introuvable');
+	return found ? c.json(toMeta(found.row, found.level)) : fail(c, 404, 'Canevas introuvable');
 });
 
 canvasRoutes.patch('/w/:wid/canvases/:id', async (c) => {
@@ -182,6 +200,22 @@ canvasRoutes.patch('/w/:wid/canvases/:id', async (c) => {
 		}
 		fields.parent_id = body.parentId;
 	}
+	if (body.categoryId !== undefined && body.categoryId !== row.category_id) {
+		if (row.channel_id) {
+			return fail(c, 400, 'La page d’un salon reste hors catégorie');
+		}
+		if (body.categoryId !== null) {
+			const category = typeof body.categoryId === 'string' ? found.data.categories.get(body.categoryId) : undefined;
+			const level = category ? categoryLevel(c.get('actor'), category, found.data) : null;
+			if (!category || !level) {
+				return fail(c, 404, 'Catégorie introuvable');
+			}
+			if (!atLeast(level, 'edit')) {
+				return fail(c, 403, 'Catégorie en lecture seule');
+			}
+		}
+		fields.category_id = body.categoryId;
+	}
 	if (body.position !== undefined) {
 		if (typeof body.position !== 'number' || !Number.isFinite(body.position)) {
 			return fail(c, 400, 'Position invalide');
@@ -194,8 +228,13 @@ canvasRoutes.patch('/w/:wid/canvases/:id', async (c) => {
 	} else if (body.archived === false && row.archived_at !== null) {
 		await restorePage(c.env.DB, row);
 	}
+	// Déplacée : ses droits et ceux de ses sous-pages peuvent changer.
+	if (fields.parent_id !== undefined || fields.category_id !== undefined) {
+		const rows = await listCanvasRows(c.env.DB, row.workspace_id);
+		await reviseSockets(c.env, row.workspace_id, subtreeIds(new Set([row.id]), new Map(rows.map((r) => [r.id, r]))));
+	}
 	const fresh = await load(c, row.id);
-	return fresh ? c.json(toMeta(fresh.row, fresh.access)) : c.json({ ok: true });
+	return fresh ? c.json(toMeta(fresh.row, fresh.level)) : c.json({ ok: true });
 });
 
 canvasRoutes.post('/w/:wid/canvases/:id/duplicate', async (c) => {
@@ -212,7 +251,7 @@ canvasRoutes.post('/w/:wid/canvases/:id/duplicate', async (c) => {
 	const row = await insertCanvas(c.env.DB, { workspaceId: found.row.workspace_id, channelId: null, title, createdBy: actor.id, parentId: found.row.parent_id, icon: found.row.icon, coverKey: cover });
 	const state = await c.env.CANVAS_DOC.getByName(found.row.id).exportState();
 	await c.env.CANVAS_DOC.getByName(row.id).importState(row.id, state, title);
-	return c.json(toMeta(row, 'write'), 201);
+	return c.json(toMeta(row, 'manage'), 201);
 });
 
 canvasRoutes.get('/w/:wid/canvases/:id/related', async (c) => {
@@ -243,8 +282,8 @@ canvasRoutes.delete('/w/:wid/canvases/:id', async (c) => {
 	if (!found) {
 		return fail(c, 404, 'Canevas introuvable');
 	}
-	if (found.row.created_by !== actor.id && !actor.owner && !has(actor.perms, P.MANAGE_CHANNELS)) {
-		return fail(c, 403, 'Seul son auteur ou un gestionnaire des salons peut le supprimer');
+	if (found.level !== 'manage' && found.row.created_by !== actor.id) {
+		return fail(c, 403, 'Accès complet requis pour supprimer cette page');
 	}
 	await purge(c, found.row);
 	return c.json({ ok: true });
@@ -342,10 +381,14 @@ canvasRoutes.post('/w/:wid/canvases/:id/comments', async (c) => {
 	if (!existing && found.access !== 'write') {
 		return fail(c, 403, 'Page en lecture seule');
 	}
+	if (!atLeast(found.level, 'comment')) {
+		return fail(c, 403, 'Tu ne peux pas commenter cette page');
+	}
 	const quote = existing ? '' : typeof body.quote === 'string' ? body.quote.slice(0, CANVAS_LIMITS.quote) : '';
 	const comment = await insertComment(c.env.DB, { canvasId: found.row.id, threadId, quote, authorId: actor.id, body: text });
 	const asked = Array.isArray(body.mentions) ? body.mentions.filter((id): id is string => typeof id === 'string' && id !== actor.id).slice(0, 20) : [];
-	const mentioned = await workspaceMemberIds(c.env.DB, found.row.workspace_id, asked);
+	const members = await workspaceMemberIds(c.env.DB, found.row.workspace_id, asked);
+	const mentioned = members.length ? await pageReaders(c.env, found.row.workspace_id, found.row, found.byId, members) : [];
 	if (mentioned.length) {
 		await stub(c).pageMentioned(actor, mentioned, { workspaceId: found.row.workspace_id, scope: found.scope, pageId: found.row.id, threadId, title: found.row.title, body: text });
 	}
