@@ -10,6 +10,8 @@ import { aiErrorText, isAbort } from '../../ai/parse';
 import { Avatar, Icon } from '../../ui';
 import { useDraft } from '../drafts';
 import { memberColor } from '../grades';
+import { PollCard } from '../polls/PollCard';
+import { PollDialog } from '../polls/PollDialog';
 import { RichText, toDisplay, toTokens, type Lookup } from '../richText';
 import type { WorkspaceState } from '../useWorkspace';
 import { when } from './DirectAvatar';
@@ -37,6 +39,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 	const [following, setFollowing] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [text, setText] = useState('');
+	const [pollOpen, setPollOpen] = useState(false);
 	const [alsoChannel, setAlsoChannel] = useState(false);
 	const [sending, setSending] = useState(false);
 	const draft = useDraft(workspaceId, channel.id, rootId, { body: text, keys: [] }, (saved) => setText(saved.body));
@@ -186,6 +189,9 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 							}}
 						/>
 						<AiAssist textarea={replyRef} value={text} onChange={setText} context={root ? toDisplay(root.body, lookup) : undefined} align='end' />
+						<button type='button' className='icon-btn' aria-label='Sondage' title='Créer un sondage dans le fil' onClick={() => setPollOpen(true)}>
+							<Icon name='poll' />
+						</button>
 						<button type='submit' className='icon-btn' aria-label='Envoyer' disabled={sending || !text.trim()}>
 							<Icon name='send' />
 						</button>
@@ -196,6 +202,7 @@ export function ThreadPanel({ workspaceId, connId, channel, channelName, rootId,
 					</label>
 				</form>
 			)}
+			{pollOpen && <PollDialog workspaceId={workspaceId} channelId={channel.id} threadRoot={rootId} lookup={lookup} initialQuestion='' onClose={() => setPollOpen(false)} />}
 		</aside>
 	);
 }
@@ -212,7 +219,8 @@ function ThreadMessage({ message, lookup, grades, workspaceId }: { message: Mess
 						{when(message.createdAt)}
 					</time>
 				</header>
-				{message.body && (
+				{message.poll && <PollCard workspaceId={workspaceId} message={message} lookup={lookup} />}
+				{message.body && !message.poll && (
 					<p className='thread-msg-body'>
 						<RichText text={message.body} lookup={lookup} />
 						{message.editedAt && <span className='msg-edited'> (modifié)</span>}

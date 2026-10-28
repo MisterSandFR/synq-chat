@@ -12,6 +12,7 @@ import { ContextMenu, useContextMenu, type ContextMenuItem } from './ContextMenu
 import { memberColor, memberLabel } from './grades';
 import { MessageMedia } from './media/MessageMedia';
 import { EventCard } from './events/EventCard';
+import { PollCard } from './polls/PollCard';
 import { CanvasLinkCard } from './canvas/CanvasCard';
 import { CANVAS_LINK_RE } from '../../shared/canvas';
 import { MailCard } from '../mail/MailCard';
@@ -303,6 +304,7 @@ export function MessageList({
 									/>
 								) : (
 									message.body &&
+									!message.poll &&
 									!ai.hidesBody(message.id) && (
 										<div className={`msg-body${emojiOnly(message.body, lookup.emojis) ? ' msg-body-jumbo' : ''}`}>
 											<RichText text={message.body} lookup={lookup} />
@@ -316,6 +318,7 @@ export function MessageList({
 								{message.eventId && <EventCard workspaceId={workspaceId} eventId={message.eventId} lookup={lookup} />}
 								{CANVAS_LINK_RE.test(message.body) && <CanvasLinkCard workspaceId={workspaceId} body={message.body} lookup={lookup} />}
 								{message.mailCard && <MailCard card={message.mailCard} />}
+								{message.poll && <PollCard workspaceId={workspaceId} message={message} lookup={lookup} canManage={canModerate} />}
 								{message.reactions && message.reactions.length > 0 && (
 									<Reactions
 										reactions={message.reactions}

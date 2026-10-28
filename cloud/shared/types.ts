@@ -5,6 +5,7 @@ import type { CalendarReminder } from './calendar';
 import type { MailCard } from './mail';
 import type { Draft, ScheduledMessage } from './drafts';
 import type { Override } from './permissions';
+import type { Poll } from './polls';
 
 export interface Actor {
 	id: string;
@@ -132,6 +133,7 @@ export interface Message {
 	thread?: ThreadSummary | null;
 	eventId?: string | null;
 	mailCard?: MailCard;
+	poll?: Poll;
 }
 
 export interface MessagePage {
@@ -241,7 +243,8 @@ export type ServerEvent =
 	| { t: 'scheduled'; items: ScheduledMessage[] }
 	| { t: 'list_changed'; listId: string; channelId: string | null }
 	| { t: 'favorites' }
-	| { t: 'threads_unread'; count: number };
+	| { t: 'threads_unread'; count: number }
+	| { t: 'poll'; channelId: string; messageId: number; poll: Poll };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

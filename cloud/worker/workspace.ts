@@ -32,6 +32,8 @@ import type { MailCard } from '../shared/mail';
 import { NOTIFICATIONS_MIGRATION, forgetNotifications, listNotifications, markChannelNotificationsRead, markNotificationsRead, messageRecipients, notificationPrefs, notify, setNotifyLevel, unreadCount } from './notifications';
 import type { NotificationFilter, NotificationItem, NotificationPage, NotifyInput, NotifyLevel } from '../shared/notifications';
 import { parseAttachments } from './media';
+import { POLLS_MIGRATION, addOption, attachPolls, cleanPoll, closePollRow, closingText, duePolls, insertPoll, isClosed, nextPollClose, pollRow, pollSummaries, setVotes, type PollRow, type PollSpec } from './polls';
+import type { Poll, PollInput } from '../shared/polls';
 import {
 	applyLayout,
 	cleanCategoryName,
@@ -385,6 +387,7 @@ const MIGRATIONS = [
 	ALTER TABLE categories ADD COLUMN banner_key TEXT;`,
 	DRAFTS_MIGRATION,
 	FAVORITES_MIGRATION,
+	POLLS_MIGRATION,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -812,17 +815,17 @@ export class Workspace extends DurableObject<Env> {
 			const before = older(cursor.around, AROUND);
 			const after = newer(cursor.around, AROUND);
 			return ok({
-				messages: decorate(this.sql, [...before.slice(0, AROUND).reverse(), ...after.slice(0, AROUND)].map(toMessage)),
+				messages: attachPolls(this.sql, decorate(this.sql, [...before.slice(0, AROUND).reverse(), ...after.slice(0, AROUND)].map(toMessage)), actor.id),
 				hasMore: before.length > AROUND,
 				hasNewer: after.length > AROUND,
 			});
 		}
 		if (cursor.after !== undefined) {
 			const rows = newer(cursor.after + 1, PAGE_SIZE);
-			return ok({ messages: decorate(this.sql, rows.slice(0, PAGE_SIZE).map(toMessage)), hasMore: true, hasNewer: rows.length > PAGE_SIZE });
+			return ok({ messages: attachPolls(this.sql, decorate(this.sql, rows.slice(0, PAGE_SIZE).map(toMessage)), actor.id), hasMore: true, hasNewer: rows.length > PAGE_SIZE });
 		}
 		const rows = older(cursor.before ?? Number.MAX_SAFE_INTEGER, PAGE_SIZE);
-		return ok({ messages: decorate(this.sql, rows.slice(0, PAGE_SIZE).reverse().map(toMessage)), hasMore: rows.length > PAGE_SIZE, hasNewer: false });
+		return ok({ messages: attachPolls(this.sql, decorate(this.sql, rows.slice(0, PAGE_SIZE).reverse().map(toMessage)), actor.id), hasMore: rows.length > PAGE_SIZE, hasNewer: false });
 	}
 
 	postMessage(actor: Actor, channelId: string, body: string, attachments: Attachment[], replyTo: number | null = null, eventId: string | null = null): Result<Message> {
@@ -869,6 +872,9 @@ export class Workspace extends DurableObject<Env> {
 			for (const attachment of attachments) {
 				this.insertFile(channelId, null, attachment, actor.id, row.id);
 			}
+			if (this.pendingPoll) {
+				insertPoll(this.sql, row.id, this.pendingPoll);
+			}
 			return row.id;
 		});
 		this.setRead(actor.id, channelId, id);
@@ -889,6 +895,9 @@ export class Workspace extends DurableObject<Env> {
 		}
 		if (current.userId !== actor.id) {
 			return err(403, 'Seul l’auteur peut modifier ce message');
+		}
+		if (current.poll) {
+			return err(400, 'Un sondage ne se modifie pas');
 		}
 		const text = body.trim();
 		if (!text && !current.attachments.length) {
@@ -1540,7 +1549,7 @@ export class Workspace extends DurableObject<Env> {
 		if (!found.ok) {
 			return err(found.status, found.error);
 		}
-		const replies = this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.thread_root = ? ORDER BY m.id LIMIT 500`, rootId).toArray().map(toMessage);
+		const replies = attachPolls(this.sql, this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.thread_root = ? ORDER BY m.id LIMIT 500`, rootId).toArray().map(toMessage), actor.id);
 		return ok({ root: found.value, replies, following: isFollowing(this.sql, actor.id, rootId) });
 	}
 
@@ -1582,6 +1591,9 @@ export class Workspace extends DurableObject<Env> {
 			}
 			follow(this.sql, rootAuthor, rootId, null);
 			follow(this.sql, actor.id, rootId, row.id);
+			if (this.pendingPoll) {
+				insertPoll(this.sql, row.id, this.pendingPoll);
+			}
 			return row.id;
 		});
 		this.draftSent(actor.id, channelId, rootId);
@@ -2220,7 +2232,7 @@ export class Workspace extends DurableObject<Env> {
 
 	private message(id: number): Message | null {
 		const row = this.sql.exec<MessageRow>(`${MESSAGE_SELECT} WHERE m.id = ?`, id).toArray()[0];
-		return row ? decorate(this.sql, [toMessage(row)])[0]! : null;
+		return row ? attachPolls(this.sql, decorate(this.sql, [toMessage(row)]), null)[0]! : null;
 	}
 
 	private saveMentions(messageId: number, body: string): void {
@@ -2708,12 +2720,13 @@ export class Workspace extends DurableObject<Env> {
 
 	async alarm(): Promise<void> {
 		await this.sendDueScheduled(Date.now());
+		this.closeDuePolls(Date.now());
 		await this.armAlarm();
 	}
 
 	// Une seule alarme par DO : chaque source ajoute ici sa prochaine échéance.
 	private async armAlarm(): Promise<void> {
-		const wakes = [nextScheduledAt(this.sql)].filter((at): at is number => at !== null);
+		const wakes = [nextScheduledAt(this.sql), nextPollClose(this.sql)].filter((at): at is number => at !== null);
 		if (!wakes.length) {
 			await this.ctx.storage.deleteAlarm();
 			return;
@@ -2872,6 +2885,149 @@ export class Workspace extends DurableObject<Env> {
 				body: `${input.title} · ${input.body}`,
 				link: `/w/${input.workspaceId}/canevas/${input.pageId}?commentaire=${input.threadId}`,
 			});
+		}
+	}
+
+	// --- Sondages ---
+
+	// Lu par postMessage et threadReply : le sondage naît dans la transaction du message.
+	private pendingPoll: PollSpec | null = null;
+
+	async createPoll(actor: Actor, channelId: string, input: Partial<PollInput>): Promise<Result<Message>> {
+		const spec = cleanPoll(input, Date.now());
+		if (!spec.ok) {
+			return spec;
+		}
+		const { threadRoot } = spec.value;
+		if (threadRoot !== null && this.message(threadRoot)?.channelId !== channelId) {
+			return err(404, 'Fil introuvable');
+		}
+		this.pendingPoll = spec.value;
+		let posted: Result<Message>;
+		try {
+			posted = threadRoot === null ? this.postMessage(actor, channelId, spec.value.question, []) : this.threadReply(actor, threadRoot, spec.value.question, null, false);
+		} finally {
+			this.pendingPoll = null;
+		}
+		if (!posted.ok) {
+			return posted;
+		}
+		if (spec.value.closesAt !== null) {
+			await this.armAlarm();
+		}
+		return ok(attachPolls(this.sql, [posted.value], actor.id)[0]!);
+	}
+
+	pollView(actor: Actor, messageId: number): Result<Poll> {
+		const found = this.pollTarget(actor, messageId);
+		return found.ok ? ok(pollSummaries(this.sql, [messageId], actor.id).get(messageId)!) : found;
+	}
+
+	pollVote(actor: Actor, messageId: number, optionIds: unknown): Result<Poll> {
+		const found = this.pollVoter(actor, messageId);
+		if (!found.ok) {
+			return found;
+		}
+		const done = setVotes(this.sql, found.value.row, actor.id, optionIds, Date.now());
+		if (!done.ok) {
+			return done;
+		}
+		this.pushPoll(messageId, found.value.channelId);
+		return this.pollView(actor, messageId);
+	}
+
+	pollAddOption(actor: Actor, messageId: number, option: unknown): Result<Poll> {
+		const found = this.pollVoter(actor, messageId);
+		if (!found.ok) {
+			return found;
+		}
+		if (found.value.row.allow_add !== 1 && found.value.authorId !== actor.id) {
+			return err(403, 'Seul l’auteur peut ajouter des options');
+		}
+		const done = addOption(this.sql, found.value.row, option);
+		if (!done.ok) {
+			return done;
+		}
+		this.pushPoll(messageId, found.value.channelId);
+		return this.pollView(actor, messageId);
+	}
+
+	async pollClose(actor: Actor, messageId: number): Promise<Result<Poll>> {
+		const found = this.pollTarget(actor, messageId);
+		if (!found.ok) {
+			return found;
+		}
+		const { row, channelId, authorId } = found.value;
+		if (authorId !== actor.id && !this.can(actor, channelId, P.MANAGE_MESSAGES)) {
+			return err(403, 'Seul l’auteur ou un modérateur peut clore ce sondage');
+		}
+		if (row.closed_at !== null) {
+			return err(409, 'Sondage déjà clos');
+		}
+		this.finishPoll(messageId, channelId, authorId, actor.id);
+		await this.armAlarm();
+		return this.pollView(actor, messageId);
+	}
+
+	private pollTarget(actor: Actor, messageId: number): Result<{ row: PollRow; channelId: string; authorId: string }> {
+		const message = this.message(messageId);
+		const row = message ? pollRow(this.sql, messageId) : null;
+		if (!message || !row || !this.can(actor, message.channelId, P.VIEW_CHANNEL)) {
+			return err(404, 'Sondage introuvable');
+		}
+		return ok({ row, channelId: message.channelId, authorId: message.userId });
+	}
+
+	// Voter = pouvoir écrire ou réagir dans le salon, sondage ouvert.
+	private pollVoter(actor: Actor, messageId: number): Result<{ row: PollRow; channelId: string; authorId: string }> {
+		const found = this.pollTarget(actor, messageId);
+		if (!found.ok) {
+			return found;
+		}
+		if (!this.can(actor, found.value.channelId, P.SEND_MESSAGES) && !this.can(actor, found.value.channelId, P.ADD_REACTIONS)) {
+			return err(403, 'Tu ne peux pas voter dans ce salon');
+		}
+		if (isClosed(found.value.row)) {
+			return err(409, 'Sondage clos');
+		}
+		return found;
+	}
+
+	private finishPoll(messageId: number, channelId: string, authorId: string, closedBy: string | null): void {
+		if (!closePollRow(this.sql, messageId, Date.now())) {
+			return;
+		}
+		this.pushPoll(messageId, channelId);
+		const poll = pollSummaries(this.sql, [messageId], null).get(messageId)!;
+		if (closedBy !== authorId) {
+			this.pushNotification({ userId: authorId, kind: 'poll', channelId, messageId, actorId: closedBy, title: 'Sondage terminé', body: closingText(poll) });
+		}
+	}
+
+	private closeDuePolls(now: number): void {
+		for (const messageId of duePolls(this.sql, now)) {
+			const message = this.message(messageId);
+			if (message) {
+				this.finishPoll(messageId, message.channelId, message.userId, null);
+			}
+		}
+	}
+
+	// « Mes votes » propres à chaque lecteur : un envoi par connexion.
+	private pushPoll(messageId: number, channelId: string): void {
+		const byUser = new Map<string, Poll | undefined>();
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			if (!conn || !this.can(conn.actor, channelId, P.VIEW_CHANNEL)) {
+				continue;
+			}
+			if (!byUser.has(conn.actor.id)) {
+				byUser.set(conn.actor.id, pollSummaries(this.sql, [messageId], conn.actor.id).get(messageId));
+			}
+			const poll = byUser.get(conn.actor.id);
+			if (poll) {
+				this.send(ws, { t: 'poll', channelId, messageId, poll });
+			}
 		}
 	}
 }

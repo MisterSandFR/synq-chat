@@ -6,6 +6,7 @@ import { everyoneMentions } from '../../shared/rc';
 import { api } from '../api';
 import { COMMANDS_EVENT } from './commands/useSlash';
 import { EVENT_CARD_EVENT } from './events/store';
+import { publishPoll } from './polls/store';
 import { DRAFTS_EVENT } from './drafts/store';
 import { FAVORITES_EVENT } from './favorites/store';
 import { initialDmThreads, reduceDmThreads, type DmThreadsAction, type DmThreadsState } from './dm-threads/state';
@@ -208,6 +209,8 @@ function onEvent(state: WorkspaceState, action: Extract<Action, { type: 'event' 
 			return { ...state, drive: { ...state.drive, [event.channelId]: (state.drive[event.channelId] ?? 0) + 1 } };
 		case 'reactions':
 			return patchMessage(state, event.channelId, event.messageId, { reactions: event.reactions });
+		case 'poll':
+			return patchMessage(state, event.channelId, event.messageId, { poll: event.poll });
 		case 'pinned': {
 			const next = patchMessage(state, event.channelId, event.messageId, { pinned: event.pinned });
 			return { ...next, pins: { ...next.pins, [event.channelId]: (next.pins[event.channelId] ?? 0) + 1 } };
@@ -344,6 +347,9 @@ export function useWorkspace(workspaceId: string, myId: string, activeChannelId:
 				}
 				if (event.t === 'event_card') {
 					window.dispatchEvent(new CustomEvent(EVENT_CARD_EVENT, { detail: event.eventId }));
+				}
+				if (event.t === 'poll') {
+					publishPoll({ messageId: event.messageId, poll: event.poll });
 				}
 				if (event.t === 'draft' || event.t === 'scheduled') {
 					window.dispatchEvent(new CustomEvent(DRAFTS_EVENT, { detail: event }));

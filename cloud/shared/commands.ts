@@ -43,6 +43,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
 	{ name: 'shrug', description: 'Ajouter ¯\\_(ツ)_/¯ au message', usage: '[message]' },
 	{ name: 'sujet', description: 'Changer le sujet du salon', usage: '[nouveau sujet]' },
 	{ name: 'evenement', description: 'Créer ou partager un événement', usage: '[titre]' },
+	{ name: 'sondage', description: 'Créer un sondage', usage: '[question]' },
 ];
 
 export const COMMAND_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
