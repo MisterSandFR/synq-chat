@@ -2,6 +2,7 @@ import type { Member } from '../../../shared/types';
 import { Icon } from '../../ui';
 import { useContextMenu } from '../ContextMenu';
 import { favoriteDragProps, favoriteItem } from '../favorites/FavoritesSection';
+import { useFavorites } from '../favorites/store';
 import type { WorkspaceState } from '../useWorkspace';
 import { DirectAvatar, directName } from './DirectAvatar';
 import './dm-threads.css';
@@ -20,7 +21,8 @@ type Props = {
 };
 
 export function DirectSection({ state, channelId, members, myId, view, onOpenView, onOpenDirect, onNewDirect }: Props) {
-	const dms = state.dmThreads.dms ?? [];
+	const { items: favorites } = useFavorites();
+	const dms = (state.dmThreads.dms ?? []).filter((dm) => !favorites.some((f) => f.kind === 'channel' && f.refId === dm.id));
 	const ctx = useContextMenu();
 	return (
 		<>

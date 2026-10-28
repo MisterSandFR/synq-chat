@@ -7,7 +7,7 @@ import { Dialog, Icon } from '../../ui';
 import { EmojiPicker } from '../chat/EmojiPicker';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { favoriteDragProps, favoriteItem } from '../favorites/FavoritesSection';
-import { endFavoriteDrag, startFavoriteDrag } from '../favorites/store';
+import { endFavoriteDrag, startFavoriteDrag, useFavorites } from '../favorites/store';
 import { AccessDialog } from '../grade-access/AccessDialog';
 import { ChannelPermissions, OverridesEditor } from './OverridesEditor';
 import { useCategories } from './useCategories';
@@ -100,6 +100,9 @@ async function bannerFile(file: File): Promise<File> {
 export function CategoryNav({ workspaceId, info, channels, channelId, staff, onOpenChannel, onCreateChannel, renderChannel, footer, header }: Props) {
 	const [tick, setTick] = useState(0);
 	const loaded = useCategories(workspaceId, channels, tick);
+	const { items: favorites } = useFavorites();
+	// Comme Slack : un favori quitte sa catégorie, l'ordre enregistré du salon ne bouge pas.
+	const starred = useMemo(() => new Set(favorites.filter((f) => f.kind === 'channel').map((f) => f.refId)), [favorites]);
 	const categories = useMemo(() => loaded ?? [], [loaded]);
 	const [iconFor, setIconFor] = useState<{ channel: Channel; anchor: DOMRect } | null>(null);
 	const bannerInput = useRef<HTMLInputElement>(null);
@@ -408,7 +411,7 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 								)}
 							</div>
 						)}
-						{items.map((channel) => (
+						{items.filter((channel) => !starred.has(channel.id)).map((channel) => (
 							<div
 								key={channel.id}
 								className={`cat-item${over === `c:${channel.id}` ? ' dnd-over' : ''}`}
