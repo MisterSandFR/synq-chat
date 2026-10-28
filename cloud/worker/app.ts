@@ -40,6 +40,7 @@ import { dropEmojis, emojiRoutes } from './routes/emojis';
 import { dropLogo, logoUrl, workspaceLogoRoutes } from './routes/workspace-logo';
 import { aiChatRoutes } from './routes/ai-chat';
 import { guestRoutes } from './routes/guests';
+import { inviteRoutes } from './routes/invites';
 import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
 import { GUEST_SESSION_TTL } from '../shared/guests';
 
@@ -47,7 +48,6 @@ const SESSION_COOKIE = 'synq_session';
 const OAUTH_COOKIE = 'synq_oauth';
 const OAUTH_TTL = 10 * 60 * 1000;
 const SESSION_TTL = 30 * 24 * 3600 * 1000;
-const INVITE_TTL = 7 * 24 * 3600 * 1000;
 // Médias non exécutables uniquement : ni HTML ni SVG servis en ligne sur l'origine.
 const INLINE_TYPES = new Set([
 	'image/png',
@@ -380,34 +380,6 @@ app.post('/workspaces', async (c) => {
 	return c.json({ id, name, accent, owner: true, logoUrl: null, channels }, 201);
 });
 
-app.get('/invites/:code', async (c) => {
-	const invite = await c.env.DB.prepare(
-		'SELECT w.id, w.name, w.logo_key FROM invites i JOIN workspaces w ON w.id = i.workspace_id WHERE i.code = ? AND i.expires_at > ?',
-	)
-		.bind(c.req.param('code'), Date.now())
-		.first<{ id: string; name: string; logo_key: string | null }>();
-	return invite ? c.json({ workspaceId: invite.id, workspaceName: invite.name, logoUrl: logoUrl(invite.id, invite.logo_key) }) : fail(c, 404, 'Invitation invalide ou expirée');
-});
-
-app.post('/invites/:code/accept', async (c) => {
-	const user = c.get('user');
-	const invite = await c.env.DB.prepare('SELECT workspace_id FROM invites WHERE code = ? AND expires_at > ?')
-		.bind(c.req.param('code'), Date.now())
-		.first<{ workspace_id: string }>();
-	if (!invite) {
-		return fail(c, 404, 'Invitation invalide ou expirée');
-	}
-	const inserted = await c.env.DB.prepare(
-		"INSERT INTO members (workspace_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?) ON CONFLICT DO NOTHING",
-	)
-		.bind(invite.workspace_id, user.id, Date.now())
-		.run();
-	if (inserted.meta.changes) {
-		await workspaceStub(c.env, invite.workspace_id).memberJoined(user.id);
-	}
-	return c.json({ workspaceId: invite.workspace_id });
-});
-
 // Routes d'espace : membre requis, grades et permissions relus à chaque requête.
 app.use('/w/:wid/*', async (c, next) => {
 	const workspaceId = c.req.param('wid');
@@ -503,19 +475,6 @@ app.delete('/w/:wid/info', async (c) => {
 	await dropLogo(c, c.get('workspaceId'), logo?.logo_key);
 	await dropEmojis(c, c.get('workspaceId'));
 	return c.json({ ok: true });
-});
-
-app.post('/w/:wid/invites', async (c) => {
-	const denied = denyUnless(c, P.CREATE_INVITES);
-	if (denied) {
-		return denied;
-	}
-	const code = randomToken(9);
-	const now = Date.now();
-	await c.env.DB.prepare('INSERT INTO invites (code, workspace_id, created_by, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
-		.bind(code, c.get('workspaceId'), c.get('actor').id, now + INVITE_TTL, now)
-		.run();
-	return c.json({ code, expiresAt: now + INVITE_TTL }, 201);
 });
 
 app.delete('/w/:wid/members/:uid', async (c) => {
@@ -881,6 +840,7 @@ app.route('/', aiChatRoutes);
 app.route('/', workspaceLogoRoutes);
 app.route('/', mailSharerRoutes);
 app.route('/', emojiRoutes);
+app.route('/', inviteRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

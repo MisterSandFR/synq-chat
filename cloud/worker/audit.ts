@@ -14,6 +14,7 @@ const RULES: Rule[] = [
 	rule('DELETE', /^\/logo$/, 'workspace.update', 'workspace'),
 	rule('PUT', /^\/layout$/, 'layout.update', 'workspace'),
 	rule('POST', /^\/invites$/, 'invite.create', 'invite'),
+	rule('DELETE', /^\/invites\/([^/]+)$/, 'invite.revoke', 'invite'),
 	rule('DELETE', /^\/members\/([^/]+)$/, 'member.kick', 'member'),
 	rule('PUT', /^\/members\/([^/]+)\/grades$/, 'member.grades', 'member'),
 	rule('POST', /^\/grades$/, 'grade.create', 'grade'),

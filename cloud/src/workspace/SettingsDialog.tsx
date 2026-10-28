@@ -13,6 +13,7 @@ import { CommandsTab } from './commands/CommandsSettings';
 import { memberColor, memberGrades, topOf } from './grades';
 import { AuditTab } from './settings/AuditTab';
 import { GradesTab } from './settings/GradesSettings';
+import { InvitesTab } from './settings/InvitesSettings';
 import { MailTab } from './settings/MailSettings';
 import { Swatches } from './settings/Swatches';
 import { WebhooksTab } from './rc/WebhooksTab';
@@ -152,7 +153,7 @@ function SettingsShell({ info, channels, myId, onChanged, onClose }: Omit<Props,
 					{current.key === 'channels' && <ChannelsTab info={info} channels={channels} />}
 					{current.key === 'grades' && <GradesTab info={info} myId={myId} onChanged={onChanged} />}
 					{current.key === 'members' && <MembersTab info={info} myId={myId} onChanged={onChanged} />}
-					{current.key === 'invites' && <InvitesTab workspaceId={info.id} />}
+					{current.key === 'invites' && <InvitesTab info={info} channels={channels} myId={myId} />}
 					{current.key === 'emojis' && <EmojisTab info={info} />}
 					{current.key === 'commands' && <CommandsTab workspaceId={info.id} />}
 					{current.key === 'webhooks' && <WebhooksTab workspaceId={info.id} />}
@@ -546,40 +547,6 @@ function GradePicker({ grades, onPick, label }: { grades: Grade[]; onPick: (id: 
 					))}
 				</Floating>
 			)}
-		</div>
-	);
-}
-
-function InvitesTab({ workspaceId }: { workspaceId: string }) {
-	const { error, run } = useAction();
-	const [link, setLink] = useState<string | null>(null);
-	const [copied, setCopied] = useState(false);
-	return (
-		<div className='stack'>
-			<p className='muted'>Un lien d’invitation reste valable 7 jours. Toute personne qui l’ouvre peut rejoindre l’espace avec le grade Membre.</p>
-			<button
-				type='button'
-				className='btn btn-primary'
-				style={{ alignSelf: 'flex-start' }}
-				onClick={() =>
-					void run(async () => {
-						const { code } = await api<{ code: string }>('POST', `/w/${workspaceId}/invites`);
-						setLink(`${location.origin}/invite/${code}`);
-						setCopied(false);
-					})
-				}
-			>
-				<Icon name='link' size={16} /> Générer un lien
-			</button>
-			{link && (
-				<div className='inline-form'>
-					<input readOnly value={link} aria-label='Lien d’invitation' onFocus={(e) => e.target.select()} />
-					<button type='button' className='btn' onClick={() => void navigator.clipboard.writeText(link).then(() => setCopied(true))}>
-						{copied ? 'Copié' : 'Copier'}
-					</button>
-				</div>
-			)}
-			{error && <p className='notice notice-error'>{error}</p>}
 		</div>
 	);
 }

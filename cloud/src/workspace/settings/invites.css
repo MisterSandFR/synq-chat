@@ -1,0 +1,148 @@
+.invites-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.invites-head .btn {
+	flex-shrink: 0;
+}
+
+.invites-filter {
+	align-self: flex-start;
+}
+
+.invites-count {
+	margin-left: 4px;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.invite-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 4px;
+	border-bottom: 1px solid var(--line);
+}
+
+.invite-row:last-child {
+	border-bottom: 0;
+}
+
+.invite-main {
+	display: grid;
+	flex: 1;
+	gap: 4px;
+	min-width: 0;
+}
+
+.invite-title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	font-size: 14px;
+}
+
+.invite-code {
+	flex-shrink: 0;
+	padding: 1px 6px;
+	border-radius: var(--r-sm);
+	background: var(--surface);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.invite-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 12px;
+	font-size: 13px;
+}
+
+.invite-meta > span:not(.grade-chip) {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	font-variant-numeric: tabular-nums;
+}
+
+.invite-actions {
+	display: flex;
+	flex-shrink: 0;
+	gap: 2px;
+}
+
+.invite-form-row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 12px;
+}
+
+.invite-grades {
+	display: grid;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	font-size: 14px;
+}
+
+.invite-grades legend {
+	margin-bottom: 6px;
+	padding: 0;
+}
+
+.invite-grade-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.invite-grade {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.invite-grade:has(input:checked) {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.invite-grade input {
+	margin: 0;
+}
+
+.invite-temporary {
+	align-items: flex-start;
+}
+
+.invite-form-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+@media (max-width: 560px) {
+	.invites-head {
+		flex-direction: column;
+	}
+
+	.invite-form-row {
+		grid-template-columns: 1fr;
+	}
+
+	.invite-row {
+		align-items: flex-start;
+	}
+}
