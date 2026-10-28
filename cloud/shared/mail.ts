@@ -32,6 +32,25 @@ export interface MailShareUpdate {
 	grades?: MailShareGrade[];
 }
 
+// Qui peut partager une boîte dans un espace : id de grade (`default` = tous les membres) ou memberKey(userId), comme les surcharges de salon.
+export interface MailSharers {
+	subjects: string[];
+}
+
+// Espaces où l'utilisateur peut créer un partage.
+export interface MailShareSpaces {
+	workspaceIds: string[];
+}
+
+export interface WorkspaceMailbox {
+	id: string;
+	name: string;
+	address: string;
+	ownerId: string;
+	ownerName: string;
+	reach: number;
+}
+
 export interface MailAssignee {
 	id: string;
 	name: string;
@@ -247,6 +266,7 @@ export const MAIL_LIMITS = {
 	search: 200,
 	scheduleMax: 366 * 24 * 3600 * 1000,
 	shareGrades: 100,
+	sharers: 200,
 } as const;
 
 // Bornes des termes surlignés dans `MailThread.match`.

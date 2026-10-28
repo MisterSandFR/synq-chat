@@ -1,4 +1,4 @@
-export type AuditKind = 'workspace' | 'invite' | 'member' | 'grade' | 'channel' | 'category' | 'command' | 'webhook' | 'voice' | 'guest';
+export type AuditKind = 'workspace' | 'invite' | 'member' | 'grade' | 'channel' | 'category' | 'command' | 'webhook' | 'voice' | 'guest' | 'mail';
 
 export interface AuditEntry {
 	id: number;
@@ -48,6 +48,8 @@ export const AUDIT_LABELS: Record<string, string> = {
 	'voice.moderate': 'a modéré en vocal',
 	'guest.invite': 'a invité un externe dans',
 	'guest.revoke': 'a révoqué l’invitation externe',
+	'mail.sharers': 'a changé qui peut partager une boîte mail',
+	'mail.unshare': 'a retiré de l’espace la boîte mail',
 };
 
 export const AUDIT_KINDS: Array<{ id: AuditKind; label: string }> = [
@@ -61,4 +63,5 @@ export const AUDIT_KINDS: Array<{ id: AuditKind; label: string }> = [
 	{ id: 'command', label: 'Commandes' },
 	{ id: 'webhook', label: 'Webhooks' },
 	{ id: 'voice', label: 'Vocal' },
+	{ id: 'mail', label: 'Mail' },
 ];
