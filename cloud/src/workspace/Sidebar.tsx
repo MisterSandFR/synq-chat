@@ -87,7 +87,7 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 							<ThreadsNavLink active={channelId === 'fils'} unread={state.dmThreads.unreadThreads} onOpen={() => open('fils')} />
 							<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => open('brouillons')} />
 							<SideLink icon='file' label='Canevas' active={pageActive('canevas')} onOpen={() => open('canevas')} />
-							<SideLink icon='list' label='Listes' active={pageActive('listes')} onOpen={() => open('listes')} />
+							<SideLink icon='list' label='Bases' active={pageActive('listes')} onOpen={() => open('listes')} />
 						</div>
 						<FavoritesSection
 							workspaceId={workspaceId}
