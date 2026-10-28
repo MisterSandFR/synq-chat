@@ -42,6 +42,9 @@ export function reduceDmThreads(state: DmThreadsState, event: ServerEvent): DmTh
 			return Object.keys(state.threads).length ? { ...state, threads: {} } : state;
 		case 'dm':
 			return upsertDirect(event.conversation)(state);
+		case 'access':
+			// Grade retiré : le groupe quitte la liste avec son salon.
+			return state.dms ? { ...state, dms: state.dms.filter((d) => event.channels.some((c) => c.id === d.id)) } : state;
 		case 'thread':
 			return putReply(event.rootId, event.message)(state);
 		case 'message': {
@@ -83,8 +86,8 @@ export function reduceDmThreads(state: DmThreadsState, event: ServerEvent): DmTh
 }
 
 // Salon renvoyé avec la conversation : la navigation n'attend pas l'event temps réel.
-export async function openDirect(workspaceId: string, userIds: string[], name = ''): Promise<{ conversation: DirectConversation; channel: Channel; perms: number }> {
-	const conversation = await api<DirectConversation>('POST', `/w/${workspaceId}/dms`, { userIds, name });
+export async function openDirect(workspaceId: string, userIds: string[], name = '', gradeIds: string[] = []): Promise<{ conversation: DirectConversation; channel: Channel; perms: number }> {
+	const conversation = await api<DirectConversation>('POST', `/w/${workspaceId}/dms`, { userIds, name, gradeIds });
 	const channel: Channel = {
 		id: conversation.id,
 		name: `dm-${conversation.id}`,

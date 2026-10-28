@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { DM_MAX_MEMBERS } from '../../shared/dm-threads';
 import type { Attachment } from '../../shared/types';
+import { loadActors } from '../grades';
 import { guestLeft } from '../guests';
 import { cleanName, fail, readJson, stub, unwrap, type AppEnv, type Ctx } from '../http';
 
@@ -20,23 +21,43 @@ async function allMembers(c: Ctx, ids: string[]): Promise<boolean> {
 	return results.length === ids.length;
 }
 
+// Grades de l'espace seulement ; vide si absent.
+async function gradeList(c: Ctx, value: unknown): Promise<string[] | null> {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value) || value.length > 50 || !value.every((id) => typeof id === 'string')) {
+		return null;
+	}
+	const ids = [...new Set(value as string[])];
+	if (!ids.length) {
+		return [];
+	}
+	const { results } = await c.env.DB.prepare(`SELECT id FROM grades WHERE workspace_id = ? AND id IN (${ids.map(() => '?').join(', ')})`)
+		.bind(c.get('workspaceId'), ...ids)
+		.all<{ id: string }>();
+	return results.length === ids.length ? ids : null;
+}
+
 dmThreadsRoutes.get('/w/:wid/dms', async (c) => c.json(await stub(c).directs(c.get('actor'))));
 
 dmThreadsRoutes.post('/w/:wid/dms', async (c) => {
-	const body = await readJson<{ userIds: string[]; name: string }>(c);
+	const body = await readJson<{ userIds: string[]; name: string; gradeIds: string[] }>(c);
 	const others = userList(body.userIds);
-	if (!others) {
+	const grades = await gradeList(c, body.gradeIds);
+	if (!others || !grades) {
 		return fail(c, 400, 'Requête invalide');
 	}
 	const actor = c.get('actor');
 	const ids = [...new Set([actor.id, ...others])];
-	if (ids.length < 2 || ids.length > DM_MAX_MEMBERS) {
-		return fail(c, 400, `Choisis entre 1 et ${DM_MAX_MEMBERS - 1} personnes`);
+	if ((ids.length < 2 && !grades.length) || ids.length > DM_MAX_MEMBERS) {
+		return fail(c, 400, `Choisis un grade ou entre 1 et ${DM_MAX_MEMBERS - 1} personnes`);
 	}
 	if (!(await allMembers(c, ids))) {
 		return fail(c, 400, 'Membre introuvable');
 	}
-	return unwrap(c, await stub(c).openDirect(actor, ids, cleanName(body.name)));
+	const actors = grades.length ? await loadActors(c.env.DB, c.get('workspaceId')) : [];
+	return unwrap(c, await stub(c).openDirect(actor, ids, cleanName(body.name), grades, actors));
 });
 
 dmThreadsRoutes.patch('/w/:wid/dms/:cid', async (c) => {
@@ -56,6 +77,20 @@ dmThreadsRoutes.post('/w/:wid/dms/:cid/members', async (c) => {
 		return fail(c, 400, 'Membre introuvable');
 	}
 	return unwrap(c, await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { add: ids }));
+});
+
+dmThreadsRoutes.post('/w/:wid/dms/:cid/grades', async (c) => {
+	const grades = await gradeList(c, (await readJson<{ gradeIds: string[] }>(c)).gradeIds);
+	if (!grades?.length) {
+		return fail(c, 400, 'Requête invalide');
+	}
+	const actors = await loadActors(c.env.DB, c.get('workspaceId'));
+	return unwrap(c, await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { addGrades: grades }, actors));
+});
+
+dmThreadsRoutes.delete('/w/:wid/dms/:cid/grades/:gid', async (c) => {
+	const actors = await loadActors(c.env.DB, c.get('workspaceId'));
+	return unwrap(c, await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { removeGrade: c.req.param('gid') }, actors));
 });
 
 dmThreadsRoutes.delete('/w/:wid/dms/:cid/members/:uid', async (c) => {
