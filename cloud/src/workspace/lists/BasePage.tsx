@@ -3,9 +3,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { LIST_VIEW_KINDS, defaultCardFace, defaultViewConfig, type CardFace, type ListColumn, type ListDetail, type ListItem, type ListLabel, type ListSavedView, type ListValue, type ListViewKind, type ViewConfig, type ViewFilter } from '../../../shared/lists';
 import type { Channel, Member } from '../../../shared/types';
 import { api, ApiError } from '../../api';
-import { navigate } from '../../router';
+import { navigate, useSearch } from '../../router';
 import { Dialog, Icon, type IconName } from '../../ui';
 import { ShareDialog } from '../access/ShareDialog';
+import { HeaderMenu } from '../ChannelHeader';
 import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { FavoriteStar } from '../favorites/FavoritesSection';
 import { Automations } from './Automations';
@@ -47,7 +48,8 @@ const merged = (item: ListItem, patch: Patch): ListItem => {
 export function ListPage({ workspaceId, listId, members, rooms, version, myId, compact = false, viewId: fixedView = null }: PageProps) {
 	const base = `/w/${workspaceId}/lists/${listId}`;
 	const page = `/w/${workspaceId}/listes/${listId}`;
-	const params = new URLSearchParams(location.search);
+	const search = useSearch();
+	const params = new URLSearchParams(search);
 	const [list, setList] = useState<ListDetail | null>(null);
 	const [missing, setMissing] = useState(false);
 	const [error, setError] = useState('');
@@ -260,17 +262,13 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 						<button type='button' className='btn btn-ghost' onClick={() => setRulesOpen(true)}>
 							<Icon name='repeat' size={16} /> <span className='hide-mobile'>Automatisations</span>
 						</button>
-						<button type='button' className='btn btn-ghost hide-mobile' onClick={() => setArchiveOpen(true)}>
-							<Icon name='folder' size={16} /> Archives
-						</button>
-						<a className='btn btn-ghost hide-mobile' href={`/api${base}/export`} download>
-							<Icon name='download' size={16} /> Exporter en CSV
-						</a>
-						{list.canDelete && (
-							<button type='button' className='icon-btn' aria-label='Supprimer la base' title='Supprimer la base' onClick={() => setConfirmDelete(true)}>
-								<Icon name='trash' />
-							</button>
-						)}
+						<HeaderMenu
+							actions={[
+								{ key: 'archives', label: 'Archives', icon: 'folder', onSelect: () => setArchiveOpen(true) },
+								{ key: 'export', label: 'Exporter en CSV', icon: 'download', onSelect: () => window.open(`/api${base}/export`, '_blank') },
+								...(list.canDelete ? ['separator' as const, { key: 'delete', label: 'Supprimer la base', icon: 'trash' as const, onSelect: () => setConfirmDelete(true) }] : []),
+							]}
+						/>
 					</header>
 				)}
 				<nav className='bs-tabs' aria-label='Vues'>

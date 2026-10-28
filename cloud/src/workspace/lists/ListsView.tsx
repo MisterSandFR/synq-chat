@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { LIST_TEMPLATES, LIST_VIEW_KINDS, type ListDetail, type ListSummary, type ListTemplate } from '../../../shared/lists';
 import type { Channel, Member } from '../../../shared/types';
 import { api, ApiError } from '../../api';
-import { navigate, usePath } from '../../router';
+import { navigate, usePath, useSearch } from '../../router';
 import { Avatar, Dialog, Icon } from '../../ui';
 import { ListPage } from './BasePage';
 import { TYPE_ICON } from './cells';
@@ -18,7 +18,7 @@ const message = (error: unknown) => (error instanceof ApiError ? error.message :
 export function ListsView({ workspaceId, members, channels, version, myId }: Props) {
 	const path = usePath();
 	const segment = path.split('/')[4] ?? null;
-	const salon = new URLSearchParams(location.search).get('salon');
+	const salon = new URLSearchParams(useSearch()).get('salon');
 	const rooms = useMemo(() => channels.filter((c) => c.kind === 'text'), [channels]);
 	if (segment && segment !== 'nouvelle') {
 		return <ListPage key={segment} workspaceId={workspaceId} listId={segment} members={members} rooms={rooms} version={version} myId={myId} />;

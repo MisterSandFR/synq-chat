@@ -6,8 +6,9 @@ const emit = () => listeners.forEach((listener) => listener());
 
 window.addEventListener('popstate', emit);
 
+// Comparé chemin et requête : ouvrir ou fermer « ?element= » sur la même page doit naviguer.
 export function navigate(path: string, replace = false): void {
-	if (path === location.pathname) {
+	if (path === location.pathname + location.search) {
 		return;
 	}
 	history[replace ? 'replaceState' : 'pushState'](null, '', path);
@@ -22,6 +23,8 @@ const subscribe = (listener: () => void) => {
 };
 
 export const usePath = () => useSyncExternalStore(subscribe, () => location.pathname);
+
+export const useSearch = () => useSyncExternalStore(subscribe, () => location.search);
 
 const RETURN_KEY = 'synq_return';
 
