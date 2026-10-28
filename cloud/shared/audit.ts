@@ -22,6 +22,8 @@ export const AUDIT_LABELS: Record<string, string> = {
 	'workspace.update': 'a modifié l’espace',
 	'layout.update': 'a réorganisé les salons',
 	'invite.create': 'a créé une invitation',
+	'invite.revoke': 'a révoqué une invitation',
+	'invite.join': 'a rejoint l’espace par une invitation',
 	'member.kick': 'a exclu',
 	'member.grades': 'a changé les grades de',
 	'grade.create': 'a créé le grade',

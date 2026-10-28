@@ -1,5 +1,6 @@
 import app from './app';
 import { sendReminders } from './calendar';
+import { expireTemporaryMembers } from './invites';
 import { wakeSnoozed } from './mail/store';
 import { mailChanged, sendScheduled } from './routes/mail';
 
@@ -27,5 +28,6 @@ export default {
 		ctx.waitUntil(sendReminders(env, Date.now()));
 		ctx.waitUntil(wakeSnoozed(env, Date.now()).then((boxes) => mailChanged(env, boxes)));
 		ctx.waitUntil(sendScheduled(env, Date.now()));
+		ctx.waitUntil(expireTemporaryMembers(env, Date.now()));
 	},
 } satisfies ExportedHandler<Env>;
