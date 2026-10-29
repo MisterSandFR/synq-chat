@@ -916,61 +916,6 @@ kbd {
 
 /* Accueil et invitation */
 
-.page {
-	max-width: 1040px;
-	margin: 0 auto;
-	padding: 24px clamp(16px, 4vw, 32px) 48px;
-	display: flex;
-	flex-direction: column;
-	gap: 28px;
-}
-
-.page-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	height: 48px;
-}
-
-.page-title {
-	font-size: 28px;
-	font-weight: 600;
-	letter-spacing: -0.02em;
-}
-
-.home-grid {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) 340px;
-	gap: 32px;
-	align-items: start;
-}
-
-.space-list {
-	list-style: none;
-	margin: 0;
-	padding: 0;
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-	gap: 12px;
-}
-
-.space-card {
-	display: flex;
-	align-items: center;
-	gap: 14px;
-	padding: 14px;
-	border: 1px solid var(--line);
-	border-radius: var(--r-lg);
-	color: var(--text);
-	text-decoration: none;
-}
-
-.space-card:hover {
-	border-color: var(--line-strong);
-	background: var(--surface);
-}
-
 .panel {
 	padding: 20px;
 	border: 1px solid var(--line);
@@ -981,12 +926,6 @@ kbd {
 .panel h2 {
 	font-size: 15px;
 	font-weight: 600;
-}
-
-@media (max-width: 860px) {
-	.home-grid {
-		grid-template-columns: 1fr;
-	}
 }
 
 .center-screen {
