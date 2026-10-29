@@ -227,7 +227,7 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 				) : turns.length === 0 ? (
 					<div className='hub-welcome'>
 						<h2>Que veux-tu savoir ?</h2>
-						<p>Je cherche dans les messages, mails, événements, pages et bases que tu peux voir, et je cite mes sources. Joins des fichiers pour les résumer, les comparer ou en faire une page.</p>
+						<p>Je cherche dans les messages, mails, événements, pages et suivis que tu peux voir, et je cite mes sources. Joins des fichiers pour les résumer, les comparer ou en faire une page.</p>
 						<div className='hub-suggest'>
 							{suggestionsFor(here.kind).map((s) => (
 								<button key={s.label} type='button' disabled={busy} onClick={() => pick(s)}>
