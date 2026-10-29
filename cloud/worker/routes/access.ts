@@ -48,7 +48,7 @@ async function target(c: Ctx, kind: AccessKind, id: string): Promise<Target | nu
 		return node ? { kind, node, byId } : null;
 	}
 	const node = await categoryRow(c, id);
-	return node ? { kind, node: { ...node, channel_id: null }, byId: new Map() } : null;
+	return node ? { kind, node, byId: new Map() } : null;
 }
 
 function levelOf(actor: Actor, t: Target, data: AccessData): AccessLevel | null {
@@ -58,11 +58,9 @@ function levelOf(actor: Actor, t: Target, data: AccessData): AccessLevel | null 
 	return t.kind === 'page_category' ? categoryLevel(actor, t.node as unknown as CategoryRow, data) : baseLevel(actor, t.node, data, t.byId);
 }
 
-const channelsOf = (t: Target) => [t.node.channel_id, ...[...t.byId.values()].map((row) => row.channel_id)];
-
 async function describe(c: Ctx, t: Target): Promise<AccessInfo | null> {
 	const actors = await loadActors(c.env.DB, c.get('workspaceId'));
-	const data = await loadAccess(c.env, c.get('workspaceId'), actors, channelsOf(t));
+	const data = await loadAccess(c.env, c.get('workspaceId'));
 	const level = levelOf(c.get('actor'), t, data);
 	if (!level) {
 		return null;
@@ -134,7 +132,7 @@ accessRoutes.put('/w/:wid/access/:kind/:id', pagesNotice, async (c) => {
 	const fresh = (await target(c, t.kind, t.node.id))!;
 	if (t.kind === 'base') {
 		await stub(c)
-			.listChanged(t.node.id, t.node.channel_id)
+			.listChanged(t.node.id, t.node.channel_id ?? null)
 			.catch(() => undefined);
 		await reviseCardDocs(c.env, wid, t.node.id);
 	} else {
@@ -164,7 +162,7 @@ const cleanName = (raw: unknown) => (typeof raw === 'string' ? raw.trim().replac
 
 async function categoryFor(c: Ctx): Promise<{ row: CategoryRow; level: AccessLevel } | Response> {
 	const row = await categoryRow(c, c.req.param('id')!);
-	const data = row ? await loadAccess(c.env, c.get('workspaceId'), [c.get('actor')], []) : null;
+	const data = row ? await loadAccess(c.env, c.get('workspaceId')) : null;
 	const level = row && data ? categoryLevel(c.get('actor'), row, data) : null;
 	if (!row || !level) {
 		return fail(c, 404, 'Catégorie introuvable');
@@ -174,7 +172,7 @@ async function categoryFor(c: Ctx): Promise<{ row: CategoryRow; level: AccessLev
 
 accessRoutes.get('/w/:wid/page-categories', async (c) => {
 	const actor = c.get('actor');
-	const data = await loadAccess(c.env, c.get('workspaceId'), [actor], []);
+	const data = await loadAccess(c.env, c.get('workspaceId'));
 	return c.json(
 		[...data.categories.values()].flatMap((row) => {
 			const level = categoryLevel(actor, row, data);

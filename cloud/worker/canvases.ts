@@ -63,8 +63,6 @@ export const cleanTitle = (raw: unknown) => (typeof raw === 'string' ? raw.trim(
 export const canvasRow = (db: D1Database, workspaceId: string, id: string) =>
 	db.prepare('SELECT * FROM canvases WHERE id = ? AND workspace_id = ?').bind(id, workspaceId).first<CanvasRow>();
 
-export const channelCanvasRow = (db: D1Database, workspaceId: string, channelId: string) =>
-	db.prepare('SELECT * FROM canvases WHERE workspace_id = ? AND channel_id = ?').bind(workspaceId, channelId).first<CanvasRow>();
 
 export async function listCanvasRows(db: D1Database, workspaceId: string): Promise<CanvasRow[]> {
 	const { results } = await db.prepare('SELECT * FROM canvases WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?').bind(workspaceId, CANVAS_LIMITS.pages).all<CanvasRow>();

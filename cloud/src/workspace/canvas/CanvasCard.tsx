@@ -16,16 +16,6 @@ const go = (href: string) => (event: MouseEvent) => {
 	}
 };
 
-// Onglet du salon : ouvre son canevas, créé au premier passage.
-export async function openChannelCanvas(workspaceId: string, channelId: string): Promise<void> {
-	try {
-		const canvas = await api<CanvasMeta>('POST', `/w/${workspaceId}/channels/${channelId}/canvas`);
-		navigate(canvasPath(workspaceId, canvas.id));
-	} catch (error) {
-		window.alert(errorText(error));
-	}
-}
-
 export function CanvasLinkCard({ workspaceId, body, lookup }: { workspaceId: string; body: string; lookup: Lookup }) {
 	const match = body.match(CANVAS_LINK_RE);
 	const id = match && match[1] === workspaceId ? match[2]! : null;

@@ -135,3 +135,9 @@
 .sh-general .sh-level-btn {
 	max-width: 260px;
 }
+
+.sh-suggest {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}

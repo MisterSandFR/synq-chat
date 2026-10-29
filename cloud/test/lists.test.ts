@@ -85,6 +85,7 @@ describe('listes', () => {
 		expect((await owner.req('PUT', `/api/w/${wid}/channels/${secret.data.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } })).status).toBe(200);
 		const hidden = await create(owner, wid, { title: 'Budget', channelId: secret.data.id });
 		expect(hidden.status).toBe(201);
+		await owner.req('PUT', `/api/w/${wid}/access/base/${hidden.data.id}`, { restricted: true, rules: [] });
 		const open = await create(member, wid, { title: 'Général', channelId: general.id });
 		expect(open.status).toBe(201);
 

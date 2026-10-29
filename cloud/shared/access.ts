@@ -28,7 +28,7 @@ export const isAccessLevel = (value: unknown): value is AccessLevel => ACCESS_LE
 export type AccessRule = { subjectId: string; level: AccessLevel };
 
 // D'où une ressource sans accès propres tient ses droits.
-export type AccessSource = { kind: 'page' | 'page_category'; id: string; title: string } | { kind: 'channel'; id: string } | { kind: 'space' };
+export type AccessSource = { kind: 'page' | 'page_category'; id: string; title: string } | { kind: 'space' };
 
 export type AccessInfo = {
 	level: AccessLevel;
@@ -41,8 +41,6 @@ export type AccessInfo = {
 };
 
 export type AccessUpdate = { inherit: true } | { restricted: boolean; rules: AccessRule[] };
-
-export type ChannelGrant = { view: boolean; send: boolean; manage: boolean; room: boolean };
 
 export type PageCategory = {
 	id: string;

@@ -86,26 +86,28 @@ describe('pages', () => {
 		expect((await owner.req('GET', `/api/w/${wid}/canvases/${b.id}`)).status).toBe(404);
 	});
 
-	it('fait hériter une sous-page des droits du salon de sa racine', async () => {
-		const { owner, member, wid, general, announcements } = await workspaceWithMember();
+	it('fait hériter une sous-page des droits de sa racine liée au salon', async () => {
+		const { owner, member, wid, general } = await workspaceWithMember();
 		const tab = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${general.id}/canvas`)).data;
 		const sub = await create(owner, wid, { title: 'Sous-page', parentId: tab.id });
 		const deep = await create(member, wid, { title: 'Profonde', parentId: sub.id });
 		expect(deep.access).toBe('write');
 
-		const news = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`)).data;
+		const news = await create(owner, wid, { title: 'Annonces' });
+		await owner.req('PUT', `/api/w/${wid}/access/page/${news.id}`, { restricted: false, rules: [{ subjectId: 'default', level: 'view' }] });
 		const readOnly = await create(owner, wid, { title: 'Lecture', parentId: news.id });
 		expect((await member.req<CanvasMeta>('GET', `/api/w/${wid}/canvases/${readOnly.id}`)).data.access).toBe('read');
 		expect((await member.req('POST', `/api/w/${wid}/canvases`, { parentId: readOnly.id })).status).toBe(403);
 		expect((await member.req('PATCH', `/api/w/${wid}/canvases/${readOnly.id}`, { title: 'Non' })).status).toBe(403);
 
+		// Les droits du salon n'y changent rien : seules les règles de la racine comptent.
 		await owner.req('PUT', `/api/w/${wid}/channels/${general.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
-		expect((await member.req('GET', `/api/w/${wid}/canvases/${deep.id}`)).status).toBe(404);
+		expect((await member.req('GET', `/api/w/${wid}/canvases/${sub.id}`)).status).toBe(200);
+		await owner.req('PUT', `/api/w/${wid}/access/page/${tab.id}`, { restricted: true, rules: [] });
+		expect((await member.req('GET', `/api/w/${wid}/canvases/${sub.id}`)).status).toBe(404);
 		const seen = (await list(member, wid)).map((p) => p.id);
 		expect(seen).not.toContain(sub.id);
-		expect(seen).not.toContain(deep.id);
-		// Sortir une page de son salon demande d'écrire dans la destination.
-		expect((await owner.req('PATCH', `/api/w/${wid}/canvases/${tab.id}`, { parentId: readOnly.id })).status).toBe(400);
+		expect((await owner.req('PATCH', `/api/w/${wid}/canvases/${tab.id}`, { parentId: readOnly.id })).status).toBe(200);
 	});
 
 	it('relève les rétroliens depuis le document', async () => {
@@ -130,7 +132,7 @@ describe('pages', () => {
 
 		const related = await owner.req<PageRelated>('GET', `/api/w/${wid}/canvases/${target.id}/related`);
 		expect(related.data.backlinks.map((r) => r.id).sort()).toEqual([source.id, tab.id].sort());
-		await owner.req('PUT', `/api/w/${wid}/channels/${general.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
+		await owner.req('PUT', `/api/w/${wid}/access/page/${tab.id}`, { restricted: true, rules: [] });
 		expect((await member.req<PageRelated>('GET', `/api/w/${wid}/canvases/${target.id}/related`)).data.backlinks.map((r) => r.id)).toEqual([source.id]);
 	});
 
@@ -155,8 +157,9 @@ describe('pages', () => {
 	});
 
 	it('ouvre des fils de commentaires et notifie les mentions', async () => {
-		const { owner, member, wid, announcements } = await workspaceWithMember();
-		const news = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`)).data;
+		const { owner, member, wid } = await workspaceWithMember();
+		const news = await create(owner, wid, { title: 'Annonces' });
+		await owner.req('PUT', `/api/w/${wid}/access/page/${news.id}`, { restricted: false, rules: [{ subjectId: 'default', level: 'comment' }] });
 		// Lecteur : répondre oui, ouvrir un fil non.
 		expect((await member.req('POST', `/api/w/${wid}/canvases/${news.id}/comments`, { threadId: 't1', quote: 'x', body: 'Salut' })).status).toBe(403);
 		const first = await owner.req<PageComment>('POST', `/api/w/${wid}/canvases/${news.id}/comments`, { threadId: 't1', quote: 'Ordre du jour', body: 'À revoir', mentions: [member.user.id, 'inconnu'] });

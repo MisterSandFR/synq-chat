@@ -1,13 +1,12 @@
-import { atLeast, maxLevel, type AccessKind, type AccessLevel, type AccessRule, type AccessSource, type ChannelGrant } from '../shared/access';
+import { atLeast, maxLevel, type AccessKind, type AccessLevel, type AccessRule, type AccessSource } from '../shared/access';
 import { CANVAS_LIMITS, type CanvasAccess } from '../shared/canvas';
 import { memberKey } from '../shared/categories';
 import { DEFAULT_GRADE, P, has } from '../shared/permissions';
 import type { Actor } from '../shared/types';
 import { listCanvasRows } from './canvases';
 import { loadActors } from './grades';
-import { workspaceStub } from './http';
 
-type RuleRow = { resource_kind: AccessKind; resource_id: string; subject_id: string; level: AccessLevel };
+export type RuleRow = { resource_kind: AccessKind; resource_id: string; subject_id: string; level: AccessLevel };
 
 export type CategoryRow = {
 	id: string;
@@ -21,7 +20,7 @@ export type CategoryRow = {
 };
 
 // Champs d'accès communs aux lignes canvases, lists et page_categories.
-export type Guarded = { id: string; channel_id: string | null; created_by: string; restricted?: number };
+export type Guarded = { id: string; channel_id?: string | null; created_by: string; restricted?: number };
 export type PageNode = Guarded & { parent_id: string | null; category_id?: string | null; title: string; archived_at?: number | null };
 // Suivi rangé dans l'arbre : page parente ou catégorie.
 export type BaseNode = Guarded & { parent_id?: string | null; category_id?: string | null };
@@ -29,28 +28,22 @@ export type BaseNode = Guarded & { parent_id?: string | null; category_id?: stri
 export type AccessData = {
 	rules: Map<string, RuleRow[]>;
 	categories: Map<string, CategoryRow>;
-	grants: Map<string, Map<string, ChannelGrant>>;
 };
 
 const key = (kind: AccessKind, id: string) => `${kind}:${id}`;
 
-export async function loadAccess(env: Env, workspaceId: string, actors: Actor[], channelIds: Array<string | null>): Promise<AccessData> {
+export async function loadAccess(env: Env, workspaceId: string): Promise<AccessData> {
 	const [rules, categories] = await env.DB.batch([
 		env.DB.prepare('SELECT resource_kind, resource_id, subject_id, level FROM access_rules WHERE workspace_id = ?').bind(workspaceId),
 		env.DB.prepare('SELECT * FROM page_categories WHERE workspace_id = ? ORDER BY position').bind(workspaceId),
 	]);
-	const data: AccessData = { rules: new Map(), categories: new Map(), grants: new Map() };
+	const data: AccessData = { rules: new Map(), categories: new Map() };
 	for (const row of rules!.results as RuleRow[]) {
 		const k = key(row.resource_kind, row.resource_id);
 		data.rules.set(k, [...(data.rules.get(k) ?? []), row]);
 	}
 	for (const row of categories!.results as CategoryRow[]) {
 		data.categories.set(row.id, row);
-	}
-	const ids = [...new Set(channelIds.filter((id): id is string => !!id))];
-	if (ids.length && actors.length) {
-		const grants = await workspaceStub(env, workspaceId).accessChannels(actors, ids);
-		actors.forEach((actor, i) => data.grants.set(actor.id, new Map(ids.map((id, j) => [id, grants[i]![j]!]))));
 	}
 	return data;
 }
@@ -65,7 +58,7 @@ export function spaceLevel(actor: Actor): AccessLevel | null {
 	return actor.owner || has(actor.perms, P.MANAGE_CHANNELS) ? 'manage' : 'edit';
 }
 
-function ruleLevel(actor: Actor, rules: RuleRow[], restricted: boolean): AccessLevel | null {
+export function ruleLevel(actor: Actor, rules: RuleRow[], restricted: boolean): AccessLevel | null {
 	const mine = new Set([memberKey(actor.id), ...(actor.guest ? [] : actor.grades)]);
 	let best: AccessLevel | null = null;
 	for (const rule of rules) {
@@ -76,88 +69,53 @@ function ruleLevel(actor: Actor, rules: RuleRow[], restricted: boolean): AccessL
 	return best;
 }
 
-const pageFromChannel = (grant: ChannelGrant | undefined): AccessLevel | null => (!grant?.view ? null : grant.manage ? 'manage' : grant.send ? 'edit' : 'comment');
-
-const baseFromChannel = (grant: ChannelGrant | undefined, actor: Actor): AccessLevel | null =>
-	!grant?.view || !grant.room ? null : grant.manage ? 'manage' : actor.guest ? 'view' : 'edit';
-
 export const hasOwn = (kind: AccessKind, node: Guarded, data: AccessData) => Boolean(node.restricted) || (data.rules.get(key(kind, node.id))?.length ?? 0) > 0;
 
 export const rulesOf = (kind: AccessKind, id: string, data: AccessData): AccessRule[] =>
 	(data.rules.get(key(kind, id)) ?? []).map((row) => ({ subjectId: row.subject_id, level: row.level }));
 
-function resolve(
-	actor: Actor,
-	kind: AccessKind,
-	node: Guarded,
-	data: AccessData,
-	channel: (grant: ChannelGrant | undefined) => AccessLevel | null,
-	inherit: () => AccessLevel | null,
-	creatorOk = true,
-): AccessLevel | null {
+function resolve(actor: Actor, kind: AccessKind, node: Guarded, data: AccessData, inherit: () => AccessLevel | null): AccessLevel | null {
 	if (isAdmin(actor)) {
 		return 'manage';
 	}
-	const fromChannel = node.channel_id ? channel(data.grants.get(actor.id)?.get(node.channel_id)) : null;
-	// Créateur qui ne voit plus le salon rattaché : plus de passe-droit.
-	if (node.created_by === actor.id && !actor.guest && creatorOk && (!node.channel_id || fromChannel)) {
+	// Rattachement de salon pas encore repris : fermé jusqu'à la reprise.
+	if (node.channel_id) {
+		return null;
+	}
+	if (node.created_by === actor.id && !actor.guest) {
 		return 'manage';
 	}
 	const rules = data.rules.get(key(kind, node.id)) ?? [];
 	if (node.restricted) {
 		return ruleLevel(actor, rules, true);
 	}
-	if (node.channel_id) {
-		return maxLevel(fromChannel, ruleLevel(actor, rules, false));
-	}
 	return rules.length ? ruleLevel(actor, rules, false) : inherit();
 }
 
-export const categoryLevel = (actor: Actor, category: CategoryRow, data: AccessData) =>
-	resolve(actor, 'page_category', { ...category, channel_id: null }, data, () => null, () => spaceLevel(actor));
-
-// Ancêtre rattaché à un salon que l'acteur ne voit pas.
-function channelBlocked(actor: Actor, page: PageNode, byId: Map<string, PageNode>, data: AccessData): boolean {
-	let current: PageNode | undefined = page;
-	for (let depth = 0; current && depth <= CANVAS_LIMITS.depth; depth++) {
-		if (current.channel_id && !data.grants.get(actor.id)?.get(current.channel_id)?.view) {
-			return true;
-		}
-		current = current.parent_id ? byId.get(current.parent_id) : undefined;
-	}
-	return false;
-}
+export const categoryLevel = (actor: Actor, category: CategoryRow, data: AccessData) => resolve(actor, 'page_category', category, data, () => spaceLevel(actor));
 
 // Héritage : sous-page, page parente, catégorie de la racine, espace.
 export function pageLevel(actor: Actor, page: PageNode, byId: Map<string, PageNode>, data: AccessData, depth = 0): AccessLevel | null {
-	return resolve(actor, 'page', page, data, pageFromChannel, () => {
+	return resolve(actor, 'page', page, data, () => {
 		const parent = page.parent_id ? byId.get(page.parent_id) : undefined;
 		if (parent && depth < CANVAS_LIMITS.depth) {
 			return pageLevel(actor, parent, byId, data, depth + 1);
 		}
 		const category = page.category_id ? data.categories.get(page.category_id) : undefined;
 		return category ? categoryLevel(actor, category, data) : spaceLevel(actor);
-	}, !channelBlocked(actor, page, byId, data));
+	});
 }
 
 // Même chaîne que les pages : page parente, catégorie, espace.
 export function baseLevel(actor: Actor, base: BaseNode, data: AccessData, pages: Map<string, PageNode> = new Map()): AccessLevel | null {
 	const parent = base.parent_id ? pages.get(base.parent_id) : undefined;
-	return resolve(
-		actor,
-		'base',
-		base,
-		data,
-		(grant) => baseFromChannel(grant, actor),
-		() => {
-			if (parent) {
-				return pageLevel(actor, parent, pages, data);
-			}
-			const category = base.category_id ? data.categories.get(base.category_id) : undefined;
-			return category ? categoryLevel(actor, category, data) : spaceLevel(actor);
-		},
-		!parent || !channelBlocked(actor, parent, pages, data),
-	);
+	return resolve(actor, 'base', base, data, () => {
+		if (parent) {
+			return pageLevel(actor, parent, pages, data);
+		}
+		const category = base.category_id ? data.categories.get(base.category_id) : undefined;
+		return category ? categoryLevel(actor, category, data) : spaceLevel(actor);
+	});
 }
 
 // Pages et règles pour évaluer des suivis ; champs d'arbre relus en D1 si l'appelant ne les a pas.
@@ -169,7 +127,7 @@ export async function baseAccess(env: Env, workspaceId: string, actors: Actor[],
 	const nodes = bases.map((base) => (base.parent_id === undefined && tree.has(base.id) ? { ...base, ...tree.get(base.id)! } : base));
 	const rows = nodes.some((base) => base.parent_id) ? await listCanvasRows(env.DB, workspaceId) : [];
 	const pages = new Map<string, PageNode>(rows.map((row) => [row.id, row]));
-	const data = await loadAccess(env, workspaceId, actors, [...nodes.map((base) => base.channel_id), ...rows.map((row) => row.channel_id)]);
+	const data = await loadAccess(env, workspaceId);
 	return { nodes, pages, data };
 }
 
@@ -182,9 +140,6 @@ export function inheritedFrom(kind: AccessKind, node: Guarded, byId: Map<string,
 	if (hasOwn(kind, node, data)) {
 		return null;
 	}
-	if (node.channel_id) {
-		return { source: { kind: 'channel', id: node.channel_id }, rules: [], restricted: false };
-	}
 	if (kind === 'page' || kind === 'base') {
 		let current = node as PageNode;
 		for (let depth = 0; depth < CANVAS_LIMITS.depth; depth++) {
@@ -195,13 +150,10 @@ export function inheritedFrom(kind: AccessKind, node: Guarded, byId: Map<string,
 			if (hasOwn('page', parent, data)) {
 				return { source: { kind: 'page', id: parent.id, title: parent.title }, rules: rulesOf('page', parent.id, data), restricted: Boolean(parent.restricted) };
 			}
-			if (parent.channel_id) {
-				return { source: { kind: 'channel', id: parent.channel_id }, rules: [], restricted: false };
-			}
 			current = parent;
 		}
 		const category = current.category_id ? data.categories.get(current.category_id) : undefined;
-		if (category && hasOwn('page_category', { ...category, channel_id: null }, data)) {
+		if (category && hasOwn('page_category', category, data)) {
 			return { source: { kind: 'page_category', id: category.id, title: category.name }, rules: rulesOf('page_category', category.id, data), restricted: Boolean(category.restricted) };
 		}
 	}
@@ -212,7 +164,7 @@ export function inheritedFrom(kind: AccessKind, node: Guarded, byId: Map<string,
 export async function pageAccess(env: Env, workspaceId: string, actor: Actor) {
 	const rows = await listCanvasRows(env.DB, workspaceId);
 	const byId = new Map(rows.map((row) => [row.id, row]));
-	const data = await loadAccess(env, workspaceId, [actor], rows.map((row) => row.channel_id));
+	const data = await loadAccess(env, workspaceId);
 	const levels = new Map<string, AccessLevel>();
 	for (const row of rows) {
 		const level = pageLevel(actor, row, byId, data);
@@ -245,7 +197,7 @@ export async function baseLevels(env: Env, workspaceId: string, actor: Actor, ba
 export async function pageReaders(env: Env, workspaceId: string, page: PageNode, byId: Map<string, PageNode>, userIds: string[]): Promise<string[]> {
 	const wanted = new Set(userIds);
 	const actors = (await loadActors(env.DB, workspaceId)).filter((actor) => wanted.has(actor.id));
-	const data = await loadAccess(env, workspaceId, actors, [...byId.values()].map((row) => row.channel_id));
+	const data = await loadAccess(env, workspaceId);
 	return actors.filter((actor) => pageLevel(actor, page, byId, data)).map((actor) => actor.id);
 }
 
@@ -278,7 +230,7 @@ export async function reviseSockets(env: Env, workspaceId: string, pageIds: stri
 	const rows = await listCanvasRows(env.DB, workspaceId);
 	const byId = new Map<string, PageNode>(rows.map((row) => [row.id, row]));
 	const actors = new Map((await loadActors(env.DB, workspaceId)).filter((actor) => wanted.has(actor.id)).map((actor) => [actor.id, actor]));
-	const data = await loadAccess(env, workspaceId, [...actors.values()], rows.map((row) => row.channel_id));
+	const data = await loadAccess(env, workspaceId);
 	await Promise.all(
 		pageIds.map(async (id, i) => {
 			const page = byId.get(id);
@@ -333,7 +285,7 @@ export async function reviseCardDocs(env: Env, workspaceId: string, baseId?: str
 	);
 }
 
-// Grades, membres ou droits de salon changés : tout document ouvert de l'espace relit les droits de ses connectés.
+// Grades ou membres changés : tout document ouvert de l'espace relit les droits de ses connectés.
 export async function reviseWorkspace(env: Env, workspaceId: string): Promise<void> {
 	const rows = await listCanvasRows(env.DB, workspaceId);
 	await reviseSockets(env, workspaceId, rows.map((row) => row.id));

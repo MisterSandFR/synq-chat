@@ -107,7 +107,7 @@ import {
 	type ScheduleInput,
 	type ScheduledFull,
 } from './drafts';
-import type { ChannelGrant } from '../shared/access';
+import type { ChannelAudience } from './channel-resources';
 import { loadActor } from './grades';
 import { REMINDERS_MIGRATION, checkDue, cleanReminderText, deleteMessageReminder, deleteReminder, dueReminders, getReminder, markFired, nextReminderAt, patchReminder, publicReminder, upsertReminder, userReminders } from './reminders';
 import { reminderLink, type LaterItem, type Reminder, type ReminderInput, type ReminderPatch } from '../shared/reminders';
@@ -2518,18 +2518,6 @@ export class Workspace extends DurableObject<Env> {
 	// --- Canevas ---
 
 	// Droits d'un canevas : ceux du salon rattaché, sinon tout membre non invité.
-	canvasAccess(actor: Actor, channelIds: Array<string | null>): Array<'write' | 'read' | null> {
-		return channelIds.map((id) => {
-			if (id === null) {
-				return actor.guest ? null : 'write';
-			}
-			if (!this.channelRow(id) || !this.can(actor, id, P.VIEW_CHANNEL)) {
-				return null;
-			}
-			return this.can(actor, id, P.SEND_MESSAGES) ? 'write' : 'read';
-		});
-	}
-
 	private isGuest(userId: string): boolean {
 		return this.sql.exec('SELECT 1 FROM guests WHERE user_id = ?', userId).toArray().length > 0;
 	}
@@ -2839,19 +2827,6 @@ export class Workspace extends DurableObject<Env> {
 	// --- Listes ---
 
 	// Droits par salon rattaché (null = liste d'espace), dans l'ordre reçu.
-	listRights(actor: Actor, channelIds: Array<string | null>): Array<{ view: boolean; manage: boolean }> {
-		return channelIds.map((channelId) => {
-			if (!channelId) {
-				return { view: !actor.guest, manage: !actor.guest && (actor.owner || has(actor.perms, P.MANAGE_CHANNELS)) };
-			}
-			// Salon supprimé : la liste reste fermée plutôt que de devenir publique.
-			if (!this.roomRow(channelId)) {
-				return { view: false, manage: false };
-			}
-			return { view: this.can(actor, channelId, P.VIEW_CHANNEL), manage: this.can(actor, channelId, P.MANAGE_CHANNELS) };
-		});
-	}
-
 	listChanged(listId: string, channelId: string | null): void {
 		const event: ServerEvent = { t: 'list_changed', listId, channelId };
 		for (const ws of this.ctx.getWebSockets()) {
@@ -3195,15 +3170,42 @@ export class Workspace extends DurableObject<Env> {
 	// --- Accès fins ---
 
 	// Droits de salon bruts par acteur ; l'évaluation vit dans worker/access.ts.
-	accessChannels(actors: Actor[], channelIds: string[]): ChannelGrant[][] {
-		return actors.map((actor) =>
-			channelIds.map((id) => {
-				if (!this.channelRow(id) || !this.can(actor, id, P.VIEW_CHANNEL)) {
-					return { view: false, send: false, manage: false, room: false };
-				}
-				return { view: true, send: this.can(actor, id, P.SEND_MESSAGES), manage: this.can(actor, id, P.MANAGE_CHANNELS), room: this.roomRow(id) !== null };
-			}),
-		);
+	// Reprise des anciens rattachements : nom du salon et droits de chacun ; null si le salon n'existe plus.
+	channelAudience(actors: Actor[], channelIds: string[]): ChannelAudience[] {
+		return channelIds.map((id) => {
+			const channel = this.channelRow(id);
+			if (!channel) {
+				return null;
+			}
+			const room = this.roomRow(id) !== null;
+			const dm = channel.kind === 'dm' ? directById(this.sql, id, this.dmMap()) : null;
+			return {
+				name: channel.kind === 'dm' ? (dm?.name ?? '') : channel.name,
+				...(channel.kind === 'dm' ? { memberIds: dm?.memberIds ?? [] } : {}),
+				grants: actors.map((actor) => {
+					const view = this.can(actor, id, P.VIEW_CHANNEL);
+					return { view, send: view && this.can(actor, id, P.SEND_MESSAGES), room };
+				}),
+			};
+		});
+	}
+
+	// --- Pages et suivis liés aux salons ---
+
+	// Qui voit le salon et ce que l'acteur peut y faire ; null s'il ne le voit pas.
+	channelMembers(actor: Actor, actors: Actor[], channelId: string): { viewers: string[]; send: boolean; manage: boolean } | null {
+		if (!this.channelRow(channelId) || !this.can(actor, channelId, P.VIEW_CHANNEL)) {
+			return null;
+		}
+		return {
+			viewers: actors.filter((a) => this.can(a, channelId, P.VIEW_CHANNEL)).map((a) => a.id),
+			send: this.can(actor, channelId, P.SEND_MESSAGES),
+			manage: this.can(actor, channelId, P.MANAGE_CHANNELS),
+		};
+	}
+
+	resourcesChanged(channelId: string): void {
+		this.broadcastIn(channelId, { t: 'channel_resources', channelId });
 	}
 
 	// --- Accueil ---

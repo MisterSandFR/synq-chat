@@ -55,12 +55,13 @@ import {
 	updateView,
 	type Notice,
 } from '../lists-bases';
-import { listCanvasRows, scopeOf, workspaceMemberIds } from '../canvases';
+import { workspaceMemberIds } from '../canvases';
 import { addLink, checkToCard, duplicateCard, followersOf, moveCard, removeLink, resolveLinks, searchTargets, setFollow, toggleReaction, type ScopedLink } from '../lists-cards';
 import { LIMITS } from '../../shared/types';
 import { atLeast, type AccessLevel } from '../../shared/access';
 import { baseAccess, baseLevel, baseLevels, categoryLevel, loadAccess, pageAccess, reviseCardDocs } from '../access';
 import { pagesNotice } from './canvases';
+import { channelRights, linkResource, linkedIds } from './channel-resources';
 import { CANVAS_LIMITS } from '../../shared/canvas';
 import type { CanvasPeer } from '../canvas-doc';
 
@@ -102,7 +103,8 @@ async function detail(c: Ctx, row: ListRow, rights: Rights): Promise<ListDetail>
 listRoutes.get('/w/:wid/lists', async (c) => {
 	const rows = await workspaceLists(c.env.DB, c.get('workspaceId'));
 	const channel = c.req.query('channel');
-	const scoped = channel ? rows.filter((r) => r.channel_id === channel) : rows;
+	const linked = channel ? await linkedIds(c, channel, 'list') : null;
+	const scoped = linked ? rows.filter((r) => linked.has(r.id)) : rows;
 	const levels = await baseLevels(c.env, c.get('workspaceId'), c.get('actor'), scoped);
 	return c.json(scoped.flatMap((r) => (levels.has(r.id) ? [{ ...toSummary(r), level: levels.get(r.id)! }] : [])));
 });
@@ -120,7 +122,7 @@ async function placeOf(c: Ctx, parentId: unknown, categoryId: unknown): Promise<
 		return atLeast(level, 'edit') ? { parent_id: parent.id, category_id: null } : fail(c, 403, 'Page parente en lecture seule');
 	}
 	if (typeof categoryId === 'string' && categoryId) {
-		const data = await loadAccess(c.env, c.get('workspaceId'), [actor], []);
+		const data = await loadAccess(c.env, c.get('workspaceId'));
 		const category = data.categories.get(categoryId);
 		const level = category ? categoryLevel(actor, category, data) : null;
 		if (!category || !level) {
@@ -134,21 +136,26 @@ async function placeOf(c: Ctx, parentId: unknown, categoryId: unknown): Promise<
 listRoutes.post('/w/:wid/lists', pagesNotice, async (c) => {
 	const actor = c.get('actor');
 	const input = await readJson<{ title: string; template: string; channelId: string | null; parentId?: string | null; categoryId?: string | null }>(c);
+	// Salon donné : suivi d'espace ordinaire, lié au salon sans effet sur les droits.
 	const channelId = typeof input.channelId === 'string' && input.channelId ? input.channelId : null;
-	const [access] = await stub(c).listRights(actor, [channelId]);
-	if (actor.guest || !access?.view) {
-		return fail(c, channelId && !access?.view ? 404 : 403, channelId && !access?.view ? 'Salon introuvable' : 'Permission insuffisante');
+	if (actor.guest) {
+		return fail(c, 403, 'Permission insuffisante');
 	}
-	const place = channelId ? { parent_id: null, category_id: null } : await placeOf(c, input.parentId, input.categoryId);
+	const rights = channelId ? await channelRights(c, channelId) : null;
+	if (rights instanceof Response) {
+		return rights;
+	}
+	const place = await placeOf(c, input.parentId, input.categoryId);
 	if (place instanceof Response) {
 		return place;
 	}
-	const created = await createList(c.env.DB, c.get('workspaceId'), actor.id, { ...input, channelId });
+	const created = await createList(c.env.DB, c.get('workspaceId'), actor.id, { ...input, channelId: null });
 	if (!created.ok) {
 		return fail(c, created.status, created.error);
 	}
-	if (!channelId) {
-		await placeList(c.env.DB, created.value, place);
+	await placeList(c.env.DB, created.value, place);
+	if (channelId) {
+		await linkResource(c, channelId, 'list', created.value.id);
 	}
 	const row = (await listRow(c.env.DB, c.get('workspaceId'), created.value.id))!;
 	await changed(c, row);
@@ -177,9 +184,6 @@ listRoutes.patch('/w/:wid/lists/:lid', pagesNotice, async (c) => {
 		return fail(c, 400, 'Position invalide');
 	}
 	const moving = input.parentId !== undefined || input.categoryId !== undefined;
-	if (moving && found.row.channel_id && (input.parentId || input.categoryId)) {
-		return fail(c, 400, 'Le suivi d’un salon reste dans son salon');
-	}
 	const place = moving
 		? await placeOf(c, input.parentId !== undefined ? input.parentId : found.row.parent_id, input.categoryId !== undefined ? input.categoryId : found.row.category_id)
 		: { parent_id: found.row.parent_id, category_id: found.row.category_id };
@@ -676,8 +680,8 @@ async function visibleLinks(c: Ctx, links: ScopedLink[]): Promise<CardLink[]> {
 	const rights = await Promise.all(rows.map((row) => (row ? rightsOf(c, row) : null)));
 	const seen = new Set(listIds.filter((_, i) => rights[i]?.view));
 	const pages = links.filter((l) => l.kind === 'page');
-	const access = pages.length ? await stub(c).canvasAccess(c.get('actor'), pages.map((l) => l.scope)) : [];
-	const open = new Set(pages.filter((_, i) => access[i]).map((l) => l.id));
+	const levels = pages.length ? (await pageAccess(c.env, c.get('workspaceId'), c.get('actor'))).levels : new Map<string, AccessLevel>();
+	const open = new Set(pages.filter((l) => levels.has(l.id)).map((l) => l.id));
 	return links.filter((l) => (l.kind === 'card' ? seen.has(l.listId!) : open.has(l.id))).map(({ scope: _scope, ...link }) => link);
 }
 
@@ -771,10 +775,7 @@ async function targetVisible(c: Ctx, kind: unknown, id: unknown): Promise<boolea
 		const row = owner ? await listRow(c.env.DB, c.get('workspaceId'), owner.list_id) : null;
 		return Boolean(row && (await rightsOf(c, row)).view);
 	}
-	const rows = await listCanvasRows(c.env.DB, c.get('workspaceId'));
-	const byId = new Map(rows.map((r) => [r.id, r]));
-	const page = byId.get(id);
-	return Boolean(page && (await stub(c).canvasAccess(c.get('actor'), [scopeOf(page, byId)]))[0]);
+	return (await pageAccess(c.env, c.get('workspaceId'), c.get('actor'))).levels.has(id);
 }
 
 listRoutes.post('/w/:wid/lists/:lid/items/:iid/links', async (c) => {

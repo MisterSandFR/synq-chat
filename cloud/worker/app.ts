@@ -23,6 +23,7 @@ import { AUDIT_KINDS, type AuditKind } from '../shared/audit';
 import { auditTrail } from './audit';
 import { authorizeUrl, completeLogin } from './recube';
 import { reviseWorkspace } from './access';
+import { ensureDecoupled } from './channel-resources';
 import { defaultGrades, listGrades, loadActor, loadActors } from './grades';
 import { notificationRoutes } from './routes/notifications';
 import { mediaRoutes } from './routes/media';
@@ -41,6 +42,7 @@ import { draftRoutes } from './routes/drafts';
 import { reminderRoutes } from './routes/reminders';
 import { favoriteRoutes } from './routes/favorites';
 import { pollRoutes } from './routes/polls';
+import { channelResourceRoutes } from './routes/channel-resources';
 import { voiceRoutes } from './routes/voice';
 import { dropEmojis, emojiRoutes } from './routes/emojis';
 import { canvasRoutes } from './routes/canvases';
@@ -404,6 +406,7 @@ app.use('/w/:wid/*', async (c, next) => {
 	}
 	c.set('workspaceId', workspaceId);
 	c.set('actor', actor);
+	await ensureDecoupled(c.env, workspaceId);
 	await next();
 });
 
@@ -693,11 +696,7 @@ app.put('/w/:wid/channels/:cid/overrides', async (c) => {
 	if (!clean) {
 		return fail(c, 400, 'Surcharges invalides');
 	}
-	const saved = await stub(c).setOverrides(c.get('actor'), c.req.param('cid'), clean);
-	if (saved.ok) {
-		c.executionCtx.waitUntil(reviseWorkspace(c.env, c.get('workspaceId')).catch(() => undefined));
-	}
-	return unwrap(c, saved);
+	return unwrap(c, await stub(c).setOverrides(c.get('actor'), c.req.param('cid'), clean));
 });
 
 const cursor = (value: string | undefined) => {
@@ -871,6 +870,7 @@ app.route('/', pollRoutes);
 app.route('/', reminderRoutes);
 app.route('/', accessRoutes);
 app.route('/', homeRoutes);
+app.route('/', channelResourceRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {

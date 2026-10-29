@@ -145,7 +145,8 @@ describe('Synq IA : fichiers joints', () => {
 
 		const secret = (await owner.req<Channel>('POST', `/api/w/${wid}/channels`, { name: 'direction' })).data;
 		await owner.req('PUT', `/api/w/${wid}/channels/${secret.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
-		const hidden = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${secret.id}/canvas`)).data;
+		const hidden = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/canvases`, { title: 'Direction' })).data;
+		await owner.req('PUT', `/api/w/${wid}/access/page/${hidden.id}`, { restricted: true, rules: [] });
 		const execute = (body: Record<string, unknown>) => member.req<AiDone>('POST', '/api/ai/hub/execute', { conversationId: proposed.data.conversation.id, turnId: answer.id, ...body });
 		expect((await execute({ action: { ...action, parentId: hidden.id } })).status).toBe(404);
 		expect((await execute({ action: { ...action, draft: { ...action.draft, blocks: [{ type: 'script', text: 'x' }] } } })).status).toBe(400);

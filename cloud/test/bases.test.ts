@@ -130,13 +130,14 @@ describe('bases', () => {
 		const secret = await owner.req<Channel>('POST', `/api/w/${wid}/channels`, { name: 'direction' });
 		await owner.req('PUT', `/api/w/${wid}/channels/${secret.data.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
 		const hidden = await owner.req<ListDetail>('POST', `/api/w/${wid}/lists`, { title: 'Budget', channelId: secret.data.id });
+		await owner.req('PUT', `/api/w/${wid}/access/base/${hidden.data.id}`, { restricted: true, rules: [] });
 		const open = await owner.req<ListDetail>('POST', `/api/w/${wid}/lists`, { title: 'Général', channelId: general.id });
 		const a = await owner.req<ListItem>('POST', `/api/w/${wid}/lists/${hidden.data.id}/items`, { title: 'Salaires' });
 		const b = await owner.req<ListItem>('POST', `/api/w/${wid}/lists/${open.data.id}/items`, { title: 'Offsite' });
 
 		const doc = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/lists/${hidden.data.id}/items/${a.data.id}/page`);
 		expect(doc.status).toBe(200);
-		expect(doc.data).toMatchObject({ title: 'Salaires', channelId: secret.data.id, access: 'write' });
+		expect(doc.data).toMatchObject({ title: 'Salaires', channelId: null, access: 'write' });
 		const again = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/lists/${hidden.data.id}/items/${a.data.id}/page`);
 		expect(again.data.id).toBe(doc.data.id);
 		expect((await owner.req<ListItem[]>('GET', `/api/w/${wid}/lists/${hidden.data.id}`)).data).toMatchObject({ items: [expect.objectContaining({ pageId: doc.data.id })] });

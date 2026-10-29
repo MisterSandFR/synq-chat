@@ -27,9 +27,9 @@ import {
 } from './dm-threads';
 import { AccessDialog } from './grade-access/AccessDialog';
 import { DrivePanel } from './DrivePanel';
+import { ResourcesPanel } from './channel-resources/ResourcesPanel';
 import { DraftsView, ScheduledBanner, useDraftsLoader } from './drafts';
 import { useAbsenceStatus } from './absences/AbsenceStatus';
-import { openChannelCanvas } from './canvas/CanvasCard';
 import { MembersPanel } from './MembersPanel';
 import { useMemberMenu } from './members/useMemberMenu';
 import { MessageList } from './MessageList';
@@ -68,7 +68,7 @@ type Props = {
 	onBadges?: (badges: Record<string, number>) => void;
 };
 
-type Panel = 'members' | 'drive' | 'saved' | 'pins' | null;
+type Panel = 'members' | 'drive' | 'saved' | 'pins' | 'resources' | null;
 
 function useFocused(): boolean {
 	const [focused, setFocused] = useState(() => document.hasFocus());
@@ -609,11 +609,10 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				{active && !view && (
 					<ChannelTabs
 						tabs={[
-							{ key: 'messages', label: active.kind === 'voice' ? 'Chat' : 'Messages', icon: 'chat', active: active.kind === 'voice' ? voiceChat : panel !== 'pins' && panel !== 'drive', badge: active.kind === 'voice' && !voiceChat ? (state.unread[active.id] ?? 0) : 0, onSelect: () => (active.kind === 'voice' ? setVoiceChat(!voiceChat) : setPanel(null)) },
+							{ key: 'messages', label: active.kind === 'voice' ? 'Chat' : 'Messages', icon: 'chat', active: active.kind === 'voice' ? voiceChat : panel !== 'pins' && panel !== 'drive' && panel !== 'resources', badge: active.kind === 'voice' && !voiceChat ? (state.unread[active.id] ?? 0) : 0, onSelect: () => (active.kind === 'voice' ? setVoiceChat(!voiceChat) : setPanel(null)) },
 							{ key: 'pins', label: 'Épinglés', icon: 'pin', active: panel === 'pins', onSelect: () => setPanel(panel === 'pins' ? null : 'pins') },
 							{ key: 'files', label: 'Fichiers', icon: 'drive', active: panel === 'drive', onSelect: () => setPanel(panel === 'drive' ? null : 'drive') },
-							...(active.kind !== 'voice' ? [{ key: 'canvas', label: 'Page', icon: 'file' as const, onSelect: () => void openChannelCanvas(workspaceId, active.id) }] : []),
-							...(active.kind === 'text' ? [{ key: 'lists', label: 'Suivis', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
+							...(active.kind !== 'voice' ? [{ key: 'resources', label: 'Pages et suivis', icon: 'file' as const, active: panel === 'resources', onSelect: () => setPanel(panel === 'resources' ? null : 'resources') }] : []),
 						]}
 					/>
 				)}
@@ -704,6 +703,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						)}
 					</div>
 					{panel === 'members' && state.info && <MembersPanel members={state.info.members} grades={grades} online={state.online} voice={state.voice} myId={myId} absences={absences} onMessage={(id) => void startDirect([id]).catch(() => undefined)} menu={memberMenu.items} onClose={() => setPanel(null)} />}
+					{panel === 'resources' && active && active.kind !== 'voice' && <ResourcesPanel workspaceId={workspaceId} channel={active} version={state.resourcesVersion} onClose={() => setPanel(null)} />}
 					{panel === 'drive' && active && (
 						<DrivePanel workspaceId={workspaceId} channel={active} version={state.drive[active.id] ?? 0} members={members} myId={myId} perms={activePerms} onClose={() => setPanel(null)} />
 					)}

@@ -85,18 +85,17 @@ describe('arbre unique pages et suivis', () => {
 		expect((await owner.req<AccessInfo>('GET', `/api/w/${wid}/access/base/${inCat.id}`)).data.inherited).toMatchObject({ kind: 'page_category', id: cat.id });
 	});
 
-	it('un suivi de salon garde les droits du salon et reste dans son salon', async () => {
+	it('un suivi créé depuis un salon rejoint l’arbre et hérite comme les autres', async () => {
 		const { owner, wid, general, page, tracker } = await setup();
 		const p = await page(owner);
 		const base = (await tracker(owner, { channelId: general.id, parentId: p.id })).data;
-		expect(base).toMatchObject({ channelId: general.id, parentId: null });
-		expect((await owner.req('PATCH', `/api/w/${wid}/lists/${base.id}`, { parentId: p.id })).status).toBe(400);
-		expect((await owner.req<AccessInfo>('GET', `/api/w/${wid}/access/base/${base.id}`)).data.inherited).toMatchObject({ kind: 'channel', id: general.id });
+		expect(base).toMatchObject({ channelId: null, parentId: p.id });
+		expect((await owner.req<AccessInfo>('GET', `/api/w/${wid}/access/base/${base.id}`)).data.inherited).toMatchObject({ kind: 'space' });
 	});
 
 	it('évaluation : chaîne page parente, catégorie, espace', () => {
 		const actor: Actor = { id: 'u1', name: 'U', owner: false, grades: [DEFAULT_GRADE], perms: 0, top: 0 };
-		const data: AccessData = { rules: new Map(), categories: new Map(), grants: new Map() };
+		const data: AccessData = { rules: new Map(), categories: new Map() };
 		const locked: PageNode = { id: 'p1', channel_id: null, created_by: 'other', parent_id: null, title: 'P', restricted: 1 };
 		const pages = new Map([[locked.id, locked]]);
 		const base = { id: 'b1', channel_id: null, created_by: 'other', restricted: 0, parent_id: 'p1', category_id: null };
@@ -108,15 +107,9 @@ describe('arbre unique pages et suivis', () => {
 });
 
 describe('pages de salon', () => {
-	it('sans titre propre, nommées d’après le salon', async () => {
-		const { owner, wid, general } = await setup();
-		const tab = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${general.id}/canvas`);
-		expect(tab.status).toBe(201);
-		expect(tab.data.title).toBe('');
-		expect(channelPageTitle(tab.data, general.name)).toBe('# général');
-		expect(channelPageTitle({ ...tab.data, title: 'Canevas du salon' }, general.name)).toBe('# général');
-		expect(channelPageTitle({ ...tab.data, title: 'Sans titre' }, general.name)).toBe('# général');
-		expect(channelPageTitle({ ...tab.data, title: 'Notes' }, general.name)).toBe('Notes');
+	it('titre d’affichage : nom du salon seulement pour un rattachement pas encore repris', () => {
+		expect(channelPageTitle({ title: '', channelId: 'c' }, 'général')).toBe('# général');
+		expect(channelPageTitle({ title: 'Notes', channelId: 'c' }, 'général')).toBe('Notes');
 		expect(channelPageTitle({ title: '', channelId: null })).toBe('Sans titre');
 	});
 });

@@ -72,23 +72,18 @@ describe('canevas', () => {
 		expect((await outsider.req('GET', `/api/w/${wid}/canvases/${created.data.id}`)).status).toBeGreaterThanOrEqual(403);
 	});
 
-	it('suit les droits du salon rattaché', async () => {
+	it('page liée au salon : droits de la page, pas ceux du salon', async () => {
 		const { owner, member, wid, general, announcements } = await workspaceWithMember();
-		// Annonces : lecture seule, pas de création par un membre.
+		// Annonces : lecture seule, pas de création liée par un membre.
 		expect((await member.req('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`)).status).toBe(403);
-		const tab = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`);
-		expect(tab.status).toBe(201);
-		const again = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`);
-		expect(again.data.id).toBe(tab.data.id);
-		expect((await member.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`)).data).toMatchObject({ id: tab.data.id, access: 'read' });
-
-		const own = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${general.id}/canvas`);
-		await owner.req('PUT', `/api/w/${wid}/channels/${general.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
+		const own = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${general.id}/canvas`, { title: 'Notes' });
+		expect(own.status).toBe(201);
+		expect((await member.req<CanvasMeta>('GET', `/api/w/${wid}/canvases/${own.data.id}`)).data.access).toBe('write');
+		await owner.req('PUT', `/api/w/${wid}/access/page/${own.data.id}`, { restricted: true, rules: [] });
 		expect((await member.req('GET', `/api/w/${wid}/canvases/${own.data.id}`)).status).toBe(404);
-		expect((await member.req<CanvasMeta[]>('GET', `/api/w/${wid}/canvases`)).data.map((c) => c.id)).toEqual([tab.data.id]);
+		expect((await member.req<CanvasMeta[]>('GET', `/api/w/${wid}/canvases`)).data).toEqual([]);
 		const denied = await exports.default.fetch(new Request(`${BASE}/api/w/${wid}/canvases/${own.data.id}/ws`, { headers: { Upgrade: 'websocket', cookie: member.cookie } }));
 		expect(denied.status).toBe(404);
-		expect(denied.webSocket).toBeNull();
 	});
 
 	it('refuse le WebSocket sans session', async () => {
@@ -122,8 +117,9 @@ describe('canevas', () => {
 	});
 
 	it('ignore les mises à jour d’un lecteur', async () => {
-		const { owner, member, wid, announcements } = await workspaceWithMember();
-		const tab = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${announcements.id}/canvas`);
+		const { owner, member, wid } = await workspaceWithMember();
+		const tab = await owner.req<CanvasMeta>('POST', `/api/w/${wid}/canvases`, { title: 'Annonce' });
+		await owner.req('PUT', `/api/w/${wid}/access/page/${tab.data.id}`, { restricted: false, rules: [{ subjectId: 'default', level: 'view' }] });
 		const reader = await canvasSocket(member, wid, tab.data.id);
 		reader.send(CANVAS_MSG.update, paragraphUpdate('Pirate'));
 		expect(content(await reader.snapshot())).not.toContain('Pirate');

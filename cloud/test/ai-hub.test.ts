@@ -36,7 +36,8 @@ async function scene() {
 	expect((await owner.req('PUT', `/api/w/${wid}/channels/${secret.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } })).status).toBe(200);
 	expect((await owner.req<Message>('POST', `/api/w/${wid}/channels/${secret.id}/messages`, { body: 'Budget licornes confidentiel' })).status).toBe(200);
 	expect((await owner.req<Message>('POST', `/api/w/${wid}/channels/${general.id}/messages`, { body: 'Livraison des licornes publiques lundi' })).status).toBe(200);
-	const page = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/channels/${secret.id}/canvas`)).data;
+	const page = (await owner.req<CanvasMeta>('POST', `/api/w/${wid}/canvases`, { title: 'Direction' })).data;
+	await owner.req('PUT', `/api/w/${wid}/access/page/${page.id}`, { restricted: true, rules: [] });
 	await env.DB.prepare("UPDATE canvases SET title = 'Stratégie', excerpt = 'Plan licornes secret' WHERE id = ?").bind(page.id).run();
 	const now = Date.now();
 	const text = 'Facture licornes privée';
@@ -100,6 +101,7 @@ describe('Synq IA : actions', () => {
 		mockAi(reply);
 		const { member, owner, wid, general, secret } = await scene();
 		const hidden = (await owner.req<ListSummary>('POST', `/api/w/${wid}/lists`, { title: 'Secrète', channelId: secret.id })).data;
+		await owner.req('PUT', `/api/w/${wid}/access/base/${hidden.id}`, { restricted: true, rules: [] });
 		const open = (await owner.req<ListSummary>('POST', `/api/w/${wid}/lists`, { title: 'Ouverte' })).data;
 		expect((await turn(member, { intent: 'cards', context: { workspaceId: wid, channelId: general.id }, listId: hidden.id })).status).toBe(404);
 		// Aperçu légitime puis cible falsifiée : la route des bases refuse.

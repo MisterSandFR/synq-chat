@@ -43,7 +43,7 @@ describe('évaluation des accès', () => {
 			const [kind, id] = k.split(':') as ['page', string];
 			map.set(k, [...(map.get(k) ?? []), { resource_kind: kind, resource_id: id, subject_id: subject, level: level as 'view' }]);
 		}
-		return { rules: map, categories: new Map(categories.map((c) => [c.id, c])), grants: new Map() };
+		return { rules: map, categories: new Map(categories.map((c) => [c.id, c])) };
 	};
 	const node = (over: Partial<PageNode> = {}): PageNode => ({ id: 'p1', channel_id: null, created_by: 'other', parent_id: null, title: 'P', restricted: 0, ...over });
 
@@ -93,13 +93,13 @@ describe('évaluation des accès', () => {
 		expect(categoryLevel(actor(), { ...category, restricted: 0 }, data([]))).toBe('edit');
 	});
 
-	it('salon rattaché : droits du salon tant que la page n’est pas restreinte', () => {
+	it('rattachement de salon pas encore repris : fermé sauf aux administrateurs', () => {
 		const inChannel = node({ channel_id: 'c' });
-		const d = data([]);
-		d.grants.set('u1', new Map([['c', { view: true, send: false, manage: false, room: true }]]));
-		expect(pageLevel(actor(), inChannel, new Map(), d)).toBe('comment');
-		expect(pageLevel(actor(), { ...inChannel, restricted: 1 }, new Map(), d)).toBeNull();
-		expect(baseLevel(actor(), inChannel, d)).toBe('edit');
+		const d = data([['page:p1', DEFAULT_GRADE, 'edit']]);
+		expect(pageLevel(actor(), inChannel, new Map(), d)).toBeNull();
+		expect(pageLevel(actor({ id: 'other' }), inChannel, new Map(), d)).toBeNull();
+		expect(baseLevel(actor(), inChannel, d)).toBeNull();
+		expect(pageLevel(actor({ perms: P.ADMINISTRATOR }), inChannel, new Map(), d)).toBe('manage');
 	});
 });
 
