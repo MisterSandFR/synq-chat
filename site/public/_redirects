@@ -1,0 +1,10 @@
+# Anciennes adresses du site précédent.
+/auth/signin https://app.synq.team 301
+/auth/* https://app.synq.team 301
+/create https://app.synq.team 301
+/status https://app.synq.team 301
+/pricing /#acces 301
+/features /#fonctions 301
+/manifesto /manifeste 301
+/terms /mentions-legales 301
+/privacy /confidentialite 301

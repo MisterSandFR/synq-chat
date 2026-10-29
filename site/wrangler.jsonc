@@ -1,0 +1,17 @@
+{
+	"$schema": "../cloud/node_modules/wrangler/config-schema.json",
+	"name": "synq-site",
+	"account_id": "eb78173c28099c9a619c22919e7dc9d7",
+	"compatibility_date": "2026-10-19",
+	// Pages statiques seules, sans script Worker.
+	"assets": {
+		"directory": "./public",
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "404-page"
+	},
+	"routes": [
+		{ "pattern": "synq.team", "custom_domain": true },
+		{ "pattern": "www.synq.team", "custom_domain": true }
+	],
+	"workers_dev": false
+}
