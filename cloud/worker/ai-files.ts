@@ -227,7 +227,7 @@ export function layoutPrompt(input: { material: string; images: FileRow[]; instr
 	const current = input.previous ? `=== Page actuelle (JSON) ===\n${forModel(input.previous, input.images.map((f) => f.id))}\n\n` : '';
 	const task = input.previous
 		? `Ajuste la page actuelle selon cette consigne : ${input.instruction || 'améliore la mise en page'}. Garde le reste tel quel.`
-		: `Mets ce contenu en page comme une belle page de wiki, en français, fidèle à la source : n'invente rien, garde les chiffres, dates et noms. Une courte introduction, des sections titrées, des listes, des tableaux pour les données, des encadrés pour les points clés, des colonnes pour comparer, des citations pour les extraits marquants. Place chaque image à l'endroit où elle sert le propos.${input.instruction ? `\nConsigne de la personne : ${input.instruction}` : ''}`;
+		: `Mets ce contenu en page comme une belle page de wiki, en français, fidèle à la source : n'invente rien, garde les chiffres, dates et noms. Une courte introduction, des sections titrées, des listes, des tableaux pour les données, des encadrés pour les points clés, des colonnes pour comparer, des citations pour les extraits marquants. Place chaque image à l'endroit où elle sert le propos. Texte des blocs en texte brut : ni HTML, ni Markdown.${input.instruction ? `\nConsigne de la personne : ${input.instruction}` : ''}`;
 	return `${input.material}${pictures}${current}=== Tâche ===\n${task}\n\n${LAYOUT_SCHEMA}`;
 }
 
@@ -245,6 +245,8 @@ const str = (value: unknown, max: number = AI_FILE_LIMITS.text) =>
 		? value
 				.replace(/\*\*(.+?)\*\*/g, '$1')
 				.replace(/`([^`]+)`/g, '$1')
+				// Balises que le modèle glisse malgré la consigne : le texte des blocs est brut.
+				.replace(/<\/?[a-z][^>]*>/gi, '')
 				.trim()
 				.slice(0, max)
 		: typeof value === 'number'
