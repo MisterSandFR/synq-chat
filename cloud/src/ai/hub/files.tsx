@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
 import type { PageCategory } from '../../../shared/access';
 import { AI_FILE_LABEL, AI_FILE_LIMITS, aiFileKind, type AiFile, type LayoutBlock, type PageDraft } from '../../../shared/ai-files';
@@ -138,8 +138,15 @@ export function LayoutCard({
 	const [adjusting, setAdjusting] = useState(false);
 	const [hint, setHint] = useState('');
 	const [dismissed, setDismissed] = useState(false);
+	const card = useRef<HTMLDivElement>(null);
 	const wid = action.workspaceId;
 	const pageId = readContext(wid).ctx.pageId ?? null;
+
+	// Après le défilement en bas du panneau : titre et couverture visibles d'abord.
+	useEffect(() => {
+		const frame = requestAnimationFrame(() => card.current?.scrollIntoView({ block: 'start' }));
+		return () => cancelAnimationFrame(frame);
+	}, []);
 
 	useEffect(() => {
 		void api<PageCategory[]>('GET', `/w/${wid}/page-categories`)
@@ -179,7 +186,7 @@ export function LayoutCard({
 	};
 	const writable = here && (here.level === 'edit' || here.level === 'manage');
 	return (
-		<div className='hub-action hub-layout'>
+		<div ref={card} className='hub-action hub-layout'>
 			<PagePreview draft={draft} onTitle={(title) => setDraft({ title })} />
 			<div className='hub-layout-opts'>
 				<div className='hub-covers' role='radiogroup' aria-label='Couverture'>
