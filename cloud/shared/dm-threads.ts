@@ -28,6 +28,8 @@ export interface DirectConversation {
 	// Groupe : nom facultatif, participants modifiables.
 	group: boolean;
 	name: string;
+	// Créateur du groupe ; nul pour les groupes d'avant ou les conversations privées.
+	ownerId: string | null;
 	createdAt: number;
 	last: DirectLast | null;
 }

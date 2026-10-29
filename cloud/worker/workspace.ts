@@ -393,6 +393,8 @@ const MIGRATIONS = [
 	FAVORITES_MIGRATION,
 	POLLS_MIGRATION,
 	REMINDERS_MIGRATION,
+	// Créateur d'un groupe : il peut le supprimer, comme le propriétaire et les admins de l'espace.
+	`ALTER TABLE channels ADD COLUMN dm_owner TEXT;`,
 ];
 
 const MESSAGE_SELECT = `SELECT m.*, r.user_id AS reply_user, substr(r.body, 1, 160) AS reply_body,
@@ -1503,13 +1505,48 @@ export class Workspace extends DurableObject<Env> {
 			if (gradeIds.length) {
 				syncHolders(this.sql, actors);
 			}
-			return createDirect(this.sql, userIds, name, gradeIds, guests > 0);
+			return createDirect(this.sql, userIds, name, gradeIds, guests > 0, actor.id);
 		});
 		this.dmCache = null;
 		const conversation = directById(this.sql, id, this.dmMap())!;
 		this.sendTo(conversation.memberIds, { t: 'channel_upsert', channel: this.channelView(id)!, perms: DM_PERMS });
 		this.sendTo(conversation.memberIds, { t: 'dm', conversation });
 		return ok(conversation);
+	}
+
+	// Groupe supprimé pour tous : créateur, propriétaire ou admin de l'espace. Renvoie les participants pour la suite côté Worker.
+	async deleteDirect(actor: Actor, channelId: string): Promise<Result<string[]>> {
+		const current = directById(this.sql, channelId, this.dmMap());
+		if (!current || !current.group) {
+			return err(404, 'Groupe introuvable');
+		}
+		const admin = actor.owner || has(actor.perms, P.ADMINISTRATOR);
+		if (!admin && current.ownerId !== actor.id) {
+			return err(403, 'Seul le créateur du groupe ou un administrateur peut le supprimer');
+		}
+		const keys = this.sql.exec<{ key: string }>('SELECT key FROM files WHERE channel_id = ?', channelId).toArray().map((row) => row.key);
+		this.ctx.storage.transactionSync(() => {
+			dropChannelExtras(this.sql, channelId);
+			this.sql.exec('DELETE FROM thread_follows WHERE root_id IN (SELECT id FROM messages WHERE channel_id = ?)', channelId);
+			this.sql.exec('DELETE FROM messages WHERE channel_id = ?', channelId);
+			this.sql.exec('DELETE FROM reads WHERE channel_id = ?', channelId);
+			this.sql.exec('DELETE FROM files WHERE channel_id = ?', channelId);
+			this.sql.exec('DELETE FROM folders WHERE channel_id = ?', channelId);
+			this.sql.exec('DELETE FROM dm_members WHERE channel_id = ?', channelId);
+			this.sql.exec('DELETE FROM dm_grades WHERE channel_id = ?', channelId);
+			this.sql.exec('DELETE FROM channels WHERE id = ?', channelId);
+		});
+		this.dmCache = null;
+		for (const ws of this.ctx.getWebSockets()) {
+			const conn = this.conn(ws);
+			if (conn?.voice?.channelId === channelId) {
+				this.setVoice(ws, conn, null);
+				this.send(ws, { t: 'voice_ended', reason: 'Groupe supprimé' });
+			}
+		}
+		this.sendTo(current.memberIds, { t: 'channel_deleted', id: channelId });
+		await this.deleteObjects(keys);
+		return ok(current.memberIds);
 	}
 
 	// Groupes seulement, par un participant ; null pour qui vient de partir.

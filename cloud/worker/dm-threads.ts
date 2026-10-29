@@ -6,6 +6,7 @@ type DirectRow = {
 	created_at: number;
 	dm_group: number;
 	dm_name: string;
+	dm_owner: string | null;
 	members: string | null;
 	grades: string | null;
 	last_user: string | null;
@@ -14,7 +15,7 @@ type DirectRow = {
 };
 
 // Dernier message hors réponses de fil non diffusées.
-const DIRECT_SELECT = `SELECT c.id, c.created_at, c.dm_group, c.dm_name,
+const DIRECT_SELECT = `SELECT c.id, c.created_at, c.dm_group, c.dm_name, c.dm_owner,
 		(SELECT group_concat(x.user_id) FROM dm_members x WHERE x.channel_id = c.id) AS members,
 		(SELECT group_concat(g.grade_id) FROM dm_grades g WHERE g.channel_id = c.id) AS grades,
 		l.user_id AS last_user, substr(l.body, 1, 200) AS last_body, l.created_at AS last_at
@@ -30,6 +31,7 @@ function toDirect(row: DirectRow, dms: Map<string, string[]>): DirectConversatio
 		gradeIds: (row.grades ?? '').split(',').filter(Boolean),
 		group: row.dm_group === 1,
 		name: row.dm_name,
+		ownerId: row.dm_owner,
 		createdAt: row.created_at,
 		last: row.last_at === null || row.last_user === null ? null : { userId: row.last_user, body: row.last_body ?? '', createdAt: row.last_at },
 	};
@@ -73,15 +75,16 @@ export function findDirect(sql: SqlStorage, userIds: string[]): string | null {
 }
 
 // Rangée `channels` de type dm : messages, non-lus, fichiers, vocal et temps réel réutilisés tels quels.
-export function createDirect(sql: SqlStorage, userIds: string[], name: string, gradeIds: string[] = [], forceGroup = false): string {
+export function createDirect(sql: SqlStorage, userIds: string[], name: string, gradeIds: string[] = [], forceGroup = false, ownerId: string | null = null): string {
 	const id = crypto.randomUUID();
 	sql.exec(
-		"INSERT INTO channels (id, name, kind, topic, category, position, created_at, dm_group, dm_name) VALUES (?, ?, 'dm', '', '', 0, ?, ?, ?)",
+		"INSERT INTO channels (id, name, kind, topic, category, position, created_at, dm_group, dm_name, dm_owner) VALUES (?, ?, 'dm', '', '', 0, ?, ?, ?, ?)",
 		id,
 		`dm-${id}`,
 		Date.now(),
 		forceGroup || userIds.length > 2 || name || gradeIds.length ? 1 : 0,
 		name,
+		ownerId,
 	);
 	for (const userId of userIds) {
 		sql.exec('INSERT INTO dm_members (channel_id, user_id) VALUES (?, ?)', id, userId);

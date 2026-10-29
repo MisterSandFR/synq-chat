@@ -110,6 +110,19 @@ dmThreadsRoutes.delete('/w/:wid/dms/:cid/grades/:gid', async (c) => {
 	return unwrap(c, await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { removeGrade: c.req.param('gid') }, actors));
 });
 
+dmThreadsRoutes.delete('/w/:wid/dms/:cid', async (c) => {
+	const deleted = await stub(c).deleteDirect(c.get('actor'), c.req.param('cid'));
+	if (!deleted.ok) {
+		return unwrap(c, deleted);
+	}
+	// Invités du groupe : invitations révoquées, compte retiré s'il n'avait que ce groupe.
+	await Promise.all(deleted.value.map((userId) => guestLeft(c, c.req.param('cid'), userId)));
+	await c.env.DB.prepare('UPDATE guest_invites SET revoked_at = ? WHERE workspace_id = ? AND channel_id = ? AND revoked_at IS NULL')
+		.bind(Date.now(), c.get('workspaceId'), c.req.param('cid'))
+		.run();
+	return c.json({ ok: true });
+});
+
 dmThreadsRoutes.delete('/w/:wid/dms/:cid/members/:uid', async (c) => {
 	const result = await stub(c).updateDirect(c.get('actor'), c.req.param('cid'), { remove: c.req.param('uid') });
 	if (result.ok) {

@@ -19,9 +19,11 @@ type Props = {
 	onClose: () => void;
 	// Null après départ du groupe.
 	onChanged: (conversation: DirectConversation | null) => void;
+	// Absent si la personne ne peut pas supprimer le groupe.
+	onDelete?: () => void;
 };
 
-export function GroupDialog({ open, workspaceId, conversation, members, grades, myId, online, onClose, onChanged }: Props) {
+export function GroupDialog({ open, workspaceId, conversation, members, grades, myId, online, onClose, onChanged, onDelete }: Props) {
 	const [name, setName] = useState(conversation.name);
 	const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +143,11 @@ export function GroupDialog({ open, workspaceId, conversation, members, grades, 
 					</button>
 				) : (
 					<p className='field-hint'>Tu fais partie du groupe par ton grade.</p>
+				)}
+				{onDelete && (
+					<button type='button' className='btn btn-danger' onClick={onDelete}>
+						<Icon name='trash' size={16} /> Supprimer le groupe
+					</button>
 				)}
 			</div>
 		</Dialog>

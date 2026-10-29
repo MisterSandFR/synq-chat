@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, lazy, Suspense } from 'react';
 
+import type { DirectConversation } from '../../shared/dm-threads';
 import { P, has } from '../../shared/permissions';
 import type { ChannelKind, Me, Member, Message } from '../../shared/types';
-import { api } from '../api';
+import { api, errorText } from '../api';
 import { navigate, readPref, rememberWorkspace, writePref } from '../router';
 import { Avatar, Icon, Logo } from '../ui';
 import { ChannelTabs, HeaderMenu } from './ChannelHeader';
+import type { ContextMenuItem } from './ContextMenu';
 import { Composer } from './Composer';
 import {
 	CallRing,
 	channelLabel,
+	directName,
 	DirectMessagesView,
 	DirectSection,
 	dismissRing,
@@ -141,6 +144,43 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const rooms = useMemo(() => (channels ?? []).filter((c) => c.kind !== 'dm'), [channels]);
 	const labelOf = (id: string) => channelLabel(channels?.find((c) => c.id === id), dms, members, myId);
 	const activeDm = active?.kind === 'dm' ? dms?.find((d) => d.id === active.id) : undefined;
+	const spaceAdmin = Boolean(members.get(myId)?.owner) || has(state.info?.perms ?? 0, P.ADMINISTRATOR);
+	const canDeleteGroup = (dm: DirectConversation) => dm.group && (dm.ownerId === myId || spaceAdmin);
+	const leaveGroup = async (dm: DirectConversation) => {
+		if (!window.confirm('Quitter ce groupe ? Tu n’y auras plus accès.')) {
+			return;
+		}
+		try {
+			await api('DELETE', `/w/${workspaceId}/dms/${dm.id}/members/${myId}`);
+			setGroupOpen(false);
+			if (channelId === dm.id) {
+				navigate(`/w/${workspaceId}`);
+			}
+		} catch (e) {
+			window.alert(errorText(e));
+		}
+	};
+	const deleteGroup = async (dm: DirectConversation) => {
+		if (!window.confirm(`Supprimer « ${directName(dm, members, myId)} » pour tous ses participants ? Messages et fichiers seront effacés.`)) {
+			return;
+		}
+		try {
+			await api('DELETE', `/w/${workspaceId}/dms/${dm.id}`);
+			setGroupOpen(false);
+			if (channelId === dm.id) {
+				navigate(`/w/${workspaceId}`);
+			}
+		} catch (e) {
+			window.alert(errorText(e));
+		}
+	};
+	const groupActions = (dm: DirectConversation): ContextMenuItem[] =>
+		dm.group
+			? [
+					...(dm.addedIds.includes(myId) ? [{ label: 'Quitter le groupe', icon: 'close' as const, onSelect: () => void leaveGroup(dm) }] : []),
+					...(canDeleteGroup(dm) ? [{ label: 'Supprimer le groupe', icon: 'trash' as const, danger: true, onSelect: () => void deleteGroup(dm) }] : []),
+				]
+			: [];
 	// Un DM s'affiche sous le nom de ses participants.
 	const shown = active?.kind === 'dm' ? { ...active, name: labelOf(active.id), topic: '' } : active;
 	const activePerms = active ? (state.perms[active.id] ?? 0) : 0;
@@ -508,6 +548,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 						}}
 						onOpenDirect={openChannel}
 						onNewDirect={() => setNewDirect(true)}
+						groupActions={groupActions}
 					/>
 				}
 			/>
@@ -556,6 +597,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					<HeaderMenu
 						actions={[
 							...(!view && activeDm?.group ? [{ key: 'group', label: 'Participants du groupe', icon: 'users' as const, onSelect: () => setGroupOpen(true) }] : []),
+							...(!view && activeDm ? groupActions(activeDm).flatMap((a) => (a === 'sep' ? [] : [{ key: a.label, label: a.label, icon: a.icon ?? ('close' as const), onSelect: a.onSelect }])) : []),
 							...(active && active.kind !== 'dm' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) ? [{ key: 'access', label: 'Gérer l’accès', icon: 'shield' as const, onSelect: () => setAccessOpen(true) }] : []),
 							...(active?.kind === 'text' && has(state.info?.perms ?? 0, P.MANAGE_CHANNELS) ? [{ key: 'announce', label: announcing ? 'Masquer l’annonce' : 'Annonce du salon', icon: 'megaphone' as const, onSelect: () => setAnnouncing(!announcing) }] : []),
 							'separator' as const,
@@ -779,6 +821,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							myId={myId}
 							online={state.online}
 							onClose={() => setGroupOpen(false)}
+							onDelete={canDeleteGroup(activeDm) ? () => void deleteGroup(activeDm) : undefined}
 							onChanged={(conversation) => {
 								if (conversation) {
 									dispatch({ type: 'dm_threads', update: upsertDirect(conversation) });

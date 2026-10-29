@@ -1,6 +1,7 @@
+import type { DirectConversation } from '../../../shared/dm-threads';
 import type { Member } from '../../../shared/types';
 import { Icon } from '../../ui';
-import { useContextMenu } from '../ContextMenu';
+import { useContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { favoriteDragProps, favoriteItem } from '../favorites/FavoritesSection';
 import { useFavorites } from '../favorites/store';
 import type { WorkspaceState } from '../useWorkspace';
@@ -18,9 +19,11 @@ type Props = {
 	onOpenView: (view: Exclude<ContentView, null>) => void;
 	onOpenDirect: (channelId: string) => void;
 	onNewDirect: () => void;
+	// Quitter ou supprimer, ajouté au clic droit d'un groupe.
+	groupActions?: (dm: DirectConversation) => ContextMenuItem[];
 };
 
-export function DirectSection({ state, channelId, members, myId, view, onOpenView, onOpenDirect, onNewDirect }: Props) {
+export function DirectSection({ state, channelId, members, myId, view, onOpenView, onOpenDirect, onNewDirect, groupActions }: Props) {
 	const { items: favorites } = useFavorites();
 	const dms = (state.dmThreads.dms ?? []).filter((dm) => !favorites.some((f) => f.kind === 'channel' && f.refId === dm.id));
 	const ctx = useContextMenu();
@@ -49,7 +52,10 @@ export function DirectSection({ state, channelId, members, myId, view, onOpenVie
 								onOpenDirect(dm.id);
 							}}
 							{...favoriteDragProps({ kind: 'channel', refId: dm.id })}
-							{...ctx.bind(() => [favoriteItem({ kind: 'channel', refId: dm.id })])}
+							{...ctx.bind(() => {
+								const extra = groupActions?.(dm) ?? [];
+								return [favoriteItem({ kind: 'channel', refId: dm.id }), ...(extra.length ? (['sep', ...extra] as ContextMenuItem[]) : [])];
+							})}
 						>
 							<span className='channel-icon'>
 								<DirectAvatar conversation={dm} members={members} myId={myId} online={state.online} size={20} />

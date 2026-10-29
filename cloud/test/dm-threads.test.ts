@@ -106,6 +106,27 @@ describe('groupes et appels', () => {
 		expect((await carol.req<DirectConversation[]>('GET', `/api/w/${wid}/dms`)).data.some((d) => d.id === gid)).toBe(false);
 	});
 
+	it('supprime un groupe : créateur ou admin, pas les autres participants', async () => {
+		const { owner, member, carol, wid } = await trio();
+		const group = await member.req<DirectConversation>('POST', `/api/w/${wid}/dms`, { userIds: [carol.user.id, owner.user.id], name: 'Projet' });
+		expect(group.data.ownerId).toBe(member.user.id);
+		const gid = group.data.id;
+		await member.req('POST', `/api/w/${wid}/channels/${gid}/messages`, { body: 'Bonjour' });
+		const pair = await member.req<DirectConversation>('POST', `/api/w/${wid}/dms`, { userIds: [carol.user.id] });
+		// Simple participant : refusé ; conversation privée : jamais supprimable.
+		expect((await carol.req('DELETE', `/api/w/${wid}/dms/${gid}`)).status).toBe(403);
+		expect((await member.req('DELETE', `/api/w/${wid}/dms/${pair.data.id}`)).status).toBe(404);
+		const live = await carol.socket(wid);
+		expect((await member.req('DELETE', `/api/w/${wid}/dms/${gid}`)).status).toBe(200);
+		expect(await live.next('channel_deleted')).toEqual({ t: 'channel_deleted', id: gid });
+		live.ws.close();
+		expect((await carol.req<DirectConversation[]>('GET', `/api/w/${wid}/dms`)).data.map((d) => d.id)).not.toContain(gid);
+		expect((await carol.req('GET', `/api/w/${wid}/channels/${gid}/messages`)).status).toBe(404);
+		// Propriétaire de l'espace : supprime un groupe qu'il n'a pas créé.
+		const other = await carol.req<DirectConversation>('POST', `/api/w/${wid}/dms`, { userIds: [member.user.id, owner.user.id], name: 'Autre' });
+		expect((await owner.req('DELETE', `/api/w/${wid}/dms/${other.data.id}`)).status).toBe(200);
+	});
+
 	it('réserve l’appel aux participants et fait sonner les autres', async () => {
 		const { owner, member, carol, wid } = await trio();
 		const dm = await member.req<DirectConversation>('POST', `/api/w/${wid}/dms`, { userIds: [carol.user.id] });
