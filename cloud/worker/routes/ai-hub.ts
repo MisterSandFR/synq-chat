@@ -1,12 +1,31 @@
 import { Hono } from 'hono';
 
+import { AI_FILE_LIMITS, type PageDraft } from '../../shared/ai-files';
 import { AI_HUB_LIMITS, AI_INTENTS, type AiAction, type AiDone, type AiExecuteInput, type AiHubContext, type AiSource, type AiTurnInput, type AiTurnReply } from '../../shared/ai-hub';
 import type { CalendarListing } from '../../shared/calendar';
-import { CANVAS_MSG, canvasFrame, type CanvasMeta } from '../../shared/canvas';
+import { CANVAS_MSG, canvasFrame, canvasPath, type CanvasMeta } from '../../shared/canvas';
 import type { ListDetail, ListItem, ListSummary } from '../../shared/lists';
 import type { MailThreadDetail } from '../../shared/mail';
 import type { Message } from '../../shared/types';
 import { aiText } from '../ai';
+import {
+	activeCount,
+	cleanDraft,
+	cleanName,
+	draftFromModel,
+	extract,
+	fileKey,
+	filesPrompt,
+	imagesIn,
+	insertFile,
+	layoutPrompt,
+	ownFiles,
+	sniff,
+	toFile,
+	toTemplate,
+	wantsLayout,
+	type FileRow,
+} from '../ai-files';
 import { eventPrompt, keywords, parseEvent, transcript, validZone, zonedTime } from '../ai-chat';
 import {
 	actionTurn,
@@ -42,10 +61,14 @@ async function internal<T>(c: Ctx, method: string, path: string, body?: unknown,
 			headers.set(name, value);
 		}
 	}
-	if (body !== undefined) {
+	const raw = body instanceof ArrayBuffer;
+	if (raw) {
+		headers.set('content-length', String(body.byteLength));
+	} else if (body !== undefined) {
 		headers.set('content-type', 'application/json');
 	}
-	const res = await app.fetch(new Request(new URL(`/api${path}`, c.req.url), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), c.env, c.executionCtx);
+	const payload = body === undefined ? undefined : raw ? body : JSON.stringify(body);
+	const res = await app.fetch(new Request(new URL(`/api${path}`, c.req.url), { method, headers, body: payload }), c.env, c.executionCtx);
 	const data = res.headers.get('content-type')?.includes('json') ? ((await res.json()) as T) : null;
 	return { status: res.status, data, res };
 }
@@ -173,16 +196,72 @@ async function chooseList(c: Ctx, wid: string, listId: string | null): Promise<L
 	return sub.data.canEdit ? sub.data : fail(c, 403, 'Permission insuffisante');
 }
 
-async function answer(c: Ctx, input: { text: string; intent: AiTurnInput['intent']; ctx: AiHubContext; timezone: string; listId: string | null }): Promise<Answer | Response> {
+type Ask = (prompt: string, maxTokens?: number) => ReturnType<typeof aiText>;
+
+async function layoutAnswer(c: Ctx, ask: Ask, input: { ctx: AiHubContext; text: string; files: FileRow[]; adjust: PageDraft | null; material: string; loaded: Loaded | null }): Promise<Answer | Response> {
+	const wid = input.ctx.workspaceId;
+	if (!wid) {
+		return fail(c, 400, 'Ouvre un espace pour y créer la page');
+	}
+	if (!input.files.length && !input.loaded && !input.adjust) {
+		return fail(c, 400, 'Joins des fichiers à mettre en page');
+	}
+	const images = input.files.filter((f) => f.kind === 'image');
+	const result = await ask(layoutPrompt({ material: input.material, images, instruction: input.text, previous: input.adjust }), 4000);
+	if (!result.ok) {
+		return unwrap(c, result);
+	}
+	const draft = draftFromModel(result.value, images.map((f) => f.id));
+	if (!draft) {
+		return { text: 'Je n’ai pas réussi à mettre ce contenu en page. Réessaie, avec une consigne plus précise si besoin.', sources: [], action: null };
+	}
+	return {
+		text: input.adjust ? `Page ajustée : « ${draft.title} ». Vérifie l’aperçu puis crée-la.` : `Proposition de page « ${draft.title} ». Vérifie l’aperçu, ajuste-la ou crée-la.`,
+		sources: input.loaded?.sources ?? [],
+		action: { kind: 'layout', workspaceId: wid, draft, files: input.files.map((f) => f.id), parentId: null, categoryId: null },
+	};
+}
+
+async function answer(
+	c: Ctx,
+	input: { text: string; intent: AiTurnInput['intent']; ctx: AiHubContext; timezone: string; listId: string | null; files: FileRow[]; adjust: PageDraft | null },
+): Promise<Answer | Response> {
 	const userId = c.get('user').id;
-	const ask = (prompt: string, maxTokens = 1200) => aiText(c.env, userId, { system: HUB_SYSTEM, prompt, maxTokens });
+	const ask: Ask = (prompt, maxTokens = 1200) => aiText(c.env, userId, { system: HUB_SYSTEM, prompt, maxTokens });
 	const loaded = await loadContext(c, input.ctx, input.timezone);
 	if (loaded instanceof Response) {
 		return loaded;
 	}
 	const instruction = input.text ? `\n\n=== Consigne de la personne ===\n${input.text}` : '';
 	const context = loaded ? `=== Contexte : ${loaded.label} ===\n${loaded.text}\n\n` : '';
+	const files = input.files;
+	const attached = files.length ? `=== Fichiers joints ===\n${filesPrompt(files)}\n\n` : '';
 
+	if (input.intent === 'layout' || (input.intent === 'ask' && files.length && wantsLayout(input.text))) {
+		return layoutAnswer(c, ask, { ctx: input.ctx, text: input.text, files, adjust: input.adjust, material: `${files.length ? context.slice(0, 6000) : context}${attached}`, loaded });
+	}
+	if (input.intent === 'compare') {
+		if (files.length < 2) {
+			return fail(c, 400, 'Joins au moins deux fichiers à comparer');
+		}
+		const result = await ask(`${attached}=== Tâche ===\nCompare ces fichiers : points communs, différences importantes (chiffres, dates, conditions), puis ce qu’il faut retenir. Puces commençant par « - », en nommant les fichiers.${instruction}`, 1500);
+		return result.ok ? { text: result.value, sources: [], action: null } : unwrap(c, result);
+	}
+	if (input.intent === 'summarize' && files.length) {
+		const several = files.length > 1;
+		const result = await ask(
+			`${attached}=== Tâche ===\nRésume ${several ? 'chacun de ces fichiers : son nom, puis' : 'ce fichier en'} 3 à 6 puces commençant par « - » (sujet, points clés, chiffres, décisions, actions).${several ? ' Termine par une ligne de synthèse commune.' : ''}${instruction}`,
+			1500,
+		);
+		return result.ok ? { text: result.value, sources: [], action: null } : unwrap(c, result);
+	}
+	if (input.intent === 'ask' && files.length) {
+		const result = await ask(
+			`${context.slice(0, 6000)}${attached}=== Question ===\n${input.text}\n\n=== Tâche ===\nRéponds à partir des fichiers joints et du contexte uniquement, en nommant le fichier d’où vient chaque information. Si rien ne permet de répondre, dis-le.`,
+			1500,
+		);
+		return result.ok ? { text: result.value, sources: loaded?.sources ?? [], action: null } : unwrap(c, result);
+	}
 	if (input.intent === 'ask') {
 		const sources = await federatedSearch(c.env, userId, input.text, keywords(input.text), input.ctx.workspaceId);
 		if (!sources.length && !loaded) {
@@ -202,26 +281,26 @@ async function answer(c: Ctx, input: { text: string; intent: AiTurnInput['intent
 	}
 	if (input.intent === 'cards') {
 		const wid = input.ctx.workspaceId;
-		if (!loaded || (loaded.kind !== 'channel' && loaded.kind !== 'mail') || !wid) {
-			return fail(c, 400, 'Ouvre un salon, un fil ou un mail pour en tirer des cartes');
+		if (!wid || (!files.length && (!loaded || (loaded.kind !== 'channel' && loaded.kind !== 'mail')))) {
+			return fail(c, 400, 'Ouvre un salon, un fil ou un mail, ou joins des fichiers, pour en tirer des cartes');
 		}
 		const list = await chooseList(c, wid, input.listId ?? input.ctx.listId);
 		if (list instanceof Response) {
 			return list;
 		}
 		const result = await ask(
-			`${context}=== Tâche ===\nExtrais les tâches à faire de ce contenu (au plus ${AI_HUB_LIMITS.cards}). Renvoie uniquement un objet JSON : {"cards":[{"title":"verbe à l’infinitif, court","description":"détails utiles, qui, quand"}]}.${instruction}`,
+			`${files.length ? attached : context}=== Tâche ===\nExtrais les tâches à faire de ce contenu (au plus ${AI_HUB_LIMITS.cards}). Renvoie uniquement un objet JSON : {"cards":[{"title":"verbe à l’infinitif, court","description":"détails utiles, qui, quand"}]}.${instruction}`,
 		);
 		if (!result.ok) {
 			return unwrap(c, result);
 		}
 		const cards = parseCards(result.value);
 		if (!cards.length) {
-			return { text: 'Je n’ai trouvé aucune tâche à transformer en carte.', sources: loaded.sources, action: null };
+			return { text: 'Je n’ai trouvé aucune tâche à transformer en carte.', sources: loaded?.sources ?? [], action: null };
 		}
 		return {
 			text: `${cards.length} carte${cards.length > 1 ? 's' : ''} proposée${cards.length > 1 ? 's' : ''} pour la base « ${list.title} ». Vérifie puis confirme.`,
-			sources: loaded.sources,
+			sources: loaded?.sources ?? [],
 			action: { kind: 'cards', workspaceId: wid, listId: list.id, listTitle: list.title, cards },
 		};
 	}
@@ -306,6 +385,8 @@ const INTENT_TITLE: Record<AiTurnInput['intent'], string> = {
 	page: 'Rédiger une page',
 	mail_reply: 'Répondre au mail',
 	absence: 'Poser une absence',
+	layout: 'Mettre en page',
+	compare: 'Comparer les fichiers',
 };
 
 aiHubRoutes.post('/ai/hub/turns', async (c) => {
@@ -324,11 +405,21 @@ aiHubRoutes.post('/ai/hub/turns', async (c) => {
 		return fail(c, 404, 'Conversation introuvable');
 	}
 	const timezone = typeof body.timezone === 'string' && validZone(body.timezone) ? body.timezone : 'UTC';
-	const reply = await answer(c, { text, intent, ctx: cleanContext(body.context), timezone, listId: id(body.listId) });
+	const fileIds = Array.isArray(body.files) ? [...new Set(body.files.map(id).filter((v): v is string => v !== null))] : [];
+	if (fileIds.length > AI_FILE_LIMITS.files) {
+		return fail(c, 400, `${AI_FILE_LIMITS.files} fichiers au plus`);
+	}
+	const files = await ownFiles(c.env.DB, userId, fileIds, Date.now());
+	if (!files) {
+		return fail(c, 404, 'Fichier introuvable ou expiré : joins-le de nouveau');
+	}
+	const previous = existing && Number.isInteger(body.adjust) ? await actionTurn(c.env.DB, existing.id, body.adjust!) : null;
+	const adjust = previous?.action?.kind === 'layout' ? previous.action.draft : null;
+	const reply = await answer(c, { text, intent, ctx: cleanContext(body.context), timezone, listId: id(body.listId), files, adjust });
 	if (reply instanceof Response) {
 		return reply;
 	}
-	const question = text || INTENT_TITLE[intent];
+	const question = text || (files.length ? `${INTENT_TITLE[intent] || 'Question'} : ${files.map((f) => f.name).join(', ')}` : INTENT_TITLE[intent]);
 	const now = Date.now();
 	const conversation = existing ?? (await startConversation(c.env.DB, userId, question, now));
 	const turns = await saveTurns(c.env.DB, conversation, question, reply, now);
@@ -409,7 +500,48 @@ async function execute(c: Ctx, action: AiAction): Promise<AiDone | Response> {
 		const created = await internal(c, 'POST', '/absences', { ...action.absence, userId: c.get('user').id });
 		return created.status < 300 ? { label: 'Absence posée', href: '/calendrier' } : refused(c, created, 'Absence invalide');
 	}
+	if (action.kind === 'layout') {
+		return executeLayout(c, action);
+	}
 	return fail(c, 400, 'Action inconnue');
+}
+
+// Page créée par la route existante, images copiées par la route des fichiers de page : droits de la personne partout.
+async function executeLayout(c: Ctx, action: Extract<AiAction, { kind: 'layout' }>): Promise<AiDone | Response> {
+	const userId = c.get('user').id;
+	const wid = id(action.workspaceId);
+	const ids = (Array.isArray(action.files) ? action.files : []).map(id).filter((v): v is string => v !== null).slice(0, AI_FILE_LIMITS.files);
+	const files = await ownFiles(c.env.DB, userId, ids, Date.now());
+	if (!files) {
+		return fail(c, 404, 'Fichier expiré : joins-le de nouveau');
+	}
+	const images = files.filter((f) => f.kind === 'image');
+	const draft = cleanDraft(action.draft, images.map((f) => f.id));
+	if (!wid || !draft) {
+		return fail(c, 400, 'Page invalide');
+	}
+	const created = await internal<CanvasMeta>(c, 'POST', `/w/${wid}/canvases`, { title: draft.title, icon: draft.icon, parentId: id(action.parentId), categoryId: id(action.categoryId) });
+	if (created.status !== 201 || !created.data) {
+		return refused(c, created, 'Espace introuvable');
+	}
+	const page = created.data;
+	const used = imagesIn(draft.blocks);
+	const urls = new Map<string, { src: string; alt: string }>();
+	for (const file of images.filter((f) => used.has(f.id))) {
+		const object = await c.env.FILES.get(fileKey(userId, file.id));
+		if (!object) {
+			continue;
+		}
+		const sent = await internal<{ url: string }>(c, 'POST', `/w/${wid}/canvases/${page.id}/files?name=${encodeURIComponent(file.name)}`, await object.arrayBuffer(), { 'Content-Type': file.type });
+		if (sent.status === 201 && sent.data) {
+			urls.set(file.id, { src: sent.data.url, alt: file.name });
+		}
+	}
+	if (draft.cover) {
+		await internal(c, 'PATCH', `/w/${wid}/canvases/${page.id}`, { cover: draft.cover });
+	}
+	await c.env.CANVAS_DOC.getByName(page.id).seed(page.id, page.title, toTemplate(draft.blocks, urls));
+	return { label: `Page « ${page.title} » créée`, href: canvasPath(wid, page.id) };
 }
 
 aiHubRoutes.post('/ai/hub/execute', async (c) => {
@@ -431,4 +563,97 @@ aiHubRoutes.post('/ai/hub/execute', async (c) => {
 	}
 	await markDone(c.env.DB, turn.id, action, done);
 	return c.json(done);
+});
+
+// --- Fichiers joints ---
+
+const REFUSED_TYPE = 'Type de fichier refusé : PDF, Word, Excel, OpenDocument, CSV, texte, Markdown, HTML ou image PNG, JPEG, WebP';
+
+aiHubRoutes.post('/ai/hub/files', async (c) => {
+	const userId = c.get('user').id;
+	const size = Number(c.req.header('Content-Length'));
+	if (!Number.isInteger(size) || size <= 0) {
+		return fail(c, 400, 'Fichier vide ou taille inconnue');
+	}
+	if (size > AI_FILE_LIMITS.size) {
+		return fail(c, 413, 'Fichier trop lourd (20 Mo max)');
+	}
+	let raw = '';
+	try {
+		raw = decodeURIComponent(c.req.header('X-File-Name') ?? '');
+	} catch {
+		// Nom mal encodé : remplacé par défaut.
+	}
+	const name = cleanName(raw);
+	const now = Date.now();
+	if ((await activeCount(c.env.DB, userId, now)) >= AI_FILE_LIMITS.active) {
+		return fail(c, 429, 'Trop de fichiers envoyés ces dernières 24 h');
+	}
+	const bytes = await c.req.arrayBuffer();
+	if (bytes.byteLength > AI_FILE_LIMITS.size) {
+		return fail(c, 413, 'Fichier trop lourd (20 Mo max)');
+	}
+	const sniffed = sniff(name, new Uint8Array(bytes));
+	if (!sniffed) {
+		return fail(c, 400, REFUSED_TYPE);
+	}
+	const { success } = await c.env.AUTH_LIMITER.limit({ key: `ai:${userId}` });
+	if (!success) {
+		return fail(c, 429, 'Trop de demandes à l’IA, réessaie dans une minute');
+	}
+	let extracted = { markdown: '', truncated: false };
+	try {
+		extracted = await extract(c.env, name, sniffed, bytes);
+	} catch (error) {
+		console.error(JSON.stringify({ level: 'error', message: 'ai-files', error: String(error) }));
+		// Une image sans description reste utilisable telle quelle dans la page.
+		if (sniffed.kind !== 'image') {
+			return fail(c, 400, 'Impossible de lire ce fichier');
+		}
+	}
+	const row: FileRow = {
+		id: crypto.randomUUID(),
+		user_id: userId,
+		name,
+		kind: sniffed.kind,
+		type: sniffed.type,
+		size: bytes.byteLength,
+		markdown: extracted.markdown,
+		truncated: extracted.truncated ? 1 : 0,
+		created_at: now,
+		expires_at: now + AI_FILE_LIMITS.ttl,
+	};
+	await c.env.FILES.put(fileKey(userId, row.id), bytes, { httpMetadata: { contentType: row.type }, customMetadata: { name, expiresAt: String(row.expires_at) } });
+	await insertFile(c.env.DB, row);
+	return c.json(toFile(row), 201);
+});
+
+// Jamais public : propriétaire seul, contenu neutralisé (pas de rendu HTML, pas de script).
+aiHubRoutes.get('/ai/hub/files/:id', async (c) => {
+	const userId = c.get('user').id;
+	const [row] = (await ownFiles(c.env.DB, userId, [c.req.param('id')], Date.now())) ?? [];
+	const object = row ? await c.env.FILES.get(fileKey(userId, row.id)) : null;
+	if (!row || !object) {
+		return fail(c, 404, 'Fichier introuvable ou expiré');
+	}
+	return new Response(object.body, {
+		headers: {
+			'Content-Type': row.kind === 'image' ? row.type : 'application/octet-stream',
+			'Content-Disposition': `${row.kind === 'image' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.name)}`,
+			'Cache-Control': 'private, max-age=3600',
+			'Content-Security-Policy': "default-src 'none'; sandbox",
+			'X-Content-Type-Options': 'nosniff',
+		},
+	});
+});
+
+aiHubRoutes.delete('/ai/hub/files/:id', async (c) => {
+	const userId = c.get('user').id;
+	const fid = id(c.req.param('id'));
+	const result = fid ? await c.env.DB.prepare('DELETE FROM ai_files WHERE id = ? AND user_id = ?').bind(fid, userId).run() : null;
+	if (!fid || !result?.meta.changes) {
+		return fail(c, 404, 'Fichier introuvable');
+	}
+	await c.env.FILES.delete(fileKey(userId, fid));
+	return c.json({ ok: true });
 });

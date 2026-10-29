@@ -1,4 +1,5 @@
 import app from './app';
+import { purgeAiFiles } from './ai-files';
 import { sendReminders } from './calendar';
 import { expireTemporaryMembers } from './invites';
 import { wakeSnoozed } from './mail/store';
@@ -34,5 +35,6 @@ export default {
 		ctx.waitUntil(expireTemporaryMembers(env, Date.now()));
 		ctx.waitUntil(sendDueSoon(env, Date.now()));
 		ctx.waitUntil(sendCardReminders(env, Date.now()));
+		ctx.waitUntil(purgeAiFiles(env, Date.now()));
 	},
 } satisfies ExportedHandler<Env>;

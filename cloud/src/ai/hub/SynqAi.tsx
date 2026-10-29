@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
 import { ABSENCE_KINDS, type AbsenceKind } from '../../../shared/absences';
+import { AI_FILE_ACCEPT } from '../../../shared/ai-files';
 import type { AiAction, AiConversation, AiConversationDetail, AiDone, AiIntent, AiSource, AiTurn, AiTurnReply } from '../../../shared/ai-hub';
 import type { ListSummary } from '../../../shared/lists';
 import { api } from '../../api';
@@ -8,6 +9,7 @@ import { navigate, usePath } from '../../router';
 import { Icon, type IconName } from '../../ui';
 import { aiErrorText, splitCitations } from '../parse';
 import { PLACEHOLDER, readContext, suggestionsFor, type Suggestion } from './context';
+import { FileActions, FileChips, LayoutCard, useAttachments } from './files';
 import './hub.css';
 
 const SOURCE_ICON: Record<AiSource['kind'], IconName> = { message: 'chat', mail: 'mail', event: 'calendar', page: 'file', item: 'list' };
@@ -52,13 +54,16 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 	const [error, setError] = useState('');
 	const body = useRef<HTMLDivElement>(null);
 	const input = useRef<HTMLTextAreaElement>(null);
+	const picker = useRef<HTMLInputElement>(null);
+	const attach = useAttachments();
+	const [dragging, setDragging] = useState(false);
 
 	useEffect(() => input.current?.focus(), []);
 	useEffect(() => {
 		body.current?.scrollTo({ top: body.current.scrollHeight });
 	}, [conversation?.turns.length, busy]);
 
-	const send = async (intent: AiIntent, value: string) => {
+	const send = async (intent: AiIntent, value: string, extra: { adjust?: number; files?: string[] } = {}) => {
 		setBusy(true);
 		setError('');
 		try {
@@ -69,6 +74,8 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 				context: readContext(workspaceId).ctx,
 				timezone: zone(),
 				listId: null,
+				files: extra.files ?? attach.ready,
+				adjust: extra.adjust ?? null,
 			});
 			setConversation((current) => ({ ...reply.conversation, turns: [...(current?.id === reply.conversation.id ? current.turns : []), ...reply.turns] }));
 			setText('');
@@ -82,7 +89,7 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 
 	const submit = () => {
 		const value = text.trim();
-		if (!busy && (value || (mode && !mode.needsText))) {
+		if (!busy && !attach.pending && (value || (mode && !mode.needsText))) {
 			void send(mode?.intent ?? 'ask', value);
 		}
 	};
@@ -156,7 +163,36 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 
 	const turns = conversation?.turns ?? [];
 	return (
-		<aside className='hub' style={{ width }} aria-label='Synq IA'>
+		<aside
+			className='hub'
+			style={{ width }}
+			aria-label='Synq IA'
+			onDragOver={(e) => {
+				if (e.dataTransfer.types.includes('Files')) {
+					e.preventDefault();
+					setDragging(true);
+				}
+			}}
+			onDragLeave={(e) => {
+				if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+					setDragging(false);
+				}
+			}}
+			onDrop={(e) => {
+				if (e.dataTransfer.files.length) {
+					e.preventDefault();
+					attach.add([...e.dataTransfer.files]);
+				}
+				setDragging(false);
+			}}
+		>
+			{dragging && (
+				<div className='hub-drop' aria-hidden='true'>
+					<Icon name='upload' size={22} />
+					<strong>Dépose tes fichiers ici</strong>
+					<span>PDF, Word, Excel, CSV, texte, HTML ou images, 20 Mo chacun</span>
+				</div>
+			)}
 			<div className='hub-resize' role='separator' aria-orientation='vertical' aria-label='Redimensionner le panneau' onPointerDown={resize} />
 			<header className='hub-head'>
 				<span className='hub-title'>
@@ -175,6 +211,7 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 						setConversation(null);
 						setHistory(null);
 						setMode(null);
+						attach.clear();
 						input.current?.focus();
 					}}
 				>
@@ -190,7 +227,7 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 				) : turns.length === 0 ? (
 					<div className='hub-welcome'>
 						<h2>Que veux-tu savoir ?</h2>
-						<p>Je cherche dans les messages, mails, événements, pages et bases que tu peux voir, et je cite mes sources.</p>
+						<p>Je cherche dans les messages, mails, événements, pages et suivis que tu peux voir, et je cite mes sources. Joins des fichiers pour les résumer, les comparer ou en faire une page.</p>
 						<div className='hub-suggest'>
 							{suggestionsFor(here.kind).map((s) => (
 								<button key={s.label} type='button' disabled={busy} onClick={() => pick(s)}>
@@ -201,7 +238,7 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 						</div>
 					</div>
 				) : (
-					turns.map((turn) => (turn.role === 'user' ? <p key={turn.id} className='hub-q'>{turn.text}</p> : <Answer key={turn.id} turn={turn} conversationId={conversation!.id} onDone={done} />))
+					turns.map((turn) => (turn.role === 'user' ? <p key={turn.id} className='hub-q'>{turn.text}</p> : <Answer key={turn.id} turn={turn} conversationId={conversation!.id} busy={busy} onDone={done} onAdjust={(turnId, files, hint) => void send('layout', hint, { adjust: turnId, files })} />))
 				)}
 				{busy && <div className='hub-thinking' aria-live='polite'>Synq IA réfléchit…</div>}
 				{error && (
@@ -211,6 +248,9 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 				)}
 			</div>
 			<footer className='hub-foot'>
+				<FileChips items={attach.items} onRemove={attach.remove} />
+				{attach.notice && <p className='hub-empty'>{attach.notice}</p>}
+				{attach.ready.length > 0 && <FileActions count={attach.ready.length} canCards={!!here.ctx.workspaceId} busy={busy || attach.pending} onPick={(intent) => void send(intent, text.trim())} />}
 				<div className='hub-ctx'>
 					<span className='hub-ctx-chip' title='Contexte transmis avec ta demande'>
 						<Icon name='pin' size={13} /> {here.label}
@@ -222,6 +262,20 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 					)}
 				</div>
 				<div className='hub-input'>
+					<input
+						ref={picker}
+						type='file'
+						multiple
+						hidden
+						accept={AI_FILE_ACCEPT}
+						onChange={(e) => {
+							attach.add([...(e.target.files ?? [])]);
+							e.target.value = '';
+						}}
+					/>
+					<button type='button' className='icon-btn hub-attach' title='Joindre des fichiers' aria-label='Joindre des fichiers' onClick={() => picker.current?.click()}>
+						<Icon name='paperclip' size={16} />
+					</button>
 					<textarea
 						ref={input}
 						rows={1}
@@ -231,8 +285,15 @@ export function SynqAiPanel({ workspaceId, onClose }: { workspaceId: string | nu
 						aria-label='Message pour Synq IA'
 						onChange={(e) => setText(e.target.value)}
 						onKeyDown={onKey}
+						onPaste={(e) => {
+							const pasted = [...e.clipboardData.files];
+							if (pasted.length) {
+								e.preventDefault();
+								attach.add(pasted);
+							}
+						}}
 					/>
-					<button type='button' className='icon-btn hub-send' aria-label='Envoyer' disabled={busy || !(text.trim() || (mode && !mode.needsText))} onClick={submit}>
+					<button type='button' className='icon-btn hub-send' aria-label='Envoyer' disabled={busy || attach.pending || !(text.trim() || (mode && !mode.needsText))} onClick={submit}>
 						<Icon name='send' size={16} />
 					</button>
 				</div>
@@ -263,7 +324,19 @@ function History({ items, onOpen, onDelete }: { items: AiConversation[]; onOpen:
 	);
 }
 
-function Answer({ turn, conversationId, onDone }: { turn: AiTurn; conversationId: string; onDone: (turnId: number, action: AiAction, done: AiDone) => void }) {
+function Answer({
+	turn,
+	conversationId,
+	busy,
+	onDone,
+	onAdjust,
+}: {
+	turn: AiTurn;
+	conversationId: string;
+	busy: boolean;
+	onDone: (turnId: number, action: AiAction, done: AiDone) => void;
+	onAdjust: (turnId: number, files: string[], hint: string) => void;
+}) {
 	const open = (source: AiSource) => navigate(source.href);
 	return (
 		<div className='hub-a'>
@@ -297,12 +370,16 @@ function Answer({ turn, conversationId, onDone }: { turn: AiTurn; conversationId
 					))}
 				</ol>
 			)}
-			{turn.action && <ActionCard turn={turn} action={turn.action} conversationId={conversationId} onDone={onDone} />}
+			{turn.action?.kind === 'layout' && !turn.done ? (
+				<LayoutCard turn={turn} action={turn.action} conversationId={conversationId} busy={busy} onDone={onDone} onAdjust={onAdjust} />
+			) : (
+				turn.action && <ActionCard turn={turn} action={turn.action} conversationId={conversationId} onDone={onDone} />
+			)}
 		</div>
 	);
 }
 
-const ACTION_TITLE: Record<AiAction['kind'], string> = { cards: 'Créer des cartes', event: 'Créer un événement', page: 'Créer une page', mail_reply: 'Enregistrer le brouillon', absence: 'Poser une absence' };
+const ACTION_TITLE: Record<AiAction['kind'], string> = { cards: 'Créer des cartes', event: 'Créer un événement', page: 'Créer une page', mail_reply: 'Enregistrer le brouillon', absence: 'Poser une absence', layout: 'Créer la page' };
 
 const localInput = (ms: number | undefined) => (ms ? new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
 

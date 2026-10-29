@@ -1,4 +1,5 @@
 import type { AbsenceInput } from './absences';
+import type { PageDraft } from './ai-files';
 import type { EventInput } from './calendar';
 
 export const AI_HUB_LIMITS = { text: 1000, title: 80, perSource: 4, conversations: 50, turns: 60, cards: 12, cardTitle: 200, pageBody: 12_000 } as const;
@@ -25,9 +26,9 @@ export interface AiHubContext {
 	day: string | null;
 }
 
-export type AiIntent = 'ask' | 'summarize' | 'cards' | 'event' | 'page' | 'mail_reply' | 'absence';
+export type AiIntent = 'ask' | 'summarize' | 'cards' | 'event' | 'page' | 'mail_reply' | 'absence' | 'layout' | 'compare';
 
-export const AI_INTENTS: AiIntent[] = ['ask', 'summarize', 'cards', 'event', 'page', 'mail_reply', 'absence'];
+export const AI_INTENTS: AiIntent[] = ['ask', 'summarize', 'cards', 'event', 'page', 'mail_reply', 'absence', 'layout', 'compare'];
 
 export interface AiCard {
 	title: string;
@@ -39,7 +40,8 @@ export type AiAction =
 	| { kind: 'event'; event: Partial<EventInput> }
 	| { kind: 'page'; workspaceId: string; title: string; body: string }
 	| { kind: 'mail_reply'; mailboxId: string; threadId: string; subject: string; to: string; text: string }
-	| { kind: 'absence'; absence: Partial<AbsenceInput> };
+	| { kind: 'absence'; absence: Partial<AbsenceInput> }
+	| { kind: 'layout'; workspaceId: string; draft: PageDraft; files: string[]; parentId: string | null; categoryId: string | null };
 
 export interface AiDone {
 	label: string;
@@ -73,6 +75,9 @@ export interface AiTurnInput {
 	context: Partial<AiHubContext>;
 	timezone: string;
 	listId: string | null;
+	files?: string[];
+	// Tour dont la page est à ajuster.
+	adjust?: number | null;
 }
 
 // Tour de la personne puis réponse de l'assistant.
