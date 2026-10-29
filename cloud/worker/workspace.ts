@@ -3205,4 +3205,11 @@ export class Workspace extends DurableObject<Env> {
 			}),
 		);
 	}
+
+	// --- Accueil ---
+
+	homeSummary(actor: Actor): { unread: number; mentions: number } {
+		const { unread, mentions } = this.unread(actor, this.visibleIds(actor));
+		return { unread: Object.keys(unread).length, mentions: Object.values(mentions).reduce((sum, n) => sum + n, 0) };
+	}
 }
