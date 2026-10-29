@@ -22,6 +22,7 @@ import type { ChannelMessages } from './useWorkspace';
 import { appAuthor } from './commands/useSlash';
 import { AiAssist } from '../ai/AiAssist';
 import { useMessageAi } from '../ai/useMessageAi';
+import { confirmDialog } from '../dialogs';
 
 const GROUP_GAP = 5 * 60 * 1000;
 
@@ -67,6 +68,8 @@ type Props = {
 	onPin: (id: number, pinned: boolean) => Promise<void>;
 	onOpenThread?: (rootId: number) => void;
 };
+
+const askDeleteMessage = () => confirmDialog({ title: 'Supprimer ce message ?', message: 'Il disparaîtra pour tout le monde.', confirmLabel: 'Supprimer', danger: true });
 
 export function MessageList({
 	workspaceId,
@@ -200,7 +203,7 @@ export function MessageList({
 			items.push({ label: 'Modifier', icon: 'pencil', onSelect: () => setEditing(message.id) });
 		}
 		if (mine || canModerate) {
-			items.push({ label: 'Supprimer', icon: 'trash', danger: true, onSelect: () => window.confirm('Supprimer ce message ?') && void onDelete(message.id) });
+			items.push({ label: 'Supprimer', icon: 'trash', danger: true, onSelect: () => void askDeleteMessage().then((ok) => ok && void onDelete(message.id)) });
 		}
 		return items;
 	};
@@ -368,7 +371,7 @@ export function MessageList({
 											className='icon-btn icon-btn-sm'
 											aria-label='Supprimer'
 											title='Supprimer'
-											onClick={() => window.confirm('Supprimer ce message ?') && void onDelete(message.id)}
+											onClick={() => void askDeleteMessage().then((ok) => ok && void onDelete(message.id))}
 										>
 											<Icon name='trash' size={16} />
 										</button>

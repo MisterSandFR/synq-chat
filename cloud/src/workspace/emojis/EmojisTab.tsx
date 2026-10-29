@@ -6,6 +6,7 @@ import { ApiError, api, errorText } from '../../api';
 import { Icon } from '../../ui';
 import { CustomEmojiImg, emojisChanged, useCustomEmojis } from './customEmojis';
 import './emojis.css';
+import { confirmDialog } from '../../dialogs';
 
 // GIF intact pour garder l'animation ; les autres réduits côté client.
 async function shrink(file: File): Promise<Blob> {
@@ -106,7 +107,7 @@ export function EmojisTab({ info }: { info: WorkspaceDetail }) {
 	};
 
 	const remove = async (emoji: CustomEmoji) => {
-		if (!window.confirm(`Supprimer :${emoji.name}: ? Les messages et réactions qui l’utilisent afficheront le texte.`)) {
+		if (!(await confirmDialog({ title: `Supprimer :${emoji.name}: ?`, message: 'Les messages et réactions qui l’utilisent afficheront le texte.', confirmLabel: 'Supprimer', danger: true }))) {
 			return;
 		}
 		try {

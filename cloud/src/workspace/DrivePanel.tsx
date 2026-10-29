@@ -5,6 +5,7 @@ import { P, has } from '../../shared/permissions';
 import { LIMITS, type Channel, type DriveFile, type DriveFolder, type DriveListing, type Member } from '../../shared/types';
 import { api, errorText, fileUrl, upload } from '../api';
 import { Icon, fileIcon, formatSize, useDismiss } from '../ui';
+import { confirmDialog, promptDialog } from '../dialogs';
 
 const date = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -84,8 +85,8 @@ export function DrivePanel({ workspaceId, channel, version, members, myId, perms
 		}
 	};
 
-	const newFolder = () => {
-		const name = window.prompt('Nom du dossier');
+	const newFolder = async () => {
+		const name = await promptDialog({ title: 'Nouveau dossier', label: 'Nom du dossier', confirmLabel: 'Créer' });
 		if (name?.trim()) {
 			void run(() => api('POST', `/w/${workspaceId}/channels/${channel.id}/drive/folders`, { name, parentId: folderId }));
 		}
@@ -241,14 +242,10 @@ function FolderRow({ folder, canEdit, onOpen, onRename, onDelete }: { folder: Dr
 					items={[
 						{
 							label: 'Renommer',
-							onSelect: () => {
-								const name = window.prompt('Nouveau nom', folder.name);
-								if (name?.trim()) {
-									onRename(name);
-								}
-							},
+							onSelect: () =>
+								void promptDialog({ title: 'Renommer le dossier', label: 'Nouveau nom', initial: folder.name, confirmLabel: 'Renommer' }).then((name) => name && onRename(name)),
 						},
-						{ label: 'Supprimer le dossier', danger: true, onSelect: () => window.confirm(`Supprimer « ${folder.name} » et tout son contenu ?`) && onDelete() },
+						{ label: 'Supprimer le dossier', danger: true, onSelect: () => void confirmDialog({ title: `Supprimer « ${folder.name} » ?`, message: 'Le dossier et tout son contenu seront supprimés.', confirmLabel: 'Supprimer', danger: true }).then((ok) => ok && onDelete()) },
 					]}
 				/>
 			)}
@@ -291,19 +288,20 @@ function FileRow({ workspaceId, file, uploader, canEdit, canMoveUp, onRename, on
 						? [
 								{
 									label: 'Renommer',
-									onSelect: () => {
-										const name = window.prompt('Nouveau nom', file.name);
-										if (name?.trim()) {
-											onRename(name);
-										}
-									},
+									onSelect: () =>
+										void promptDialog({ title: 'Renommer le fichier', label: 'Nouveau nom', initial: file.name, confirmLabel: 'Renommer' }).then((name) => name && onRename(name)),
 								},
 								...(canMoveUp ? [{ label: 'Remonter d’un dossier', onSelect: onMoveUp }] : []),
 								{
 									label: 'Supprimer',
 									danger: true,
 									onSelect: () =>
-										window.confirm(file.messageId ? `Supprimer « ${file.name} » ? Il disparaîtra aussi du message où il a été partagé.` : `Supprimer « ${file.name} » ?`) && onDelete(),
+										void confirmDialog({
+											title: `Supprimer « ${file.name} » ?`,
+											message: file.messageId ? 'Il disparaîtra aussi du message où il a été partagé.' : undefined,
+											confirmLabel: 'Supprimer',
+											danger: true,
+										}).then((ok) => ok && onDelete()),
 								},
 							]
 						: []),

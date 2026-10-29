@@ -2243,3 +2243,22 @@ kbd {
 		transition-duration: 0.01ms !important;
 	}
 }
+
+.app-dialog {
+	display: grid;
+	gap: 16px;
+	min-width: min(380px, calc(100vw - 64px));
+}
+
+.app-dialog-message {
+	margin: 0;
+	color: var(--muted);
+	line-height: 1.5;
+	white-space: pre-line;
+}
+
+.app-dialog-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}

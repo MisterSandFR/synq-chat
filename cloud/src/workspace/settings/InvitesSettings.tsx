@@ -6,6 +6,7 @@ import type { Channel, WorkspaceDetail } from '../../../shared/types';
 import { api, errorText } from '../../api';
 import { Dialog, Icon } from '../../ui';
 import './invites.css';
+import { confirmDialog } from '../../dialogs';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -69,7 +70,7 @@ export function InvitesTab({ info, channels, myId }: Props) {
 	const canRevokeAll = has(info.perms, P.MANAGE_WORKSPACE);
 	const copy = (code: string) => void navigator.clipboard.writeText(inviteLink(code)).then(() => setCopied(code));
 	const revoke = async (invite: Invite) => {
-		if (!confirm(`Révoquer le lien ${invite.code} ? Il ne pourra plus servir.`)) {
+		if (!(await confirmDialog({ title: `Révoquer le lien ${invite.code} ?`, message: 'Il ne pourra plus servir.', confirmLabel: 'Révoquer', danger: true }))) {
 			return;
 		}
 		setError(null);

@@ -12,6 +12,7 @@ import { AccessDialog } from '../grade-access/AccessDialog';
 import { ChannelPermissions, OverridesEditor } from './OverridesEditor';
 import { useCategories } from './useCategories';
 import './categories.css';
+import { confirmDialog } from '../../dialogs';
 
 type Props = {
 	workspaceId: string;
@@ -285,7 +286,10 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					label: 'Supprimer la catégorie',
 					icon: 'trash',
 					danger: true,
-					onSelect: () => window.confirm(`Supprimer la catégorie ${category.name} ? Ses salons sont conservés.`) && void api('DELETE', `/w/${workspaceId}/categories/${category.id}`).catch(report),
+					onSelect: () =>
+						void confirmDialog({ title: `Supprimer la catégorie ${category.name} ?`, message: 'Ses salons sont conservés.', confirmLabel: 'Supprimer', danger: true }).then(
+							(ok) => ok && api('DELETE', `/w/${workspaceId}/categories/${category.id}`).catch(report),
+						),
 				},
 			);
 		}
@@ -338,7 +342,10 @@ export function CategoryNav({ workspaceId, info, channels, channelId, staff, onO
 					label: 'Supprimer le salon',
 					icon: 'trash',
 					danger: true,
-					onSelect: () => window.confirm(`Supprimer ${channel.name} avec ses messages et fichiers ?`) && void api('DELETE', `/w/${workspaceId}/channels/${channel.id}`).catch(report),
+					onSelect: () =>
+						void confirmDialog({ title: `Supprimer ${channel.name} ?`, message: 'Ses messages et fichiers seront supprimés.', confirmLabel: 'Supprimer', danger: true }).then(
+							(ok) => ok && api('DELETE', `/w/${workspaceId}/channels/${channel.id}`).catch(report),
+						),
 				},
 			);
 		}

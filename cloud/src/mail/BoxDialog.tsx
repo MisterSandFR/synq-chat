@@ -5,6 +5,7 @@ import type { Channel, WorkspaceDetail, WorkspaceSummary } from '../../shared/ty
 import { api, errorText } from '../api';
 import { Dialog, Icon } from '../ui';
 import { ShareGrades, reachOf, reachText } from './ShareGrades';
+import { confirmDialog } from '../dialogs';
 
 export function BoxDialog({ box, workspaces, onClose, onSaved }: { box: MailboxInfo | null; workspaces: WorkspaceSummary[]; onClose: () => void; onSaved: () => Promise<void> }) {
 	const owner = !box || box.access.owner;
@@ -53,8 +54,8 @@ export function BoxDialog({ box, workspaces, onClose, onSaved }: { box: MailboxI
 			setStatus(failures.length ? { tone: 'error', text: failures.join(' ; ') } : { tone: 'ok', text: 'Connexion IMAP et SMTP réussie.' });
 		});
 
-	const remove = () => {
-		if (box && confirm(`Supprimer la boîte « ${box.name} » et ses conversations ?`)) {
+	const remove = async () => {
+		if (box && (await confirmDialog({ title: `Supprimer la boîte « ${box.name} » ?`, message: 'Ses conversations seront retirées de Synq.', confirmLabel: 'Supprimer', danger: true }))) {
 			void run(async () => {
 				await api('DELETE', `/mail/boxes/${box.id}`);
 				await onSaved();

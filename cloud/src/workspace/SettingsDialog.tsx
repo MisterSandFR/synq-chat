@@ -18,6 +18,7 @@ import { MailTab } from './settings/MailSettings';
 import { Swatches } from './settings/Swatches';
 import { WebhooksTab } from './rc/WebhooksTab';
 import './settings/settings.css';
+import { confirmDialog } from '../dialogs';
 
 type Tab = 'space' | 'channels' | 'grades' | 'members' | 'invites' | 'commands' | 'webhooks' | 'mail' | 'audit' | 'emojis';
 
@@ -283,12 +284,15 @@ function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: stri
 							type='button'
 							className='btn btn-danger'
 							onClick={() =>
-								window.confirm(`Supprimer « ${info.name} » ? Messages et fichiers seront effacés définitivement.`) &&
-								void run(async () => {
-									await api('DELETE', `/w/${info.id}/info`);
-									await onChanged();
-									navigate('/espaces', true);
-								})
+								void confirmDialog({ title: `Supprimer « ${info.name} » ?`, message: 'Messages et fichiers seront effacés définitivement.', confirmLabel: 'Supprimer l’espace', danger: true }).then(
+									(ok) =>
+										ok &&
+										run(async () => {
+											await api('DELETE', `/w/${info.id}/info`);
+											await onChanged();
+											navigate('/espaces', true);
+										}),
+								)
 							}
 						>
 							Supprimer l’espace
@@ -304,12 +308,15 @@ function SpaceTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: stri
 							type='button'
 							className='btn btn-danger'
 							onClick={() =>
-								window.confirm(`Quitter « ${info.name} » ?`) &&
-								void run(async () => {
-									await api('DELETE', `/w/${info.id}/members/${myId}`);
-									await onChanged();
-									navigate('/espaces', true);
-								})
+								void confirmDialog({ title: `Quitter « ${info.name} » ?`, message: 'Il faudra une nouvelle invitation pour revenir.', confirmLabel: 'Quitter', danger: true }).then(
+									(ok) =>
+										ok &&
+										run(async () => {
+											await api('DELETE', `/w/${info.id}/members/${myId}`);
+											await onChanged();
+											navigate('/espaces', true);
+										}),
+								)
 							}
 						>
 							Quitter l’espace
@@ -446,7 +453,7 @@ function ChannelsTab({ info, channels }: { info: WorkspaceDetail; channels: Chan
 							type='button'
 							className='icon-btn icon-btn-sm'
 							aria-label={`Supprimer ${channel.name}`}
-							onClick={() => window.confirm(`Supprimer ${channel.name} avec ses messages et fichiers ?`) && void run(() => api('DELETE', `/w/${info.id}/channels/${channel.id}`))}
+							onClick={() => void confirmDialog({ title: `Supprimer ${channel.name} ?`, message: 'Ses messages et fichiers seront supprimés.', confirmLabel: 'Supprimer', danger: true }).then((ok) => ok && run(() => api('DELETE', `/w/${info.id}/channels/${channel.id}`)))}
 						>
 							<Icon name='trash' size={16} />
 						</button>
@@ -502,7 +509,7 @@ function MembersTab({ info, myId, onChanged }: { info: WorkspaceDetail; myId: st
 									type='button'
 									className='icon-btn icon-btn-sm'
 									aria-label={`Retirer ${member.name} de l’espace`}
-									onClick={() => window.confirm(`Retirer ${member.name} de l’espace ?`) && void run(() => api('DELETE', `/w/${info.id}/members/${member.id}`).then(onChanged))}
+									onClick={() => void confirmDialog({ title: `Retirer ${member.name} de l’espace ?`, message: 'Il faudra une nouvelle invitation pour revenir.', confirmLabel: 'Retirer', danger: true }).then((ok) => ok && run(() => api('DELETE', `/w/${info.id}/members/${member.id}`).then(onChanged)))}
 								>
 									<Icon name='trash' size={16} />
 								</button>

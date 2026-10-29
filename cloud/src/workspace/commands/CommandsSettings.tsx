@@ -5,6 +5,7 @@ import { api, errorText } from '../../api';
 import { Icon } from '../../ui';
 import { COMMANDS_EVENT } from './useSlash';
 import './commands.css';
+import { confirmDialog } from '../../dialogs';
 
 const randomSecret = () => [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -29,7 +30,7 @@ export function CommandsTab({ workspaceId }: { workspaceId: string }) {
 	}, [load, workspaceId]);
 
 	const remove = async (command: CommandConfig) => {
-		if (!window.confirm(`Supprimer la commande /${command.name} ?`)) {
+		if (!(await confirmDialog({ title: `Supprimer la commande /${command.name} ?`, confirmLabel: 'Supprimer', danger: true }))) {
 			return;
 		}
 		setError(null);

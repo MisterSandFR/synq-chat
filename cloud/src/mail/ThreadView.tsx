@@ -12,6 +12,7 @@ import { MessageCard } from './MessageCard';
 import { QuickReplies } from './QuickReplies';
 import { ThreadSummary } from './Summary';
 import { ThreadToolbar, type ThreadPatch } from './ThreadToolbar';
+import { confirmDialog } from '../dialogs';
 
 type Props = {
 	id: string;
@@ -111,8 +112,8 @@ export function ThreadView({ id, me, boxes, workspaces, version, openDrafts, onB
 			}
 		});
 
-	const remove = () => {
-		if (confirm('Mettre ce fil à la corbeille ? Rien n’est supprimé sur le serveur mail.')) {
+	const remove = async () => {
+		if (await confirmDialog({ title: 'Mettre ce fil à la corbeille ?', message: 'Rien n’est supprimé sur le serveur mail.', confirmLabel: 'Mettre à la corbeille', danger: true })) {
 			void run(async () => {
 				await api('DELETE', `/mail/threads/${id}`);
 				await onChanged();

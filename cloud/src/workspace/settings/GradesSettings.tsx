@@ -8,6 +8,7 @@ import { Avatar, Icon, useDismiss } from '../../ui';
 import { canManageMember, canTouchGrade, memberColor, reorder } from '../grades';
 import { Swatches } from './Swatches';
 import './settings.css';
+import { confirmDialog } from '../../dialogs';
 
 type Pane = 'display' | 'perms' | 'members';
 
@@ -200,11 +201,14 @@ function GradeForm({ info, grade, pane, run, onChanged }: { info: WorkspaceDetai
 							className='btn btn-danger'
 							style={{ alignSelf: 'flex-start' }}
 							onClick={() =>
-								window.confirm(`Supprimer le grade « ${grade.name} » ? Ses membres le perdent.`) &&
-								void run(async () => {
-									await api('DELETE', `/w/${info.id}/grades/${grade.id}`);
-									await onChanged();
-								})
+								void confirmDialog({ title: `Supprimer le grade « ${grade.name} » ?`, message: 'Ses membres le perdent.', confirmLabel: 'Supprimer', danger: true }).then(
+									(ok) =>
+										ok &&
+										run(async () => {
+											await api('DELETE', `/w/${info.id}/grades/${grade.id}`);
+											await onChanged();
+										}),
+								)
 							}
 						>
 							<Icon name='trash' size={16} /> Supprimer le grade

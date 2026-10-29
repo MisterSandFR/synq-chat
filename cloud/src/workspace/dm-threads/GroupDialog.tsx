@@ -7,6 +7,7 @@ import { Avatar, Dialog, Icon } from '../../ui';
 import { GradeDot, PeoplePicker, gradeLabel, holdsGrade } from '../grade-access/PeoplePicker';
 import { GuestBadge, GuestInvites } from '../guests/GuestInvites';
 import './dm-threads.css';
+import { confirmDialog } from '../../dialogs';
 
 type Props = {
 	open: boolean;
@@ -137,7 +138,11 @@ export function GroupDialog({ open, workspaceId, conversation, members, grades, 
 					<button
 						type='button'
 						className='btn dm-leave'
-						onClick={() => window.confirm('Quitter ce groupe ? Tu n’y auras plus accès.') && void run(() => api<null>('DELETE', `${base}/members/${myId}`))}
+						onClick={() =>
+							void confirmDialog({ title: 'Quitter ce groupe ?', message: 'Tu n’y auras plus accès.', confirmLabel: 'Quitter', danger: true }).then(
+								(ok) => ok && void run(() => api<null>('DELETE', `${base}/members/${myId}`)),
+							)
+						}
 					>
 						Quitter le groupe
 					</button>

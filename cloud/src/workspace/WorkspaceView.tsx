@@ -58,6 +58,7 @@ import { ReminderButton, ReminderDialog, useLaterLoader, type LaterTarget } from
 import { StatusDialog, StatusMenuItems } from './rc/status';
 import { presenceOf, useRc } from './rc/useRc';
 import { CatchupBanner } from '../ai/CatchupBanner';
+import { alertDialog, confirmDialog } from '../dialogs';
 
 type Props = {
 	me: Me;
@@ -147,7 +148,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 	const spaceAdmin = Boolean(members.get(myId)?.owner) || has(state.info?.perms ?? 0, P.ADMINISTRATOR);
 	const canDeleteGroup = (dm: DirectConversation) => dm.group && (dm.ownerId === myId || spaceAdmin);
 	const leaveGroup = async (dm: DirectConversation) => {
-		if (!window.confirm('Quitter ce groupe ? Tu n’y auras plus accès.')) {
+		if (!(await confirmDialog({ title: 'Quitter ce groupe ?', message: 'Tu n’y auras plus accès.', confirmLabel: 'Quitter', danger: true }))) {
 			return;
 		}
 		try {
@@ -157,11 +158,18 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				navigate(`/w/${workspaceId}`);
 			}
 		} catch (e) {
-			window.alert(errorText(e));
+			void alertDialog({ title: 'Action impossible', message: errorText(e) });
 		}
 	};
 	const deleteGroup = async (dm: DirectConversation) => {
-		if (!window.confirm(`Supprimer « ${directName(dm, members, myId)} » pour tous ses participants ? Messages et fichiers seront effacés.`)) {
+		if (
+			!(await confirmDialog({
+				title: `Supprimer « ${directName(dm, members, myId)} » ?`,
+				message: 'Le groupe disparaît pour tous ses participants. Messages et fichiers seront effacés.',
+				confirmLabel: 'Supprimer le groupe',
+				danger: true,
+			}))
+		) {
 			return;
 		}
 		try {
@@ -171,7 +179,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 				navigate(`/w/${workspaceId}`);
 			}
 		} catch (e) {
-			window.alert(errorText(e));
+			void alertDialog({ title: 'Action impossible', message: errorText(e) });
 		}
 	};
 	const groupActions = (dm: DirectConversation): ContextMenuItem[] =>

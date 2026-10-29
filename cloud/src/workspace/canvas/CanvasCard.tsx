@@ -6,6 +6,7 @@ import { navigate } from '../../router';
 import { Avatar, Icon } from '../../ui';
 import type { Lookup } from '../richText';
 import './canvas-card.css';
+import { alertDialog } from '../../dialogs';
 
 const cache = new Map<string, Promise<CanvasMeta | null>>();
 
@@ -22,7 +23,7 @@ export async function openChannelCanvas(workspaceId: string, channelId: string):
 		const canvas = await api<CanvasMeta>('POST', `/w/${workspaceId}/channels/${channelId}/canvas`);
 		navigate(canvasPath(workspaceId, canvas.id));
 	} catch (error) {
-		window.alert(errorText(error));
+		void alertDialog({ title: 'Page indisponible', message: errorText(error) });
 	}
 }
 

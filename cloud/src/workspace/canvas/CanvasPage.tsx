@@ -20,6 +20,7 @@ import { createPage, duplicatePage, localPage, pageLabel, patchPage, refreshPage
 import { CanvasSync, canvasSocketUrl, colorFor, type SyncStatus } from './sync';
 import './canvas.css';
 import './pages.css';
+import { confirmDialog } from '../../dialogs';
 
 type Props = {
 	workspaceId: string;
@@ -138,7 +139,7 @@ function PagesHome({ workspaceId, members, channelLabel }: Props) {
 	};
 
 	const purge = async (page: CanvasMeta) => {
-		if (!window.confirm(`Supprimer définitivement « ${pageLabel(page)} » et ses sous-pages ?`)) {
+		if (!(await confirmDialog({ title: `Supprimer définitivement « ${pageLabel(page)} » ?`, message: 'Ses sous-pages seront supprimées aussi.', confirmLabel: 'Supprimer', danger: true }))) {
 			return;
 		}
 		try {
@@ -407,7 +408,7 @@ function CanvasDocument({ workspaceId, canvasId, myId, members, channels, perms,
 
 	const remove = async () => {
 		setMenu(null);
-		if (!window.confirm('Supprimer définitivement cette page et ses sous-pages pour tout le monde ?')) {
+		if (!(await confirmDialog({ title: 'Supprimer définitivement cette page ?', message: 'Elle et ses sous-pages disparaissent pour tout le monde.', confirmLabel: 'Supprimer', danger: true }))) {
 			return;
 		}
 		try {

@@ -5,6 +5,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { DialogHost } from './dialogs';
 import { applyTheme } from './theme';
 
 applyTheme();
@@ -19,5 +20,6 @@ try {
 createRoot(document.getElementById('root')!).render(
 	<StrictMode>
 		<App />
+		<DialogHost />
 	</StrictMode>,
 );

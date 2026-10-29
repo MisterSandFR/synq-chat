@@ -8,6 +8,7 @@ import { EventDescribe } from '../ai/EventDescribe';
 import { navigate } from '../router';
 import { Avatar, Dialog, Icon } from '../ui';
 import { DAY, fromDateInput, fromLocalInput, HOUR, recurrenceText, reminderText, REMINDERS, toDateInput, toLocalInput, userTimeZone, whenText, type Placed } from './dates';
+import { confirmDialog } from '../dialogs';
 
 const RESPONSES: Record<RsvpResponse, string> = { pending: 'En attente', yes: 'Oui', maybe: 'Peut-être', no: 'Non' };
 
@@ -68,8 +69,15 @@ function EventDetails({ me, placed, workspaces, onEdit, onChanged, onClose }: { 
 		}
 	};
 
-	const remove = (occurrence: boolean) => {
-		if (confirm(occurrence ? 'Supprimer cette occurrence ?' : 'Supprimer cet événement et toutes ses occurrences ?')) {
+	const remove = async (occurrence: boolean) => {
+		if (
+			await confirmDialog({
+				title: occurrence ? 'Supprimer cette occurrence ?' : 'Supprimer cet événement ?',
+				message: occurrence ? 'Les autres dates de la série sont conservées.' : 'Toutes ses occurrences seront supprimées.',
+				confirmLabel: 'Supprimer',
+				danger: true,
+			})
+		) {
 			void run(() => api('DELETE', `/calendar/events/${event.id}${occurrence ? `?occurrence=${placed.startsAt}` : ''}`), true);
 		}
 	};

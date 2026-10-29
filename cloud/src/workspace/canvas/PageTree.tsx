@@ -32,6 +32,7 @@ import {
 	useTreeBases,
 } from './pages';
 import './pages.css';
+import { confirmDialog } from '../../dialogs';
 
 // L'éditeur reste hors du paquet de la colonne.
 const TemplatePicker = lazy(() => import('./CanvasPage').then((m) => ({ default: m.TemplatePicker })));
@@ -202,7 +203,7 @@ export function PageTree({ workspaceId, activeId, compact, channelNames, onError
 	};
 
 	const removeBase = async (node: TreeNode) => {
-		if (!window.confirm(`Supprimer le suivi « ${labelOf(node)} » et tous ses éléments ?`)) {
+		if (!(await confirmDialog({ title: `Supprimer le suivi « ${labelOf(node)} » ?`, message: 'Tous ses éléments seront supprimés.', confirmLabel: 'Supprimer', danger: true }))) {
 			return;
 		}
 		await api('DELETE', `/w/${workspaceId}/lists/${node.id}`);
@@ -394,7 +395,10 @@ export function PageTree({ workspaceId, activeId, compact, channelNames, onError
 						label: 'Supprimer la catégorie',
 						icon: 'trash',
 						danger: true,
-						onSelect: () => window.confirm(`Supprimer « ${cat.name} » ? Ses pages et suivis restent, sans catégorie.`) && void deleteCategory(workspaceId, cat.id).catch(report),
+						onSelect: () =>
+							void confirmDialog({ title: `Supprimer la catégorie « ${cat.name} » ?`, message: 'Ses pages et suivis restent, sans catégorie.', confirmLabel: 'Supprimer', danger: true }).then(
+								(ok) => ok && void deleteCategory(workspaceId, cat.id).catch(report),
+							),
 					},
 				] as ContextMenuItem[])
 			: []),

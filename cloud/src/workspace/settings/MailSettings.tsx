@@ -8,6 +8,7 @@ import { api, errorText } from '../../api';
 import { reachText } from '../../mail/ShareGrades';
 import { Avatar, Icon } from '../../ui';
 import { GradeDot, PeoplePicker, gradeLabel, holderCount, plural } from '../grade-access/PeoplePicker';
+import { confirmDialog } from '../../dialogs';
 
 const MEMBER_PREFIX = memberKey('');
 
@@ -44,8 +45,8 @@ export function MailTab({ info }: { info: WorkspaceDetail }) {
 		}
 	};
 	const save = (next: string[]) => run(async () => setSubjects((await api<MailSharers>('PUT', `/w/${info.id}/mail-sharers`, { subjects: next })).subjects));
-	const unshare = (box: WorkspaceMailbox) => {
-		if (confirm(`Retirer le partage de « ${box.name} » ? Les membres de l’espace n’y auront plus accès.`)) {
+	const unshare = async (box: WorkspaceMailbox) => {
+		if (await confirmDialog({ title: `Retirer le partage de « ${box.name} » ?`, message: 'Les membres de l’espace n’y auront plus accès.', confirmLabel: 'Retirer', danger: true })) {
 			void run(async () => {
 				await api('DELETE', `/w/${info.id}/mail-boxes/${box.id}`);
 				setBoxes((current) => current?.filter((item) => item.id !== box.id) ?? null);

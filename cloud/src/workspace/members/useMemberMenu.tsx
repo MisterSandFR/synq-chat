@@ -7,6 +7,7 @@ import { Dialog } from '../../ui';
 import type { ContextMenuItem } from '../ContextMenu';
 import { assignableGrades, canKickMember, canManageMember, outranks } from '../grades';
 import './members.css';
+import { confirmDialog } from '../../dialogs';
 
 export const MENTION_EVENT = 'synq:mention';
 
@@ -116,11 +117,10 @@ export function useMemberMenu({ workspaceId, info, channels, perms, voice, myId,
 				label: 'Exclure de l’espace',
 				icon: 'logout',
 				danger: true,
-				onSelect: () => {
-					if (window.confirm(`Exclure ${member.name} de l’espace ?`)) {
-						void report(api('DELETE', `/w/${workspaceId}/members/${userId}`).then(onChanged));
-					}
-				},
+				onSelect: () =>
+					void confirmDialog({ title: `Exclure ${member.name} de l’espace ?`, message: 'Il faudra une nouvelle invitation pour revenir.', confirmLabel: 'Exclure', danger: true }).then(
+						(ok) => ok && void report(api('DELETE', `/w/${workspaceId}/members/${userId}`).then(onChanged)),
+					),
 			});
 		}
 		return list;
