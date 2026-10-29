@@ -16,6 +16,7 @@ const ID = '[\\w-]+';
 // Liste blanche : toute route d'espace absente est refusée à un invité.
 const GUEST_ROUTES: Array<[string, RegExp]> = [
 	['GET', /^\/info$/],
+	['GET', /^\/summary$/],
 	['GET', /^\/channels$/],
 	['GET', new RegExp(`^/channels/${ID}/(messages|pins|announcement)$`)],
 	['POST', new RegExp(`^/channels/${ID}/(messages|read)$`)],

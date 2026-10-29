@@ -51,6 +51,7 @@ import { aiHubRoutes } from './routes/ai-hub';
 import { guestRoutes } from './routes/guests';
 import { inviteRoutes } from './routes/invites';
 import { listRoutes } from './routes/lists';
+import { homeRoutes } from './routes/home';
 import { acceptGuest, guestAccountAllowed, guestAllowed, guestLanding } from './guests';
 import { GUEST_SESSION_TTL } from '../shared/guests';
 
@@ -869,6 +870,7 @@ app.route('/', aiHubRoutes);
 app.route('/', pollRoutes);
 app.route('/', reminderRoutes);
 app.route('/', accessRoutes);
+app.route('/', homeRoutes);
 app.route('/', voiceRoutes);
 
 app.get('/w/:wid/ws', async (c) => {
