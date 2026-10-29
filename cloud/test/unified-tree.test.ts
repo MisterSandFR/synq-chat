@@ -115,6 +115,7 @@ describe('pages de salon', () => {
 		expect(tab.data.title).toBe('');
 		expect(channelPageTitle(tab.data, general.name)).toBe('# général');
 		expect(channelPageTitle({ ...tab.data, title: 'Canevas du salon' }, general.name)).toBe('# général');
+		expect(channelPageTitle({ ...tab.data, title: 'Sans titre' }, general.name)).toBe('# général');
 		expect(channelPageTitle({ ...tab.data, title: 'Notes' }, general.name)).toBe('Notes');
 		expect(channelPageTitle({ title: '', channelId: null })).toBe('Sans titre');
 	});
