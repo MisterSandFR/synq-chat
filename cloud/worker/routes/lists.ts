@@ -20,6 +20,8 @@ import {
 	updateItem,
 	updateList,
 	workspaceLists,
+	placeList,
+	type ListPlace,
 	type ListRow,
 } from '../lists';
 import {
@@ -57,7 +59,9 @@ import { listCanvasRows, scopeOf, workspaceMemberIds } from '../canvases';
 import { addLink, checkToCard, duplicateCard, followersOf, moveCard, removeLink, resolveLinks, searchTargets, setFollow, toggleReaction, type ScopedLink } from '../lists-cards';
 import { LIMITS } from '../../shared/types';
 import { atLeast, type AccessLevel } from '../../shared/access';
-import { baseLevel, loadAccess, readableBases } from '../access';
+import { baseAccess, baseLevel, baseLevels, categoryLevel, loadAccess, pageAccess, reviseCardDocs } from '../access';
+import { pagesNotice } from './canvases';
+import { CANVAS_LIMITS } from '../../shared/canvas';
 import type { CanvasPeer } from '../canvas-doc';
 
 export const listRoutes = new Hono<AppEnv>();
@@ -66,8 +70,8 @@ type Rights = { view: boolean; edit: boolean; remove: boolean; level: AccessLeve
 
 async function rightsOf(c: Ctx, row: ListRow): Promise<Rights> {
 	const actor = c.get('actor');
-	const data = await loadAccess(c.env, c.get('workspaceId'), [actor], [row.channel_id]);
-	const level = baseLevel(actor, row, data);
+	const { pages, data } = await baseAccess(c.env, c.get('workspaceId'), [actor], [row]);
+	const level = baseLevel(actor, row, data, pages);
 	const edit = atLeast(level, 'edit') && !actor.guest;
 	return { view: level !== null, edit, remove: edit && level === 'manage', level };
 }
@@ -77,7 +81,7 @@ async function loadList(c: Ctx, need: 'view' | 'edit' | 'remove'): Promise<{ row
 	const row = await listRow(c.env.DB, c.get('workspaceId'), c.req.param('lid')!);
 	const rights = row ? await rightsOf(c, row) : null;
 	if (!row || !rights?.view) {
-		return fail(c, 404, 'Liste introuvable');
+		return fail(c, 404, 'Suivi introuvable');
 	}
 	if (!rights[need]) {
 		return fail(c, 403, 'Permission insuffisante');
@@ -99,24 +103,56 @@ listRoutes.get('/w/:wid/lists', async (c) => {
 	const rows = await workspaceLists(c.env.DB, c.get('workspaceId'));
 	const channel = c.req.query('channel');
 	const scoped = channel ? rows.filter((r) => r.channel_id === channel) : rows;
-	const readable = await readableBases(c.env, c.get('workspaceId'), c.get('actor'), scoped);
-	return c.json(scoped.filter((r) => readable.has(r.id)).map(toSummary));
+	const levels = await baseLevels(c.env, c.get('workspaceId'), c.get('actor'), scoped);
+	return c.json(scoped.flatMap((r) => (levels.has(r.id) ? [{ ...toSummary(r), level: levels.get(r.id)! }] : [])));
 });
 
-listRoutes.post('/w/:wid/lists', async (c) => {
+// Emplacement dans l'arbre : sous une page modifiable, sinon dans une catégorie modifiable, sinon à la racine.
+async function placeOf(c: Ctx, parentId: unknown, categoryId: unknown): Promise<ListPlace | Response> {
 	const actor = c.get('actor');
-	const input = await readJson<{ title: string; template: string; channelId: string | null }>(c);
+	if (typeof parentId === 'string' && parentId) {
+		const { byId, levels } = await pageAccess(c.env, c.get('workspaceId'), actor);
+		const parent = byId.get(parentId);
+		const level = levels.get(parentId);
+		if (!parent || !level || parent.archived_at !== null) {
+			return fail(c, 404, 'Page parente introuvable');
+		}
+		return atLeast(level, 'edit') ? { parent_id: parent.id, category_id: null } : fail(c, 403, 'Page parente en lecture seule');
+	}
+	if (typeof categoryId === 'string' && categoryId) {
+		const data = await loadAccess(c.env, c.get('workspaceId'), [actor], []);
+		const category = data.categories.get(categoryId);
+		const level = category ? categoryLevel(actor, category, data) : null;
+		if (!category || !level) {
+			return fail(c, 404, 'Catégorie introuvable');
+		}
+		return atLeast(level, 'edit') ? { parent_id: null, category_id: category.id } : fail(c, 403, 'Catégorie en lecture seule');
+	}
+	return { parent_id: null, category_id: null };
+}
+
+listRoutes.post('/w/:wid/lists', pagesNotice, async (c) => {
+	const actor = c.get('actor');
+	const input = await readJson<{ title: string; template: string; channelId: string | null; parentId?: string | null; categoryId?: string | null }>(c);
 	const channelId = typeof input.channelId === 'string' && input.channelId ? input.channelId : null;
 	const [access] = await stub(c).listRights(actor, [channelId]);
 	if (actor.guest || !access?.view) {
 		return fail(c, channelId && !access?.view ? 404 : 403, channelId && !access?.view ? 'Salon introuvable' : 'Permission insuffisante');
 	}
+	const place = channelId ? { parent_id: null, category_id: null } : await placeOf(c, input.parentId, input.categoryId);
+	if (place instanceof Response) {
+		return place;
+	}
 	const created = await createList(c.env.DB, c.get('workspaceId'), actor.id, { ...input, channelId });
 	if (!created.ok) {
 		return fail(c, created.status, created.error);
 	}
-	await changed(c, created.value);
-	return c.json(await detail(c, created.value, { view: true, edit: true, remove: true, level: 'manage' }), 201);
+	if (!channelId) {
+		await placeList(c.env.DB, created.value, place);
+	}
+	const row = (await listRow(c.env.DB, c.get('workspaceId'), created.value.id))!;
+	await changed(c, row);
+	return c.json(await detail(c, row, { view: true, edit: true, remove: true, level: 'manage' }), 201);
 });
 
 listRoutes.get('/w/:wid/lists/:lid', async (c) => {
@@ -124,25 +160,51 @@ listRoutes.get('/w/:wid/lists/:lid', async (c) => {
 	return found instanceof Response ? found : c.json(await detail(c, found.row, found.rights));
 });
 
-listRoutes.patch('/w/:wid/lists/:lid', async (c) => {
+listRoutes.patch('/w/:wid/lists/:lid', pagesNotice, async (c) => {
 	const found = await loadList(c, 'edit');
 	if (found instanceof Response) {
 		return found;
 	}
-	const input = await readJson<{ title: string; description: string; columns: unknown; labels: unknown }>(c);
+	const input = await readJson<{ title: string; description: string; columns: unknown; labels: unknown; icon?: string | null; parentId?: string | null; categoryId?: string | null; position?: number }>(c);
 	const labels = input.labels === undefined ? null : cleanLabels(input.labels);
 	if (labels && !labels.ok) {
 		return fail(c, labels.status, labels.error);
+	}
+	if (input.icon !== undefined && input.icon !== null && (typeof input.icon !== 'string' || !input.icon || input.icon.length > CANVAS_LIMITS.icon)) {
+		return fail(c, 400, 'Icône invalide');
+	}
+	if (input.position !== undefined && (typeof input.position !== 'number' || !Number.isFinite(input.position))) {
+		return fail(c, 400, 'Position invalide');
+	}
+	const moving = input.parentId !== undefined || input.categoryId !== undefined;
+	if (moving && found.row.channel_id && (input.parentId || input.categoryId)) {
+		return fail(c, 400, 'Le suivi d’un salon reste dans son salon');
+	}
+	const place = moving
+		? await placeOf(c, input.parentId !== undefined ? input.parentId : found.row.parent_id, input.categoryId !== undefined ? input.categoryId : found.row.category_id)
+		: { parent_id: found.row.parent_id, category_id: found.row.category_id };
+	if (place instanceof Response) {
+		return place;
+	}
+	if (moving || input.position !== undefined) {
+		await placeList(c.env.DB, found.row, place, input.position ?? (moving ? undefined : found.row.position));
+	}
+	if (input.icon !== undefined) {
+		await c.env.DB.prepare('UPDATE lists SET icon = ? WHERE id = ?').bind(input.icon, found.row.id).run();
 	}
 	const updated = await updateList(c.env.DB, found.row, input, labels ? JSON.stringify(labels.value) : found.row.labels);
 	if (!updated.ok) {
 		return fail(c, updated.status, updated.error);
 	}
 	await changed(c, found.row);
+	// Déplacé : les droits hérités de la page ou de la catégorie peuvent changer.
+	if (moving) {
+		await reviseCardDocs(c.env, c.get('workspaceId'), found.row.id);
+	}
 	return c.json(await detail(c, (await listRow(c.env.DB, c.get('workspaceId'), found.row.id))!, found.rights));
 });
 
-listRoutes.delete('/w/:wid/lists/:lid', async (c) => {
+listRoutes.delete('/w/:wid/lists/:lid', pagesNotice, async (c) => {
 	const found = await loadList(c, 'remove');
 	if (found instanceof Response) {
 		return found;
@@ -658,7 +720,7 @@ listRoutes.post('/w/:wid/lists/:lid/items/:iid/move', async (c) => {
 	const target = typeof input.listId === 'string' ? await listRow(c.env.DB, c.get('workspaceId'), input.listId) : null;
 	const rights = target ? await rightsOf(c, target) : null;
 	if (!target || !rights?.view) {
-		return fail(c, 404, 'Base introuvable');
+		return fail(c, 404, 'Suivi introuvable');
 	}
 	if (!rights.edit) {
 		return fail(c, 403, 'Permission insuffisante');

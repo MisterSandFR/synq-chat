@@ -134,7 +134,7 @@ export function FavoritesSection({ workspaceId, state, channelId, members, myId,
 				<span className='sb-tile' aria-hidden>
 					<Icon name={f.kind === 'canvas' ? 'file' : 'list'} size={15} />
 				</span>
-				<span className='channel-name'>{f.title || (f.kind === 'canvas' ? 'Page sans titre' : 'Base sans titre')}</span>
+				<span className='channel-name'>{f.title || (f.kind === 'canvas' ? 'Page sans titre' : 'Suivi sans titre')}</span>
 			</a>
 		);
 	};

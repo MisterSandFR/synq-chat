@@ -415,7 +415,7 @@ export async function updateView(db: D1Database, list: ListRow, viewId: string, 
 export async function deleteView(db: D1Database, list: ListRow, viewId: string): Promise<Result<null>> {
 	const count = await db.prepare('SELECT COUNT(*) AS n FROM list_views WHERE list_id = ?').bind(list.id).first<{ n: number }>();
 	if ((count?.n ?? 0) <= 1) {
-		return err(409, 'Une base garde au moins une vue');
+		return err(409, 'Un suivi garde au moins une vue');
 	}
 	const done = await db.prepare('DELETE FROM list_views WHERE id = ? AND list_id = ?').bind(viewId, list.id).run();
 	return done.meta.changes ? ok(null) : err(404, 'Vue introuvable');

@@ -382,7 +382,7 @@ export function ItemPanel({ base, workspaceId, list, item, members, myId, versio
 											<Icon name='bookmark' size={14} /> {item.template ? 'Retirer des modèles' : 'Enregistrer comme modèle'}
 										</button>
 										<button type='button' role='menuitem' className='menu-item' onClick={act(() => setMoving(true))}>
-											<Icon name='forward' size={14} /> Déplacer vers une autre base
+											<Icon name='forward' size={14} /> Déplacer vers un autre suivi
 										</button>
 									</>
 								)}
@@ -1062,11 +1062,11 @@ function MoveDialog({ workspaceId, path, list, item, onClose }: { workspaceId: s
 	return (
 		<Dialog open onClose={onClose} title='Déplacer la carte'>
 			<div className='stack'>
-				<p className='muted'>Commentaires, checklists, pièces jointes et document suivent la carte. Les valeurs sans colonne équivalente dans la base choisie ne suivent pas.</p>
+				<p className='muted'>Commentaires, checklists, pièces jointes et document suivent la carte. Les valeurs sans colonne équivalente dans le suivi choisi ne suivent pas.</p>
 				<label className='field'>
-					<span>Base de destination</span>
+					<span>Suivi de destination</span>
 					<select value={target} onChange={(e) => setTarget(e.target.value)} disabled={!bases}>
-						<option value=''>{bases ? (bases.length ? 'Choisir une base' : 'Aucune autre base') : 'Chargement…'}</option>
+						<option value=''>{bases ? (bases.length ? 'Choisir un suivi' : 'Aucun autre suivi') : 'Chargement…'}</option>
 						{bases?.map((b) => (
 							<option key={b.id} value={b.id}>
 								{b.title}

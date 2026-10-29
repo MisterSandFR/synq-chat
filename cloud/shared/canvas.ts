@@ -131,3 +131,10 @@ export const PAGE_TEMPLATES: PageTemplate[] = [
 ];
 
 export const pageTemplate = (id: unknown) => PAGE_TEMPLATES.find((t) => t.id === id) ?? null;
+
+// Ancien titre par défaut des pages de salon, traité comme absent.
+export const CHANNEL_PAGE_DEFAULT = 'Canevas du salon';
+
+// Page de salon sans titre propre : nommée d'après le salon.
+export const channelPageTitle = (page: { title: string; channelId: string | null }, channelName?: string) =>
+	page.channelId && channelName && (!page.title || page.title === CHANNEL_PAGE_DEFAULT) ? `# ${channelName}` : page.title || 'Sans titre';

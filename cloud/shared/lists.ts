@@ -40,6 +40,13 @@ export interface ListSummary {
 	createdAt: number;
 	updatedAt: number;
 	itemCount: number;
+	// Place dans l'arbre des pages ; un suivi n'a jamais d'enfant.
+	parentId: string | null;
+	categoryId: string | null;
+	position: number;
+	icon: string | null;
+	viewKind: ListViewKind | null;
+	level?: AccessLevel;
 }
 
 export interface ListItem {
@@ -133,7 +140,7 @@ const labels = (names: Array<[string, string]>): ListLabel[] => names.map(([name
 
 // Identifiants stables : les modèles ne dépendent pas d'un générateur.
 export const LIST_TEMPLATES: Record<ListTemplate, { label: string; hint: string; title: string; columns: ListColumn[]; views: TemplateView[]; labels?: ListLabel[]; rules?: TemplateRule[] }> = {
-	blank: { label: 'Base vide', hint: 'Partir de zéro et ajouter ses colonnes.', title: 'Nouvelle base', columns: [], views: [{ name: 'Tableau', kind: 'table' }] },
+	blank: { label: 'Suivi vide', hint: 'Partir de zéro et ajouter ses colonnes.', title: 'Nouveau suivi', columns: [], views: [{ name: 'Tableau', kind: 'table' }] },
 	project: {
 		label: 'Kanban projet',
 		hint: 'Tâches en colonnes, responsables, échéances et checklists.',

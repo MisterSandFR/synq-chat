@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 
 import type { PageCategory } from '../../../shared/access';
+import type { ListSummary } from '../../../shared/lists';
 import { canvasPath, type CanvasMeta, type PagePatch } from '../../../shared/canvas';
 import { api } from '../../api';
 import { navigate } from '../../router';
@@ -86,7 +87,7 @@ export const rootsOf = (items: CanvasMeta[]) => {
 	return items.filter((p) => !p.parentId || !ids.has(p.parentId)).sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
 };
 
-export const isInside = (items: CanvasMeta[], id: string, ancestorId: string) => {
+export const isInside = (items: Array<{ id: string; parentId: string | null }>, id: string, ancestorId: string) => {
 	const byId = new Map(items.map((p) => [p.id, p]));
 	for (let current = byId.get(id), depth = 0; current && depth < 64; current = current.parentId ? byId.get(current.parentId) : undefined, depth++) {
 		if (current.id === ancestorId) {
@@ -118,7 +119,7 @@ export async function duplicatePage(workspaceId: string, id: string): Promise<Ca
 }
 
 // Position entre deux voisines, ou au bord de la liste.
-export function positionAt(siblings: CanvasMeta[], index: number): number {
+export function positionAt(siblings: Array<{ position: number }>, index: number): number {
 	const before = siblings[index - 1];
 	const after = siblings[index];
 	if (before && after) {
@@ -128,6 +129,63 @@ export function positionAt(siblings: CanvasMeta[], index: number): number {
 }
 
 export const pageLabel = (page: { title: string } | null | undefined) => page?.title || 'Sans titre';
+
+// --- Suivis rangés dans l'arbre ---
+
+type BaseStore = { items: ListSummary[] | null; listeners: Set<() => void> };
+const baseStores = new Map<string, BaseStore>();
+
+function baseStore(workspaceId: string): BaseStore {
+	let store = baseStores.get(workspaceId);
+	if (!store) {
+		store = { items: null, listeners: new Set() };
+		baseStores.set(workspaceId, store);
+	}
+	return store;
+}
+
+export async function refreshTreeBases(workspaceId: string): Promise<void> {
+	const store = baseStore(workspaceId);
+	store.items = await api<ListSummary[]>('GET', `/w/${workspaceId}/lists`);
+	store.listeners.forEach((fn) => fn());
+}
+
+export function useTreeBases(workspaceId: string): ListSummary[] | null {
+	const store = baseStore(workspaceId);
+	const items = useSyncExternalStore(
+		(fn) => {
+			store.listeners.add(fn);
+			return () => store.listeners.delete(fn);
+		},
+		() => store.items,
+	);
+	useEffect(() => {
+		const refresh = () => void refreshTreeBases(workspaceId).catch(() => undefined);
+		if (!store.items) {
+			refresh();
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const onChange = (event: Event) => {
+			if ((event as CustomEvent<string>).detail === workspaceId) {
+				clearTimeout(timer);
+				timer = setTimeout(refresh, 250);
+			}
+		};
+		window.addEventListener('focus', refresh);
+		window.addEventListener(PAGES_EVENT, onChange);
+		return () => {
+			clearTimeout(timer);
+			window.removeEventListener('focus', refresh);
+			window.removeEventListener(PAGES_EVENT, onChange);
+		};
+	}, [workspaceId, store]);
+	return items;
+}
+
+export async function patchBase(workspaceId: string, id: string, patch: { title?: string; icon?: string | null; parentId?: string | null; categoryId?: string | null; position?: number }): Promise<void> {
+	await api('PATCH', `/w/${workspaceId}/lists/${id}`, patch);
+	await refreshTreeBases(workspaceId);
+}
 
 // --- Catégories de pages ---
 
@@ -180,5 +238,5 @@ export async function patchCategory(workspaceId: string, id: string, patch: { na
 
 export async function deleteCategory(workspaceId: string, id: string): Promise<void> {
 	await api('DELETE', `/w/${workspaceId}/page-categories/${id}`);
-	await Promise.all([refreshCategories(workspaceId), refreshPages(workspaceId)]);
+	await Promise.all([refreshCategories(workspaceId), refreshPages(workspaceId), refreshTreeBases(workspaceId)]);
 }

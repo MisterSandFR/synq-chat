@@ -4,7 +4,7 @@ import { CANVAS_IMAGE_TYPES, CANVAS_LIMITS, PAGE_COVER_RE, pageTemplate, type Ca
 import { atLeast } from '../../shared/access';
 import { P, has } from '../../shared/permissions';
 import { LIMITS } from '../../shared/types';
-import { canvasAccessOf, categoryLevel, loadAccess, pageAccess, pageLevel, pageReaders, reviseSockets, subtreeIds } from '../access';
+import { canvasAccessOf, categoryLevel, loadAccess, pageAccess, pageLevel, pageReaders, reviseCardDocs, reviseSockets, subtreeIds } from '../access';
 import type { CanvasPeer } from '../canvas-doc';
 import {
 	ancestorRows,
@@ -73,6 +73,8 @@ async function purge(c: Ctx, row: CanvasRow) {
 	const ids = [...(await descendantIds(c.env.DB, row.id)).reverse(), row.id];
 	for (const id of ids) {
 		await deleteCanvasRow(c.env.DB, id);
+		// Suivis rangés sous la page : remontés à la racine plutôt que supprimés.
+		await c.env.DB.prepare('UPDATE lists SET parent_id = NULL WHERE parent_id = ?').bind(id).run();
 		await c.env.DB.prepare("DELETE FROM access_rules WHERE resource_kind = 'page' AND resource_id = ?").bind(id).run();
 		await c.env.CANVAS_DOC.getByName(id).wipe();
 		const listed = await c.env.FILES.list({ prefix: `w/${row.workspace_id}/canvas/${id}/` });
@@ -153,7 +155,7 @@ canvasRoutes.post('/w/:wid/channels/:cid/canvas', pagesNotice, async (c) => {
 	}
 	const { title } = await readJson<{ title: string }>(c);
 	try {
-		const row = await insertCanvas(c.env.DB, { workspaceId: c.get('workspaceId'), channelId, title: cleanTitle(title) || 'Canevas du salon', createdBy: actor.id });
+		const row = await insertCanvas(c.env.DB, { workspaceId: c.get('workspaceId'), channelId, title: cleanTitle(title), createdBy: actor.id });
 		return c.json(toMeta(row, 'manage'), 201);
 	} catch {
 		// Création simultanée : l'index unique a gardé l'autre.
@@ -244,6 +246,7 @@ canvasRoutes.patch('/w/:wid/canvases/:id', pagesNotice, async (c) => {
 	if (fields.parent_id !== undefined || fields.category_id !== undefined) {
 		const rows = await listCanvasRows(c.env.DB, row.workspace_id);
 		await reviseSockets(c.env, row.workspace_id, subtreeIds(new Set([row.id]), new Map(rows.map((r) => [r.id, r]))));
+		await reviseCardDocs(c.env, row.workspace_id);
 	}
 	const fresh = await load(c, row.id);
 	return fresh ? c.json(toMeta(fresh.row, fresh.level)) : c.json({ ok: true });

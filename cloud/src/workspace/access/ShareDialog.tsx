@@ -13,7 +13,7 @@ import './access.css';
 
 type Props = { workspaceId: string; kind: AccessKind; id: string; title: string; onClose: () => void; onChanged?: (info: AccessInfo) => void };
 
-const NOUN: Record<AccessKind, string> = { page: 'Page', page_category: 'Catégorie', base: 'Base' };
+const NOUN: Record<AccessKind, string> = { page: 'Page', page_category: 'Catégorie', base: 'Suivi' };
 
 // Les bases n'ont pas de commentaires.
 const levelsFor = (kind: AccessKind) => (kind === 'base' ? ACCESS_LEVELS.filter((l) => l !== 'comment') : ACCESS_LEVELS);

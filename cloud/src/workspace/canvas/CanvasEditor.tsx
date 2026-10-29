@@ -126,7 +126,7 @@ export function CanvasEditor({ workspaceId, meta, doc, sync, members, me, title,
 			{ id: 'file', label: 'Fichier', hint: 'Pièce jointe à télécharger', icon: 'paperclip', keywords: 'fichier piece jointe pdf', run: (e, r) => (chain(e, r).run(), actions.current.attach()) },
 			{ id: 'pagelink', label: 'Lien vers une page', hint: 'Ou tape [[', icon: 'link', keywords: 'page lien mention', run: (e, r) => chain(e, r).insertContent('[[').run() },
 			{ id: 'subpage', label: 'Sous-page', hint: 'Nouvelle page rangée ici', icon: 'file', keywords: 'sous page enfant', run: (e, r) => (chain(e, r).run(), void addSubpage(e)) },
-			{ id: 'database', label: 'Base intégrée', hint: 'Afficher une base dans la page', icon: 'list', keywords: 'base liste database tableau', run: (e, r) => chain(e, r).insertContent({ type: 'database' }).run() },
+			{ id: 'database', label: 'Suivi intégré', hint: 'Afficher un suivi dans la page', icon: 'list', keywords: 'suivi base liste database tableau', run: (e, r) => chain(e, r).insertContent({ type: 'database' }).run() },
 			{ id: 'mention', label: 'Mention', hint: 'Citer un membre', icon: 'at', keywords: 'mention personne', run: (e, r) => chain(e, r).insertContent('@').run() },
 			{
 				id: 'emoji',

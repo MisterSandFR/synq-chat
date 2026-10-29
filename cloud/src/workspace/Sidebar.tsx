@@ -91,9 +91,13 @@ export function Sidebar({ me, workspaceId, state, channelId, members, voice, wid
 							<ThreadsNavLink active={channelId === 'fils'} unread={state.dmThreads.unreadThreads} onOpen={() => open('fils')} />
 							<DraftsNavLink active={channelId === 'brouillons'} onOpen={() => open('brouillons')} />
 							{onOpenLater && <LaterNavLink active={laterOpen === true} onOpen={onOpenLater} />}
-							<SideLink icon='list' label='Bases' active={pageActive('listes')} onOpen={() => open('listes')} />
 						</div>
-						<PagesSection workspaceId={workspaceId} activeId={location.pathname.match(/^\/w\/[\w-]+\/(?:canevas|pages)\/([\w-]+)/)?.[1] ?? null} pagesActive={pageActive('canevas') || pageActive('pages')} />
+						<PagesSection
+							workspaceId={workspaceId}
+							activeId={location.pathname.match(/^\/w\/[\w-]+\/(?:canevas|pages|listes)\/([\w-]+)/)?.[1] ?? null}
+							pagesActive={pageActive('canevas') || pageActive('pages')}
+							channelNames={new Map(channels.map((c) => [c.id, c.name]))}
+						/>
 						<FavoritesSection
 							workspaceId={workspaceId}
 							state={state}

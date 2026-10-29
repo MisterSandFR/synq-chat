@@ -18,6 +18,7 @@ import {
 	type ListSummary,
 	type ListTemplate,
 	type ListValue,
+	type ListViewKind,
 } from '../shared/lists';
 import { fieldsOf, templateStatements, type ItemFields } from './lists-bases';
 import { err, ok, type Result } from './result';
@@ -35,6 +36,11 @@ export type ListRow = {
 	updated_at: number;
 	item_count?: number;
 	restricted?: number;
+	parent_id: string | null;
+	category_id: string | null;
+	position: number;
+	icon: string | null;
+	view_kind?: ListViewKind | null;
 };
 
 type ItemRow = {
@@ -88,6 +94,11 @@ export const toSummary = (row: ListRow): ListSummary => ({
 	createdAt: row.created_at,
 	updatedAt: row.updated_at,
 	itemCount: row.item_count ?? 0,
+	parentId: row.parent_id ?? null,
+	categoryId: row.category_id ?? null,
+	position: row.position ?? 0,
+	icon: row.icon ?? null,
+	viewKind: row.view_kind ?? null,
 });
 
 export const columnsOf = (row: ListRow) => parse<ListColumn[]>(row.columns, []);
@@ -124,7 +135,8 @@ const toItem = (row: ItemRow): ListItem => ({
 	template: Boolean(row.template),
 });
 
-const LIST_SELECT = 'SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS item_count FROM lists l';
+const LIST_SELECT =
+	'SELECT l.*, (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS item_count, (SELECT v.kind FROM list_views v WHERE v.list_id = l.id ORDER BY v.position LIMIT 1) AS view_kind FROM lists l';
 const ITEM_SELECT = `SELECT i.*, (SELECT COUNT(*) FROM list_comments c WHERE c.item_id = i.id) AS comments,
 	(SELECT COUNT(*) FROM list_checks k WHERE k.item_id = i.id) AS checks_total,
 	(SELECT COUNT(*) FROM list_checks k WHERE k.item_id = i.id AND k.done = 1) AS checks_done,
@@ -429,6 +441,25 @@ export async function updateList(db: D1Database, row: ListRow, input: { title?: 
 	}
 	await db.prepare('UPDATE lists SET title = ?, description = ?, columns = ?, labels = ?, updated_at = ? WHERE id = ?').bind(title, description, columns, labels, Date.now(), row.id).run();
 	return ok(null);
+}
+
+export type ListPlace = { parent_id: string | null; category_id: string | null };
+
+// Range le suivi dans l'arbre ; sans position donnée, il passe après ses voisins.
+export async function placeList(db: D1Database, row: ListRow, place: ListPlace, position?: number): Promise<void> {
+	let at = position;
+	if (at === undefined) {
+		const top = await db
+			.prepare(
+				`SELECT MAX(p) AS top FROM (
+				SELECT position AS p FROM canvases WHERE workspace_id = ?1 AND channel_id IS NULL AND archived_at IS NULL AND parent_id IS ?2 AND (?2 IS NOT NULL OR category_id IS ?3)
+				UNION ALL SELECT position FROM lists WHERE workspace_id = ?1 AND id != ?4 AND channel_id IS NULL AND parent_id IS ?2 AND (?2 IS NOT NULL OR category_id IS ?3))`,
+			)
+			.bind(row.workspace_id, place.parent_id, place.category_id, row.id)
+			.first<{ top: number | null }>();
+		at = (top?.top ?? 0) + 1;
+	}
+	await db.prepare('UPDATE lists SET parent_id = ?, category_id = ?, position = ? WHERE id = ?').bind(place.parent_id, place.category_id, at, row.id).run();
 }
 
 export const touchList = (db: D1Database, id: string) => db.prepare('UPDATE lists SET updated_at = ? WHERE id = ?').bind(Date.now(), id);

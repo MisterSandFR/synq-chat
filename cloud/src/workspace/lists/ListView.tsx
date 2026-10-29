@@ -13,7 +13,7 @@ type Props = {
 
 const NO_MEMBERS = new Map<string, Member>();
 
-// Base intégrée dans une page : onglets de vues et vue choisie, l'élément s'ouvre dans la base.
+// Suivi intégré dans une page : onglets de vues et vue choisie, l'élément s'ouvre dans la base.
 export function ListView({ workspaceId, listId, viewId = null, compact = true, members = NO_MEMBERS, myId = '' }: Props) {
 	return <ListPage key={listId} workspaceId={workspaceId} listId={listId} viewId={viewId} compact={compact} members={members} rooms={[]} version={0} myId={myId} />;
 }

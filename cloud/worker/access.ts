@@ -23,6 +23,8 @@ export type CategoryRow = {
 // Champs d'accès communs aux lignes canvases, lists et page_categories.
 export type Guarded = { id: string; channel_id: string | null; created_by: string; restricted?: number };
 export type PageNode = Guarded & { parent_id: string | null; category_id?: string | null; title: string; archived_at?: number | null };
+// Suivi rangé dans l'arbre : page parente ou catégorie.
+export type BaseNode = Guarded & { parent_id?: string | null; category_id?: string | null };
 
 export type AccessData = {
 	rules: Map<string, RuleRow[]>;
@@ -138,8 +140,38 @@ export function pageLevel(actor: Actor, page: PageNode, byId: Map<string, PageNo
 	}, !channelBlocked(actor, page, byId, data));
 }
 
-export const baseLevel = (actor: Actor, base: Guarded, data: AccessData) =>
-	resolve(actor, 'base', base, data, (grant) => baseFromChannel(grant, actor), () => spaceLevel(actor));
+// Même chaîne que les pages : page parente, catégorie, espace.
+export function baseLevel(actor: Actor, base: BaseNode, data: AccessData, pages: Map<string, PageNode> = new Map()): AccessLevel | null {
+	const parent = base.parent_id ? pages.get(base.parent_id) : undefined;
+	return resolve(
+		actor,
+		'base',
+		base,
+		data,
+		(grant) => baseFromChannel(grant, actor),
+		() => {
+			if (parent) {
+				return pageLevel(actor, parent, pages, data);
+			}
+			const category = base.category_id ? data.categories.get(base.category_id) : undefined;
+			return category ? categoryLevel(actor, category, data) : spaceLevel(actor);
+		},
+		!parent || !channelBlocked(actor, parent, pages, data),
+	);
+}
+
+// Pages et règles pour évaluer des suivis ; champs d'arbre relus en D1 si l'appelant ne les a pas.
+export async function baseAccess(env: Env, workspaceId: string, actors: Actor[], bases: BaseNode[]) {
+	const placed = await env.DB.prepare('SELECT id, parent_id, category_id FROM lists WHERE workspace_id = ? AND (parent_id IS NOT NULL OR category_id IS NOT NULL)')
+		.bind(workspaceId)
+		.all<{ id: string; parent_id: string | null; category_id: string | null }>();
+	const tree = new Map(placed.results.map((row) => [row.id, row]));
+	const nodes = bases.map((base) => (base.parent_id === undefined && tree.has(base.id) ? { ...base, ...tree.get(base.id)! } : base));
+	const rows = nodes.some((base) => base.parent_id) ? await listCanvasRows(env.DB, workspaceId) : [];
+	const pages = new Map<string, PageNode>(rows.map((row) => [row.id, row]));
+	const data = await loadAccess(env, workspaceId, actors, [...nodes.map((base) => base.channel_id), ...rows.map((row) => row.channel_id)]);
+	return { nodes, pages, data };
+}
 
 export const canvasAccessOf = (level: AccessLevel): CanvasAccess => (atLeast(level, 'edit') ? 'write' : 'read');
 
@@ -153,7 +185,7 @@ export function inheritedFrom(kind: AccessKind, node: Guarded, byId: Map<string,
 	if (node.channel_id) {
 		return { source: { kind: 'channel', id: node.channel_id }, rules: [], restricted: false };
 	}
-	if (kind === 'page') {
+	if (kind === 'page' || kind === 'base') {
 		let current = node as PageNode;
 		for (let depth = 0; depth < CANVAS_LIMITS.depth; depth++) {
 			const parent = current.parent_id ? byId.get(current.parent_id) : undefined;
@@ -191,9 +223,22 @@ export async function pageAccess(env: Env, workspaceId: string, actor: Actor) {
 	return { rows, byId, levels, data };
 }
 
-export async function readableBases(env: Env, workspaceId: string, actor: Actor, bases: Guarded[]): Promise<Set<string>> {
-	const data = await loadAccess(env, workspaceId, [actor], bases.map((base) => base.channel_id));
-	return new Set(bases.filter((base) => baseLevel(actor, base, data)).map((base) => base.id));
+export async function readableBases(env: Env, workspaceId: string, actor: Actor, bases: BaseNode[]): Promise<Set<string>> {
+	const { nodes, pages, data } = await baseAccess(env, workspaceId, [actor], bases);
+	return new Set(nodes.filter((base) => baseLevel(actor, base, data, pages)).map((base) => base.id));
+}
+
+// Niveau de chaque suivi lisible par l'acteur.
+export async function baseLevels(env: Env, workspaceId: string, actor: Actor, bases: BaseNode[]): Promise<Map<string, AccessLevel>> {
+	const { nodes, pages, data } = await baseAccess(env, workspaceId, [actor], bases);
+	const levels = new Map<string, AccessLevel>();
+	for (const base of nodes) {
+		const level = baseLevel(actor, base, data, pages);
+		if (level) {
+			levels.set(base.id, level);
+		}
+	}
+	return levels;
 }
 
 // Membres parmi `userIds` qui voient la page (mentions).
@@ -255,12 +300,12 @@ export async function reviseSockets(env: Env, workspaceId: string, pageIds: stri
 // Documents de cartes : mêmes droits que leur base, écriture dès « modifier ».
 export async function reviseCardDocs(env: Env, workspaceId: string, baseId?: string): Promise<void> {
 	const { results } = await env.DB.prepare(
-		`SELECT p.canvas_id, l.id, l.channel_id, l.created_by, l.restricted FROM list_item_pages p
+		`SELECT p.canvas_id, l.id, l.channel_id, l.created_by, l.restricted, l.parent_id, l.category_id FROM list_item_pages p
 		JOIN list_items i ON i.id = p.item_id JOIN lists l ON l.id = i.list_id
 		WHERE l.workspace_id = ?1 AND (?2 IS NULL OR l.id = ?2)`,
 	)
 		.bind(workspaceId, baseId ?? null)
-		.all<Guarded & { canvas_id: string }>();
+		.all<BaseNode & { canvas_id: string }>();
 	if (!results.length) {
 		return;
 	}
@@ -270,7 +315,7 @@ export async function reviseCardDocs(env: Env, workspaceId: string, baseId?: str
 		return;
 	}
 	const actors = new Map((await loadActors(env.DB, workspaceId)).filter((actor) => wanted.has(actor.id)).map((actor) => [actor.id, actor]));
-	const data = await loadAccess(env, workspaceId, [...actors.values()], results.map((row) => row.channel_id));
+	const { pages, data } = await baseAccess(env, workspaceId, [...actors.values()], results);
 	await Promise.all(
 		results.map(async (row, i) => {
 			const users = peers[i]!;
@@ -280,7 +325,7 @@ export async function reviseCardDocs(env: Env, workspaceId: string, baseId?: str
 			const rights: Record<string, 'none' | 'read' | 'write'> = {};
 			for (const userId of users) {
 				const actor = actors.get(userId);
-				const level = actor ? baseLevel(actor, row, data) : null;
+				const level = actor ? baseLevel(actor, row, data, pages) : null;
 				rights[userId] = !level ? 'none' : atLeast(level, 'edit') ? 'write' : 'read';
 			}
 			await env.CANVAS_DOC.getByName(row.canvas_id).revise(rights);

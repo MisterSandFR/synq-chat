@@ -122,7 +122,7 @@ describe('bases', () => {
 		expect(await sendDueSoon(workerEnv, now)).toBe(1);
 		expect(await sendDueSoon(workerEnv, now)).toBe(0);
 		const page = await member.req<NotificationPage>('GET', `/api/w/${wid}/notifications`);
-		expect(page.data.items.filter((n) => n.title === 'Échéance demain').map((n) => n.body)).toEqual(['Envoyer le devis · Nouvelle base']);
+		expect(page.data.items.filter((n) => n.title === 'Échéance demain').map((n) => n.body)).toEqual(['Envoyer le devis · Nouveau suivi']);
 	});
 
 	it('ouvre le document d’un élément avec les droits de la base', async () => {

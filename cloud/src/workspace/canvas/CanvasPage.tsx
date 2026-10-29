@@ -65,11 +65,23 @@ export function CanvasPage(props: Props) {
 	return props.canvasId ? <CanvasDocument key={props.canvasId} {...props} canvasId={props.canvasId} /> : <PagesHome {...props} />;
 }
 
-export function TemplatePicker({ workspaceId, open, onClose, parentId = null }: { workspaceId: string; open: boolean; onClose: () => void; parentId?: string | null }) {
+export function TemplatePicker({
+	workspaceId,
+	open,
+	onClose,
+	parentId = null,
+	categoryId = null,
+}: {
+	workspaceId: string;
+	open: boolean;
+	onClose: () => void;
+	parentId?: string | null;
+	categoryId?: string | null;
+}) {
 	const [error, setError] = useState<string | null>(null);
 	const pick = async (template?: string) => {
 		try {
-			await createPage(workspaceId, { template, parentId });
+			await createPage(workspaceId, { template, parentId, categoryId });
 			onClose();
 		} catch (e) {
 			setError(errorText(e));
