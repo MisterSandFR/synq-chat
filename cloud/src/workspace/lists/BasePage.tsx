@@ -153,7 +153,7 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 		return (
 			<div className='lst-blank'>
 				<Icon name='list' size={28} />
-				<p>Cette base n’existe pas ou n’est pas visible pour toi.</p>
+				<p>Ce suivi n’existe pas ou n’est pas visible pour toi.</p>
 				{!compact && (
 					<button type='button' className='btn' onClick={() => navigate(`/w/${workspaceId}/listes`)}>
 						Voir les bases
@@ -239,14 +239,14 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 			<div className='lst-main'>
 				{!compact && (
 					<header className='lst-head'>
-						<button type='button' className='icon-btn' aria-label='Toutes les bases' title='Toutes les bases' onClick={() => navigate(`/w/${workspaceId}/listes${list.channelId ? `?salon=${list.channelId}` : ''}`)}>
+						<button type='button' className='icon-btn' aria-label='Tous les suivis' title='Tous les suivis' onClick={() => navigate(`/w/${workspaceId}/listes${list.channelId ? `?salon=${list.channelId}` : ''}`)}>
 							<Icon name='chevron-left' />
 						</button>
 						<input
 							key={list.title}
 							className='lst-title'
 							defaultValue={list.title}
-							aria-label='Nom de la base'
+							aria-label='Nom du suivi'
 							disabled={!list.canEdit}
 							maxLength={120}
 							onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== list.title && void patchList({ title: e.target.value })}
@@ -266,7 +266,7 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 							actions={[
 								{ key: 'archives', label: 'Archives', icon: 'folder', onSelect: () => setArchiveOpen(true) },
 								{ key: 'export', label: 'Exporter en CSV', icon: 'download', onSelect: () => window.open(`/api${base}/export`, '_blank') },
-								...(list.canDelete ? ['separator' as const, { key: 'delete', label: 'Supprimer la base', icon: 'trash' as const, onSelect: () => setConfirmDelete(true) }] : []),
+								...(list.canDelete ? ['separator' as const, { key: 'delete', label: 'Supprimer le suivi', icon: 'trash' as const, onSelect: () => setConfirmDelete(true) }] : []),
 							]}
 						/>
 					</header>
@@ -566,7 +566,7 @@ export function ListPage({ workspaceId, listId, members, rooms, version, myId, c
 			)}
 			{archiveOpen && <ArchiveDialog base={base} list={list} onClose={() => setArchiveOpen(false)} onRestored={load} />}
 			{rulesOpen && <Automations base={base} list={list} members={members} onClose={() => setRulesOpen(false)} />}
-			<Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title='Supprimer la base'>
+			<Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title='Supprimer le suivi'>
 				<p>
 					« {list.title} » et ses {list.items.length} élément{list.items.length > 1 ? 's' : ''} seront supprimés pour tout le monde.
 				</p>

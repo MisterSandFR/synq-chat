@@ -72,10 +72,11 @@
 }
 .page-caret {
 	display: inline-grid;
+	transform: rotate(-90deg);
 	transition: transform 0.12s ease;
 }
 .page-caret-open {
-	transform: rotate(90deg);
+	transform: none;
 }
 .page-tree,
 .page-tree-group {
@@ -965,4 +966,13 @@
 
 .page-cat-input {
 	margin: 6px 4px 2px;
+}
+
+/* Suivis dans l'arbre : icône de vue en teinte d'accent. */
+.page-row-base .page-twisty > svg,
+.page-row-base .page-row-icon > svg {
+	color: var(--accent);
+}
+.page-salons {
+	margin-top: 4px;
 }

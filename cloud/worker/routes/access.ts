@@ -42,18 +42,23 @@ async function target(c: Ctx, kind: AccessKind, id: string): Promise<Target | nu
 		const node = byId.get(id);
 		return node ? { kind, node, byId } : null;
 	}
-	const node = kind === 'page_category' ? await categoryRow(c, id) : await listRow(c.env.DB, c.get('workspaceId'), id);
-	return node ? { kind, node: { ...node, channel_id: 'channel_id' in node ? node.channel_id : null }, byId: new Map() } : null;
+	if (kind === 'base') {
+		const node = await listRow(c.env.DB, c.get('workspaceId'), id);
+		const byId = node?.parent_id ? new Map<string, PageNode>((await listCanvasRows(c.env.DB, c.get('workspaceId'))).map((row) => [row.id, row])) : new Map<string, PageNode>();
+		return node ? { kind, node, byId } : null;
+	}
+	const node = await categoryRow(c, id);
+	return node ? { kind, node: { ...node, channel_id: null }, byId: new Map() } : null;
 }
 
 function levelOf(actor: Actor, t: Target, data: AccessData): AccessLevel | null {
 	if (t.kind === 'page') {
 		return pageLevel(actor, t.node as PageNode, t.byId, data);
 	}
-	return t.kind === 'page_category' ? categoryLevel(actor, t.node as unknown as CategoryRow, data) : baseLevel(actor, t.node, data);
+	return t.kind === 'page_category' ? categoryLevel(actor, t.node as unknown as CategoryRow, data) : baseLevel(actor, t.node, data, t.byId);
 }
 
-const channelsOf = (t: Target) => (t.kind === 'page' ? [...t.byId.values()].map((row) => row.channel_id) : [t.node.channel_id]);
+const channelsOf = (t: Target) => [t.node.channel_id, ...[...t.byId.values()].map((row) => row.channel_id)];
 
 async function describe(c: Ctx, t: Target): Promise<AccessInfo | null> {
 	const actors = await loadActors(c.env.DB, c.get('workspaceId'));
@@ -136,6 +141,7 @@ accessRoutes.put('/w/:wid/access/:kind/:id', pagesNotice, async (c) => {
 		const pages = t.kind === 'page' ? fresh.byId : new Map<string, PageNode>((await listCanvasRows(c.env.DB, wid)).map((row) => [row.id, row]));
 		const roots = t.kind === 'page' ? new Set([t.node.id]) : new Set([...pages.values()].filter((row) => row.category_id === t.node.id).map((row) => row.id));
 		await reviseSockets(c.env, wid, subtreeIds(roots, pages));
+		await reviseCardDocs(c.env, wid);
 	}
 	const info = await describe(c, fresh);
 	return info ? c.json(info) : c.json(null);
@@ -240,6 +246,7 @@ accessRoutes.delete('/w/:wid/page-categories/:id', pagesNotice, async (c) => {
 	const wid = c.get('workspaceId');
 	await c.env.DB.batch([
 		c.env.DB.prepare('UPDATE canvases SET category_id = NULL WHERE workspace_id = ? AND category_id = ?').bind(wid, found.row.id),
+		c.env.DB.prepare('UPDATE lists SET category_id = NULL WHERE workspace_id = ? AND category_id = ?').bind(wid, found.row.id),
 		c.env.DB.prepare("DELETE FROM access_rules WHERE resource_kind = 'page_category' AND resource_id = ?").bind(found.row.id),
 		c.env.DB.prepare('DELETE FROM page_categories WHERE id = ?').bind(found.row.id),
 	]);

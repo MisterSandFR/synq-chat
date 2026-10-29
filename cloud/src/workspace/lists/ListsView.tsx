@@ -8,6 +8,7 @@ import { Avatar, Dialog, Icon } from '../../ui';
 import { ListPage } from './BasePage';
 import { TYPE_ICON } from './cells';
 import { MenuButton } from './table';
+import { refreshTreeBases } from '../canvas/pages';
 import './lists.css';
 
 type Props = { workspaceId: string; members: Map<string, Member>; channels: Channel[]; version: number; myId: string };
@@ -42,17 +43,17 @@ function ListIndex({ workspaceId, rooms, salon, creating, version, members }: { 
 		<section className='lst-index'>
 			<header className='lst-index-head'>
 				<div>
-					<h2>{room ? `Bases de #${room.name}` : 'Bases'}</h2>
+					<h2>{room ? `Suivis de #${room.name}` : 'Suivis'}</h2>
 					<p className='muted'>Tableaux, kanbans, calendriers et chronologies partagés avec l’équipe.</p>
 				</div>
 				<span className='grow' />
 				{room && (
 					<button type='button' className='btn btn-ghost' onClick={() => navigate(`/w/${workspaceId}/listes`)}>
-						Toutes les bases
+						Tous les suivis
 					</button>
 				)}
 				<button type='button' className='btn btn-primary' onClick={() => setOpen(true)}>
-					<Icon name='plus' size={16} /> Nouvelle base
+					<Icon name='plus' size={16} /> Nouveau suivi
 				</button>
 			</header>
 			{lists === null ? (
@@ -60,9 +61,9 @@ function ListIndex({ workspaceId, rooms, salon, creating, version, members }: { 
 			) : lists.length === 0 ? (
 				<div className='lst-blank'>
 					<Icon name='list' size={28} />
-					<p>Aucune base pour l’instant.</p>
+					<p>Aucun suivi pour l’instant.</p>
 					<button type='button' className='btn' onClick={() => setOpen(true)}>
-						Créer une base
+						Créer un suivi
 					</button>
 				</div>
 			) : (
@@ -102,7 +103,20 @@ function ListIndex({ workspaceId, rooms, salon, creating, version, members }: { 
 	);
 }
 
-function CreateList({ workspaceId, rooms, initialChannel, onClose }: { workspaceId: string; rooms: Channel[]; initialChannel: string | null; onClose: () => void }) {
+// `place` : créé dans l'arbre des pages (sous une page ou dans une catégorie), sans salon.
+export function CreateList({
+	workspaceId,
+	rooms,
+	initialChannel,
+	place,
+	onClose,
+}: {
+	workspaceId: string;
+	rooms: Channel[];
+	initialChannel: string | null;
+	place?: { parentId?: string | null; categoryId?: string | null };
+	onClose: () => void;
+}) {
 	const [template, setTemplate] = useState<ListTemplate>('project');
 	const [title, setTitle] = useState('');
 	const [channelId, setChannelId] = useState<string | null>(initialChannel);
@@ -112,7 +126,11 @@ function CreateList({ workspaceId, rooms, initialChannel, onClose }: { workspace
 	const submit = async () => {
 		setBusy(true);
 		try {
-			const created = await api<ListDetail>('POST', `/w/${workspaceId}/lists`, { template, title, channelId });
+			const created = await api<ListDetail>('POST', `/w/${workspaceId}/lists`, { template, title, channelId: place ? null : channelId, parentId: place?.parentId ?? null, categoryId: place?.categoryId ?? null });
+			void refreshTreeBases(workspaceId).catch(() => undefined);
+			if (place) {
+				onClose();
+			}
 			navigate(`/w/${workspaceId}/listes/${created.id}`);
 		} catch (e) {
 			setError(message(e));
@@ -120,7 +138,7 @@ function CreateList({ workspaceId, rooms, initialChannel, onClose }: { workspace
 		}
 	};
 	return (
-		<Dialog open onClose={onClose} title='Nouvelle base' wide>
+		<Dialog open onClose={onClose} title='Nouveau suivi' wide>
 			<div className='lst-create'>
 				<div className='lst-templates' role='radiogroup' aria-label='Modèle'>
 					{(Object.keys(LIST_TEMPLATES) as ListTemplate[]).map((key) => (
@@ -144,6 +162,7 @@ function CreateList({ workspaceId, rooms, initialChannel, onClose }: { workspace
 					Nom
 					<input className='input' value={title} placeholder={LIST_TEMPLATES[template].title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
 				</label>
+				{!place && (
 				<div className='field'>
 					Salon rattaché
 					<MenuButton label={<span className='grow ellipsis'>{channel ? `# ${channel.name}` : 'Aucun, visible par tout l’espace'}</span>} className='btn lst-wide-btn'>
@@ -177,15 +196,16 @@ function CreateList({ workspaceId, rooms, initialChannel, onClose }: { workspace
 							</div>
 						)}
 					</MenuButton>
-					<span className='field-hint'>Une base rattachée suit la visibilité du salon.</span>
+					<span className='field-hint'>Un suivi rattaché suit la visibilité du salon.</span>
 				</div>
+				)}
 				{error && <p className='notice notice-error'>{error}</p>}
 				<div className='lst-actions'>
 					<button type='button' className='btn btn-ghost' onClick={onClose}>
 						Annuler
 					</button>
 					<button type='button' className='btn btn-primary' disabled={busy} onClick={() => void submit()}>
-						Créer la base
+						Créer le suivi
 					</button>
 				</div>
 			</div>

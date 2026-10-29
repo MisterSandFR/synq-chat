@@ -22,7 +22,7 @@ async function positionAfter(db: D1Database, listId: string, position: number): 
 // Copie champs, valeurs et checklists ; ni commentaires ni pièces jointes. Une carte tirée d'un modèle repart de cases vides.
 export async function duplicateCard(db: D1Database, list: ListRow, item: ListItem, userId: string, opts: { title: string; template: boolean; values: Record<string, ListValue> }): Promise<Result<ListItem>> {
 	if ((list.item_count ?? 0) >= LIST_LIMITS.items) {
-		return err(409, 'Base pleine');
+		return err(409, 'Suivi plein');
 	}
 	const id = crypto.randomUUID();
 	const now = Date.now();
@@ -78,7 +78,7 @@ export async function duplicateCard(db: D1Database, list: ListRow, item: ListIte
 	return ok((await itemRow(db, list.id, id))!);
 }
 
-// --- Déplacer vers une autre base ---
+// --- Déplacer vers un autre suivi ---
 
 // Colonnes rapprochées par id puis par nom, statuts par libellé.
 export function mapValues(source: ListColumn[], target: ListColumn[], values: Record<string, ListValue>): Record<string, ListValue> {
@@ -104,10 +104,10 @@ export function mapValues(source: ListColumn[], target: ListColumn[], values: Re
 
 export async function moveCard(env: Env, from: ListRow, to: ListRow, item: ListItem, userId: string): Promise<Result<{ item: ListItem; stale: string[] }>> {
 	if (from.id === to.id) {
-		return err(400, 'La carte est déjà dans cette base');
+		return err(400, 'La carte est déjà dans ce suivi');
 	}
 	if ((to.item_count ?? 0) >= LIST_LIMITS.items) {
-		return err(409, 'Base pleine');
+		return err(409, 'Suivi plein');
 	}
 	const db = env.DB;
 	const source = labelsOf(from);

@@ -394,8 +394,8 @@ function DatabaseView(props: NodeViewProps) {
 			{!listId ? (
 				<div className='page-database-pick'>
 					<Icon name='list' size={16} />
-					<select aria-label='Base à intégrer' defaultValue='' disabled={!props.editor.isEditable} onChange={(e) => e.target.value && props.updateAttributes({ listId: e.target.value })}>
-						<option value=''>{lists === null ? 'Chargement…' : lists.length ? 'Choisis une base à intégrer' : 'Aucune base dans cet espace'}</option>
+					<select aria-label='Suivi à intégrer' defaultValue='' disabled={!props.editor.isEditable} onChange={(e) => e.target.value && props.updateAttributes({ listId: e.target.value })}>
+						<option value=''>{lists === null ? 'Chargement…' : lists.length ? 'Choisis un suivi à intégrer' : 'Aucun suivi dans cet espace'}</option>
 						{lists?.map((l) => (
 							<option key={l.id} value={l.id}>
 								{l.title}
@@ -418,8 +418,8 @@ function DatabaseView(props: NodeViewProps) {
 				>
 					<Icon name='list' size={18} />
 					<span className='grow'>
-						<strong>{list?.title ?? 'Base intégrée'}</strong>
-						<span className='muted'>Ouvrir la base</span>
+						<strong>{list?.title ?? 'Suivi intégré'}</strong>
+						<span className='muted'>Ouvrir le suivi</span>
 					</span>
 					<Icon name='expand' size={15} />
 				</a>

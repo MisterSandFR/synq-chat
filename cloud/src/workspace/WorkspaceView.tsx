@@ -561,7 +561,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 					{page && (
 						<h1>
 							<Icon name={page === 'lists' ? 'list' : page === 'activity' ? 'bell' : page === 'dms' ? 'chat' : page === 'drafts' ? 'compose' : page === 'canvases' ? 'file' : 'thread'} />
-							<span className='ellipsis'>{page === 'lists' ? 'Bases' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Pages' : 'Fils'}</span>
+							<span className='ellipsis'>{page === 'lists' ? 'Suivis' : page === 'activity' ? 'Activité' : page === 'dms' ? 'Messages directs' : page === 'drafts' ? 'Brouillons et envois' : page === 'canvases' ? 'Pages' : 'Fils'}</span>
 						</h1>
 					)}
 					{active && (
@@ -613,7 +613,7 @@ export function WorkspaceView({ me, workspaceId, channelId, onMeChanged, onBadge
 							{ key: 'pins', label: 'Épinglés', icon: 'pin', active: panel === 'pins', onSelect: () => setPanel(panel === 'pins' ? null : 'pins') },
 							{ key: 'files', label: 'Fichiers', icon: 'drive', active: panel === 'drive', onSelect: () => setPanel(panel === 'drive' ? null : 'drive') },
 							...(active.kind !== 'voice' ? [{ key: 'canvas', label: 'Page', icon: 'file' as const, onSelect: () => void openChannelCanvas(workspaceId, active.id) }] : []),
-							...(active.kind === 'text' ? [{ key: 'lists', label: 'Bases', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
+							...(active.kind === 'text' ? [{ key: 'lists', label: 'Suivis', icon: 'list' as const, onSelect: () => navigate(`/w/${workspaceId}/listes?salon=${active.id}`) }] : []),
 						]}
 					/>
 				)}
