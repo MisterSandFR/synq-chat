@@ -33,7 +33,7 @@ export function readContext(workspaceId: string | null): HubContext {
 		return { kind: 'page', label: 'Cette page', ctx: { ...inSpace, pageId: second } };
 	}
 	if ((first === 'listes' || first === 'bases') && second && second !== 'nouvelle') {
-		return { kind: 'list', label: 'Cette base', ctx: { ...inSpace, listId: second } };
+		return { kind: 'list', label: 'Ce suivi', ctx: { ...inSpace, listId: second } };
 	}
 	if (first && !RESERVED.has(first)) {
 		return { kind: 'channel', label: 'Ce salon', ctx: { ...inSpace, channelId: first } };
@@ -65,7 +65,7 @@ export function suggestionsFor(kind: ContextKind): Suggestion[] {
 		case 'page':
 			return [{ intent: 'summarize', label: 'Résumer cette page' }, EVENT, ABSENCE];
 		case 'list':
-			return [{ intent: 'summarize', label: 'Résumer cette base' }, EVENT, ABSENCE];
+			return [{ intent: 'summarize', label: 'Résumer ce suivi' }, EVENT, ABSENCE];
 		case 'day':
 			return [{ intent: 'summarize', label: 'Résumer ma journée' }, EVENT, ABSENCE];
 		default:

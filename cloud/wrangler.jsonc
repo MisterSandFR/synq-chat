@@ -3,6 +3,9 @@
 	"name": "synq-chat",
 	"account_id": "eb78173c28099c9a619c22919e7dc9d7",
 	"main": "./worker/index.ts",
+	// Domaine public ; l'adresse workers.dev reste active pour les liens déjà partagés.
+	"routes": [{ "pattern": "app.synq.team", "custom_domain": true }],
+	"workers_dev": true,
 	"compatibility_date": "2026-10-19",
 	"observability": { "enabled": true },
 	"vars": {

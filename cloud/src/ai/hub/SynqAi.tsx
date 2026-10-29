@@ -13,7 +13,7 @@ import { FileActions, FileChips, LayoutCard, useAttachments } from './files';
 import './hub.css';
 
 const SOURCE_ICON: Record<AiSource['kind'], IconName> = { message: 'chat', mail: 'mail', event: 'calendar', page: 'file', item: 'list' };
-const SOURCE_LABEL: Record<AiSource['kind'], string> = { message: 'Message', mail: 'Mail', event: 'Événement', page: 'Page', item: 'Élément de base' };
+const SOURCE_LABEL: Record<AiSource['kind'], string> = { message: 'Message', mail: 'Mail', event: 'Événement', page: 'Page', item: 'Élément de suivi' };
 const WIDTH_KEY = 'synq:ai-hub-width';
 
 const savedWidth = () => {
@@ -433,7 +433,7 @@ function ActionCard({ turn, action: initial, conversationId, onDone }: { turn: A
 			{action.kind === 'cards' && (
 				<>
 					<label className='hub-field'>
-						<span>Base</span>
+						<span>Suivi</span>
 						<select
 							value={action.listId}
 							onChange={(e) => setAction({ ...action, listId: e.target.value, listTitle: lists.find((l) => l.id === e.target.value)?.title ?? action.listTitle })}

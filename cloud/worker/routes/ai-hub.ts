@@ -155,11 +155,11 @@ async function loadContext(c: Ctx, ctx: AiHubContext, timezone: string): Promise
 	if (wid && ctx.listId) {
 		const sub = await internal<ListDetail>(c, 'GET', `/w/${wid}/lists/${ctx.listId}`);
 		if (sub.status !== 200 || !sub.data) {
-			return refused(c, sub, 'Base introuvable');
+			return refused(c, sub, 'Suivi introuvable');
 		}
 		const list = sub.data;
 		const lines = list.items.slice(0, 200).map((item) => `- ${item.title || 'Sans titre'}${item.description ? ` : ${item.description.slice(0, 300)}` : ''}`);
-		return { kind: 'list', label: `Base « ${list.title} »`, text: `Base « ${list.title} » (${list.items.length} éléments) :\n${lines.join('\n')}`.slice(0, CONTEXT_MAX), sources: [] };
+		return { kind: 'list', label: `Suivi « ${list.title} »`, text: `Suivi « ${list.title} » (${list.items.length} éléments) :\n${lines.join('\n')}`.slice(0, CONTEXT_MAX), sources: [] };
 	}
 	if (ctx.day) {
 		const from = zonedTime(ctx.day, '00:00', timezone) ?? Date.parse(`${ctx.day}T00:00:00Z`);
@@ -176,7 +176,7 @@ async function loadContext(c: Ctx, ctx: AiHubContext, timezone: string): Promise
 	return null;
 }
 
-const NOTHING = 'Je n’ai rien trouvé à ce sujet dans ce que tu peux voir : messages, mails, événements, pages et bases.';
+const NOTHING = 'Je n’ai rien trouvé à ce sujet dans ce que tu peux voir : messages, mails, événements, pages et suivis.';
 
 type Answer = { text: string; sources: AiSource[]; action: AiAction | null };
 
@@ -186,12 +186,12 @@ async function chooseList(c: Ctx, wid: string, listId: string | null): Promise<L
 		const sub = await internal<ListSummary[]>(c, 'GET', `/w/${wid}/lists`);
 		target = sub.data?.[0]?.id ?? null;
 		if (!target) {
-			return fail(c, 400, 'Aucune base dans cet espace : crée-en une d’abord');
+			return fail(c, 400, 'Aucun suivi dans cet espace : crées-en un d’abord');
 		}
 	}
 	const sub = await internal<ListDetail>(c, 'GET', `/w/${wid}/lists/${target}`);
 	if (sub.status !== 200 || !sub.data) {
-		return refused(c, sub, 'Base introuvable');
+		return refused(c, sub, 'Suivi introuvable');
 	}
 	return sub.data.canEdit ? sub.data : fail(c, 403, 'Permission insuffisante');
 }
@@ -274,7 +274,7 @@ async function answer(
 	}
 	if (input.intent === 'summarize') {
 		if (!loaded) {
-			return fail(c, 400, 'Ouvre un salon, un mail, une page, une base ou un jour du calendrier à résumer');
+			return fail(c, 400, 'Ouvre un salon, un mail, une page, un suivi ou un jour du calendrier à résumer');
 		}
 		const result = await ask(`${context}=== Tâche ===\nRésume ce contenu en 3 à 8 puces commençant par « - » : sujet, décisions, questions ouvertes, actions et qui s’en charge.${instruction}`);
 		return result.ok ? { text: result.value, sources: loaded.sources, action: null } : unwrap(c, result);
@@ -299,7 +299,7 @@ async function answer(
 			return { text: 'Je n’ai trouvé aucune tâche à transformer en carte.', sources: loaded?.sources ?? [], action: null };
 		}
 		return {
-			text: `${cards.length} carte${cards.length > 1 ? 's' : ''} proposée${cards.length > 1 ? 's' : ''} pour la base « ${list.title} ». Vérifie puis confirme.`,
+			text: `${cards.length} carte${cards.length > 1 ? 's' : ''} proposée${cards.length > 1 ? 's' : ''} pour le suivi « ${list.title} ». Vérifie puis confirme.`,
 			sources: loaded?.sources ?? [],
 			action: { kind: 'cards', workspaceId: wid, listId: list.id, listTitle: list.title, cards },
 		};
@@ -447,7 +447,7 @@ async function execute(c: Ctx, action: AiAction): Promise<AiDone | Response> {
 		for (const card of cards) {
 			const created = await internal<ListItem>(c, 'POST', `/w/${wid}/lists/${lid}/items`, { title: card.title });
 			if (created.status !== 201 || !created.data) {
-				return refused(c, created, 'Base introuvable');
+				return refused(c, created, 'Suivi introuvable');
 			}
 			if (card.description) {
 				await internal(c, 'PATCH', `/w/${wid}/lists/${lid}/items/${created.data.id}`, { description: card.description });
