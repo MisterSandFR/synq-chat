@@ -1,12 +1,11 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 
 import { CANVAS_LINK_RE, canvasPath, type CanvasMeta } from '../../../shared/canvas';
-import { api, errorText } from '../../api';
+import { api } from '../../api';
 import { navigate } from '../../router';
 import { Avatar, Icon } from '../../ui';
 import type { Lookup } from '../richText';
 import './canvas-card.css';
-import { alertDialog } from '../../dialogs';
 
 const cache = new Map<string, Promise<CanvasMeta | null>>();
 
@@ -16,16 +15,6 @@ const go = (href: string) => (event: MouseEvent) => {
 		navigate(href);
 	}
 };
-
-// Onglet du salon : ouvre son canevas, créé au premier passage.
-export async function openChannelCanvas(workspaceId: string, channelId: string): Promise<void> {
-	try {
-		const canvas = await api<CanvasMeta>('POST', `/w/${workspaceId}/channels/${channelId}/canvas`);
-		navigate(canvasPath(workspaceId, canvas.id));
-	} catch (error) {
-		void alertDialog({ title: 'Page indisponible', message: errorText(error) });
-	}
-}
 
 export function CanvasLinkCard({ workspaceId, body, lookup }: { workspaceId: string; body: string; lookup: Lookup }) {
 	const match = body.match(CANVAS_LINK_RE);

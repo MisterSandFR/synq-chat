@@ -245,7 +245,8 @@ export type ServerEvent =
 	| { t: 'list_changed'; listId: string; channelId: string | null }
 	| { t: 'favorites' }
 	| { t: 'threads_unread'; count: number }
-	| { t: 'poll'; channelId: string; messageId: number; poll: Poll };
+	| { t: 'poll'; channelId: string; messageId: number; poll: Poll }
+	| { t: 'channel_resources'; channelId: string };
 
 export type ClientEvent =
 	| { t: 'typing'; channelId: string }

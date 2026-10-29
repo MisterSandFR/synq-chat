@@ -11,7 +11,8 @@ import { GradeDot, PeoplePicker, gradeLabel, holderCount, plural } from '../grad
 import '../grade-access/grade-access.css';
 import './access.css';
 
-type Props = { workspaceId: string; kind: AccessKind; id: string; title: string; onClose: () => void; onChanged?: (info: AccessInfo) => void };
+// `suggest` : membres à proposer d'ajouter (membres d'un salon sans accès).
+type Props = { workspaceId: string; kind: AccessKind; id: string; title: string; suggest?: string[]; onClose: () => void; onChanged?: (info: AccessInfo) => void };
 
 const NOUN: Record<AccessKind, string> = { page: 'Page', page_category: 'Catégorie', base: 'Suivi' };
 
@@ -87,7 +88,7 @@ function Picker({ value, options, label, disabled, onPick, onRemove }: { value: 
 }
 
 // Dialogue « Partager » commun aux pages, catégories de pages et bases.
-export function ShareDialog({ workspaceId, kind, id, title, onClose, onChanged }: Props) {
+export function ShareDialog({ workspaceId, kind, id, title, suggest, onClose, onChanged }: Props) {
 	const path = `/w/${workspaceId}/access/${kind}/${id}`;
 	const [info, setInfo] = useState<AccessInfo | null>(null);
 	const [grades, setGrades] = useState<Grade[]>([]);
@@ -136,7 +137,6 @@ export function ShareDialog({ workspaceId, kind, id, title, onClose, onChanged }
 
 	const manage = info.level === 'manage' && !busy;
 	const source = info.inherited;
-	const channel = source?.kind === 'channel';
 	// Hérité de l'espace : l'accès général équivaut à « Tout l'espace peut modifier ».
 	const startRules = (): AccessRule[] => (info.own ? info.rules : source?.kind === 'space' ? [{ subjectId: DEFAULT_GRADE, level: 'edit' }] : info.rules);
 	const write = (rules: AccessRule[], restricted = info.restricted) => void save({ restricted, rules });
@@ -150,22 +150,15 @@ export function ShareDialog({ workspaceId, kind, id, title, onClose, onChanged }
 	const memberRules = others.filter((r) => isMemberKey(r.subjectId));
 	const levelOptions: Option[] = levelsFor(kind).map((l) => ({ key: l, label: LEVEL_LABELS[l], hint: LEVEL_HINTS[l], level: l }));
 
-	const generalOptions: Option[] = channel
-		? [
-				{ key: 'space', label: 'Membres du salon', hint: 'Droits du salon rattaché', level: 'edit' },
-				{ key: 'restricted', label: 'Restreint', hint: 'Seules les personnes ajoutées', level: null },
-			]
-		: [
-				...levelsFor(kind).map((l) => ({ key: l, label: `Tout l’espace : ${LEVEL_LABELS[l].toLowerCase()}`, hint: LEVEL_HINTS[l], level: l })),
-				{ key: 'restricted', label: 'Restreint', hint: 'Seules les personnes ajoutées', level: null },
-			];
-	const generalKey = info.restricted ? 'restricted' : channel ? 'space' : (general ?? 'restricted');
+	const generalOptions: Option[] = [
+		...levelsFor(kind).map((l) => ({ key: l, label: `Tout l’espace : ${LEVEL_LABELS[l].toLowerCase()}`, hint: LEVEL_HINTS[l], level: l })),
+		{ key: 'restricted', label: 'Restreint', hint: 'Seules les personnes ajoutées', level: null },
+	];
+	const generalKey = info.restricted ? 'restricted' : (general ?? 'restricted');
 	const pickGeneral = (key: string) => {
 		const rules = startRules();
 		if (key === 'restricted') {
 			write(drop(rules, DEFAULT_GRADE), true);
-		} else if (key === 'space') {
-			write(rules, false);
 		} else {
 			write(upsert(rules, DEFAULT_GRADE, key as AccessLevel), false);
 		}
@@ -175,11 +168,10 @@ export function ShareDialog({ workspaceId, kind, id, title, onClose, onChanged }
 		? null
 		: source.kind === 'space'
 			? 'Hérité de l’espace'
-			: source.kind === 'channel'
-				? 'Hérité du salon rattaché'
-				: `Hérité de ${source.kind === 'page' ? 'la page' : 'la catégorie'} « ${source.title} »`;
+			: `Hérité de ${source.kind === 'page' ? 'la page' : 'la catégorie'} « ${source.title} »`;
 	const candidates = members.filter((m) => !m.owner);
 	const nameOf = (key: string) => members.find((m) => memberKey(m.id) === key);
+	const pending = (suggest ?? []).filter((userId) => !memberRules.some((r) => r.subjectId === memberKey(userId)) && members.some((m) => m.id === userId && !m.owner));
 
 	return (
 		<Dialog open onClose={onClose} title={`Partager « ${title} »`}>
@@ -208,10 +200,21 @@ export function ShareDialog({ workspaceId, kind, id, title, onClose, onChanged }
 					</span>
 					<span className='ga-name'>
 						<span>Accès général</span>
-						<span className='ga-via'>{generalKey === 'restricted' ? 'Propriétaire, administrateurs et personnes ajoutées' : channel ? 'Qui voit le salon' : 'Tous les membres, hors invités'}</span>
+						<span className='ga-via'>{generalKey === 'restricted' ? 'Propriétaire, administrateurs et personnes ajoutées' : 'Tous les membres, hors invités'}</span>
 					</span>
 					<Picker value={generalKey} options={generalOptions} label={generalOptions.find((o) => o.key === generalKey)?.label ?? 'Restreint'} disabled={!manage} onPick={pickGeneral} />
 				</div>
+
+				{manage && pending.length > 0 && (
+					<div className='notice sh-suggest'>
+						<span className='grow'>
+							{pending.length > 1 ? `${pending.length} membres du salon n’y ont pas accès.` : '1 membre du salon n’y a pas accès.'}
+						</span>
+						<button type='button' className='btn btn-primary' onClick={() => write(pending.reduce((rules, userId) => upsert(rules, memberKey(userId), 'edit'), startRules()))}>
+							{pending.length > 1 ? 'Les ajouter' : 'L’ajouter'}
+						</button>
+					</div>
+				)}
 
 				{info.level === 'manage' && (
 					<PeoplePicker

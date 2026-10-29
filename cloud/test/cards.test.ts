@@ -87,6 +87,7 @@ describe('cartes riches', () => {
 		const secret = await owner.req<Channel>('POST', `/api/w/${wid}/channels`, { name: 'direction' });
 		await owner.req('PUT', `/api/w/${wid}/channels/${secret.data.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
 		const hidden = await owner.req<ListDetail>('POST', `/api/w/${wid}/lists`, { title: 'Budget', channelId: secret.data.id });
+		await owner.req('PUT', `/api/w/${wid}/access/base/${hidden.data.id}`, { restricted: true, rules: [] });
 
 		const item = await member.req<ListItem>('POST', `${url}/items`, { title: 'Bannière', labels: ['l1'], values: { status: 's3' } });
 		const path = `${url}/items/${item.data.id}`;
@@ -159,6 +160,7 @@ describe('cartes riches', () => {
 		const secret = await owner.req<Channel>('POST', `/api/w/${wid}/channels`, { name: 'direction' });
 		await owner.req('PUT', `/api/w/${wid}/channels/${secret.data.id}/overrides`, { overrides: { default: { allow: 0, deny: P.VIEW_CHANNEL } } });
 		const hidden = await owner.req<ListDetail>('POST', `/api/w/${wid}/lists`, { title: 'Budget', channelId: secret.data.id });
+		await owner.req('PUT', `/api/w/${wid}/access/base/${hidden.data.id}`, { restricted: true, rules: [] });
 		const salary = await owner.req<ListItem>('POST', `/api/w/${wid}/lists/${hidden.data.id}/items`, { title: 'Salaires' });
 		expect((await member.req('POST', `${path}/links`, { kind: 'card', id: salary.data.id })).status).toBe(404);
 		expect((await member.req('POST', `${path}/links`, { kind: 'card', id: item.data.id })).status).toBe(400);

@@ -372,7 +372,6 @@ export function PageTree({ workspaceId, activeId, compact, channelNames, onError
 
 	const known = new Set(categories.map((c) => c.id));
 	const loose = roots.filter((n) => !n.channelId && (!n.categoryId || !known.has(n.categoryId)));
-	const salons = roots.filter((n) => n.channelId).sort((a, b) => labelOf(a).localeCompare(labelOf(b), 'fr'));
 
 	const catMenu = (cat: PageCategory): ContextMenuItem[] => [
 		...(cat.level === 'manage'
@@ -523,28 +522,6 @@ export function PageTree({ workspaceId, activeId, compact, channelNames, onError
 		);
 	};
 
-	// Pages et suivis rattachés aux salons, à part des pages d'espace.
-	const salonsRow = () => {
-		const open = !folded.has('salons');
-		return (
-			<li key='salons' role='treeitem' aria-expanded={open} className='page-cat page-salons'>
-				<div className='page-cat-head'>
-					<button type='button' className='page-cat-toggle' aria-label={open ? 'Replier les salons' : 'Déplier les salons'} onClick={() => foldToggle('salons', open)}>
-						<span className={`page-caret${open ? ' page-caret-open' : ''}`}>
-							<Icon name='chevron' size={12} />
-						</span>
-						<span className='page-cat-name ellipsis'>Salons</span>
-					</button>
-				</div>
-				{open && (
-					<ul role='group' className='page-tree-group'>
-						{salons.map((n) => row(n, 0))}
-					</ul>
-				)}
-			</li>
-		);
-	};
-
 	return (
 		<>
 			{roots.length === 0 && categories.length === 0 ? (
@@ -553,7 +530,6 @@ export function PageTree({ workspaceId, activeId, compact, channelNames, onError
 				<ul className={`page-tree${compact ? ' page-tree-compact' : ''}`} role='tree' aria-label='Arbre des pages'>
 					{loose.map((n) => row(n, 0))}
 					{categories.map(categoryRow)}
-					{salons.length > 0 && salonsRow()}
 				</ul>
 			)}
 			{addingCat ? (

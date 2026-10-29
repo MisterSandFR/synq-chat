@@ -11,7 +11,6 @@ import {
 	archivePage,
 	backlinkIds,
 	canvasRow,
-	channelCanvasRow,
 	cleanTitle,
 	commentRow,
 	deleteCanvasRow,
@@ -31,6 +30,7 @@ import {
 	type CanvasRow,
 } from '../canvases';
 import { fail, readJson, stub, type AppEnv, type Ctx } from '../http';
+import { channelRights, linkResource } from './channel-resources';
 
 export const canvasRoutes = new Hono<AppEnv>();
 
@@ -57,7 +57,7 @@ async function load(c: Ctx, id: string) {
 	const ancestors = row.parent_id ? await ancestorRows(c.env.DB, row.workspace_id, row.id) : [];
 	const scope = (ancestors.at(-1) ?? row).channel_id;
 	const byId = new Map([row, ...ancestors].map((r) => [r.id, r]));
-	const data = await loadAccess(c.env, row.workspace_id, [c.get('actor')], [...byId.values()].map((r) => r.channel_id));
+	const data = await loadAccess(c.env, row.workspace_id);
 	const level = pageLevel(c.get('actor'), row, byId, data);
 	return level ? { row, access: canvasAccessOf(level), level, ancestors, scope, byId, data } : null;
 }
@@ -90,12 +90,13 @@ canvasRoutes.get('/w/:wid/canvases', async (c) => {
 	return c.json(rows.flatMap((row) => (access.has(row.id) && (row.archived_at !== null) === archived ? [toMeta(row, access.get(row.id)!)] : [])));
 });
 
-canvasRoutes.post('/w/:wid/canvases', pagesNotice, async (c) => {
+type PageInput = { title?: string; parentId?: string | null; categoryId?: string | null; template?: string; icon?: string };
+
+async function createPage(c: Ctx, body: PageInput): Promise<CanvasRow | Response> {
 	const actor = c.get('actor');
 	if (actor.guest) {
 		return fail(c, 403, 'Accès invité limité');
 	}
-	const body = await readJson<{ title?: string; parentId?: string | null; categoryId?: string | null; template?: string; icon?: string }>(c);
 	const template = body.template ? pageTemplate(body.template) : null;
 	if (body.template && !template) {
 		return fail(c, 400, 'Modèle inconnu');
@@ -115,7 +116,7 @@ canvasRoutes.post('/w/:wid/canvases', pagesNotice, async (c) => {
 	const icon = typeof body.icon === 'string' && body.icon.length <= CANVAS_LIMITS.icon ? body.icon : (template?.icon ?? null);
 	let categoryId: string | null = null;
 	if (body.categoryId && !parentId) {
-		const data = await loadAccess(c.env, c.get('workspaceId'), [actor], []);
+		const data = await loadAccess(c.env, c.get('workspaceId'));
 		const category = data.categories.get(body.categoryId);
 		const level = category ? categoryLevel(actor, category, data) : null;
 		if (!category || !level) {
@@ -134,34 +135,27 @@ canvasRoutes.post('/w/:wid/canvases', pagesNotice, async (c) => {
 	if (template) {
 		await c.env.CANVAS_DOC.getByName(row.id).seed(row.id, title, template.blocks);
 	}
-	return c.json(toMeta(row, 'manage'), 201);
+	return row;
+}
+
+canvasRoutes.post('/w/:wid/canvases', pagesNotice, async (c) => {
+	const made = await createPage(c, await readJson<PageInput>(c));
+	return made instanceof Response ? made : c.json(toMeta(made, 'manage'), 201);
 });
 
-// Canevas de l'onglet du salon : renvoyé s'il existe, créé sinon par qui peut écrire.
+// Nouvelle page liée au salon : page d'espace ordinaire, le lien ne donne aucun droit.
 canvasRoutes.post('/w/:wid/channels/:cid/canvas', pagesNotice, async (c) => {
-	const actor = c.get('actor');
 	const channelId = c.req.param('cid');
-	const [access] = await stub(c).canvasAccess(actor, [channelId]);
-	if (!access) {
-		return fail(c, 404, 'Salon introuvable');
+	const rights = await channelRights(c, channelId);
+	if (rights instanceof Response) {
+		return rights;
 	}
-	const existing = await channelCanvasRow(c.env.DB, c.get('workspaceId'), channelId);
-	if (existing) {
-		const found = await load(c, existing.id);
-		return found ? c.json(toMeta(found.row, found.level)) : fail(c, 404, 'Salon introuvable');
+	const made = await createPage(c, await readJson<PageInput>(c));
+	if (made instanceof Response) {
+		return made;
 	}
-	if (access !== 'write') {
-		return fail(c, 403, 'Ce salon n’a pas encore de canevas');
-	}
-	const { title } = await readJson<{ title: string }>(c);
-	try {
-		const row = await insertCanvas(c.env.DB, { workspaceId: c.get('workspaceId'), channelId, title: cleanTitle(title), createdBy: actor.id });
-		return c.json(toMeta(row, 'manage'), 201);
-	} catch {
-		// Création simultanée : l'index unique a gardé l'autre.
-		const raced = await channelCanvasRow(c.env.DB, c.get('workspaceId'), channelId);
-		return raced ? c.json(toMeta(raced, 'edit')) : fail(c, 409, 'Création impossible, réessaie');
-	}
+	await linkResource(c, channelId, 'page', made.id);
+	return c.json(toMeta(made, 'manage'), 201);
 });
 
 canvasRoutes.get('/w/:wid/canvases/:id', async (c) => {
@@ -197,9 +191,6 @@ canvasRoutes.patch('/w/:wid/canvases/:id', pagesNotice, async (c) => {
 		fields.cover_key = body.cover;
 	}
 	if (body.parentId !== undefined && body.parentId !== row.parent_id) {
-		if (row.channel_id) {
-			return fail(c, 400, 'La page d’un salon reste à la racine');
-		}
 		if (body.parentId !== null) {
 			const target = await load(c, body.parentId);
 			if (!target || target.row.archived_at !== null) {
@@ -215,9 +206,6 @@ canvasRoutes.patch('/w/:wid/canvases/:id', pagesNotice, async (c) => {
 		fields.parent_id = body.parentId;
 	}
 	if (body.categoryId !== undefined && body.categoryId !== row.category_id) {
-		if (row.channel_id) {
-			return fail(c, 400, 'La page d’un salon reste hors catégorie');
-		}
 		if (body.categoryId !== null) {
 			const category = typeof body.categoryId === 'string' ? found.data.categories.get(body.categoryId) : undefined;
 			const level = category ? categoryLevel(c.get('actor'), category, found.data) : null;

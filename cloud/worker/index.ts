@@ -6,6 +6,7 @@ import { wakeSnoozed } from './mail/store';
 import { sendDueSoon } from './lists-bases';
 import { sendCardReminders } from './lists-cards';
 import { mailChanged, sendScheduled } from './routes/mail';
+import { decouplePending } from './channel-resources';
 
 export { Workspace } from './workspace';
 export { Mailbox } from './mail/mailbox';
@@ -36,5 +37,6 @@ export default {
 		ctx.waitUntil(sendDueSoon(env, Date.now()));
 		ctx.waitUntil(sendCardReminders(env, Date.now()));
 		ctx.waitUntil(purgeAiFiles(env, Date.now()));
+		ctx.waitUntil(decouplePending(env));
 	},
 } satisfies ExportedHandler<Env>;
